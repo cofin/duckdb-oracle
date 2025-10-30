@@ -25,7 +25,7 @@ This is a template repository for creating DuckDB extensions. The project is wri
     This will create the following binaries:
     *   `./build/release/duckdb`: DuckDB shell with the extension pre-loaded.
     *   `./build/release/test/unittest`: Test runner for the extension.
-    *   `./build/release/extension/<extension_name>/<extension_name>.duckdb_extension`: The loadable extension binary.
+    *   `./build/release/extension/oracle/oracle.duckdb_extension`: The loadable extension binary.
 
 ## Running
 
@@ -38,13 +38,13 @@ To run the extension, use the pre-loaded DuckDB shell:
 Then, you can use the custom functions defined in the extension:
 
 ```sql
-D select quack('Jane') as result;
-┌───────────────┐
-│    result     │
-│    varchar    │
-├───────────────┤
-│ Quack Jane 🐥 │
-└───────────────┘
+D select oracle('Jane') as result;
+┌─────────────────────────────────────┐
+│                result               │
+│               varchar               │
+├─────────────────────────────────────┤
+│ Oracle Jane 🐥                      │
+└─────────────────────────────────────┘
 ```
 
 # Development Conventions

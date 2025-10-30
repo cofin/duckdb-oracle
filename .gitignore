@@ -6,3 +6,9 @@ duckdb_unittest_tempdir/
 testext
 test/python/__pycache__/
 .Rhistory
+
+# Gemini Agent System
+specs/active/
+specs/archive/
+!specs/active/.gitkeep
+!specs/archive/.gitkeep
