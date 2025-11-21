@@ -40,14 +40,13 @@ Tests are written in SQL. The test runner parses special comments to understand 
 ### Example
 
 ```sql
--- file: test/sql/sample.test
+-- file: test/sql/oracle_query.test
 
--- A simple test case for the oracle function
--- The name of the test case is optional
+-- A simple test case for the oracle_query function
 statement ok
-SELECT oracle('world');
+SELECT * FROM oracle_query('connection_string', 'SELECT 1 FROM DUAL');
 ----
-Oracle world 🐥
+1
 ```
 
 ## Test Standards

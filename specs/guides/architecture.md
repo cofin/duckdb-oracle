@@ -53,8 +53,8 @@ This project is a C++ extension for DuckDB. It follows the standard architectura
 
 ## Data Flow
 
-1. A user executes a SQL query that calls a function from this extension (e.g., `SELECT oracle('world')`).
+1. A user executes a SQL query that calls the `oracle_query` function (e.g., `SELECT * FROM oracle_query('connection_string', 'SELECT * FROM users')`).
 2. DuckDB's parser identifies the function call and looks it up in its catalog.
-3. Finding that the function is provided by this extension, DuckDB invokes the corresponding C++ function defined in `oracle_extension.cpp`.
-4. The C++ function receives its arguments as DuckDB `Value` or `Vector` objects, performs its logic, and returns the result back to DuckDB in the same format.
+3. Finding that the function is provided by this extension, DuckDB invokes the `OracleQueryBind` function to prepare the Oracle OCI statement and define return types.
+4. DuckDB then invokes `OracleQueryFunction` which executes the OCI statement, fetches results row by row, and fills the DuckDB `DataChunk`.
 5. DuckDB presents the result to the user.

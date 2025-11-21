@@ -1,0 +1,11 @@
+-- name: test_oracle_query_simple
+-- description: Test a simple query
+-- group: [oracle]
+
+-- load the extension
+LOAD oracle;
+
+-- run a query
+SELECT * FROM oracle_query('user/password@host:port/service', 'SELECT 1 FROM DUAL');
+----
+1
