@@ -26,11 +26,11 @@ OCI_HOME=$(find $INSTALL_DIR -maxdepth 1 -name "instantclient_*" | head -n 1)
 
 echo "Oracle Home found at: $OCI_HOME"
 
-# Ensure libaio is available on Ubuntu 24.04 where libaio1 -> libaio1t64 transition removed the compat symlink
+# Ensure libaio is available on Ubuntu 24.04 where libaio1 was replaced by libaio1t64
 if ! ldconfig -p | grep -q "libaio.so.1"; then
     echo "Installing libaio runtime dependency..."
     sudo apt-get update -y >/dev/null
-    sudo apt-get install -y libaio1t64 || sudo apt-get install -y libaio1
+    sudo apt-get install -y libaio1t64 || sudo apt-get install -y libaio-dev
     if [ -f /usr/lib/x86_64-linux-gnu/libaio.so.1t64 ] && [ ! -f /usr/lib/x86_64-linux-gnu/libaio.so.1 ]; then
         sudo ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1
     fi
