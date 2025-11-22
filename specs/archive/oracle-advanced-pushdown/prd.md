@@ -1,7 +1,7 @@
 # Feature: Oracle Pushdown & Session Tuning (Phase 1)
 
 **Created**: 2025-11-22  
-**Status**: Planning
+**Status**: Implemented (Phase 1)
 
 ## Overview
 Add production-ready predicate/projection/limit pushdown for Oracle sources plus session tuning knobs (prefetch/array size), connection caching, debug logging, and attach options. This brings the Oracle extension to parity with MySQL/Postgres DuckDB extensions and aligns with community patterns (BigQuery/Snowflake) while remaining feasible atop the current `oracle_query`/`oracle_scan` functions.

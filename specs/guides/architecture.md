@@ -23,11 +23,12 @@ duckdb-oracle/
 
 ### Extension Entry Point (`src/oracle_extension.cpp`)
 
-`OracleExtension::Load` registers three functions:
+`OracleExtension::Load` registers four functions:
 
-- `oracle_scan` (Table Function): runs `SELECT * FROM <schema>.<table>` against Oracle.
-- `oracle_query` (Table Function): runs an arbitrary SQL query against Oracle.
+- `oracle_scan` (Table Function): runs `SELECT * FROM <schema>.<table>` against Oracle; supports filter/projection pushdown when `oracle_enable_pushdown` is true.
+- `oracle_query` (Table Function): runs an arbitrary SQL query against Oracle with optional pushdown for simple filters/projection.
 - `oracle_attach_wallet` (Scalar Function): sets `TNS_ADMIN` for wallet-based authentication.
+- `oracle_clear_cache` (Scalar Function): clears cached Oracle metadata/connection state held by attached databases.
 
 ### OCI Resource Management
 
@@ -42,7 +43,7 @@ duckdb-oracle/
   - Maps `SQLT_*` types to DuckDB `LogicalType` values and records buffer sizes.
 - **Execute (`OracleQueryFunction`)**
   - Uses `OCIDefineByPos` per column with buffers sized from metadata (default 4000 bytes, multiplied by 4 for UTF-8 safety).
-  - Sets `OCI_ATTR_PREFETCH_ROWS` (default 200) to reduce round-trips.
+- Sets `OCI_ATTR_PREFETCH_ROWS` (default 200, configurable via `oracle_prefetch_rows`) and optionally `OCI_ATTR_PREFETCH_MEMORY` for tuning.
   - Fetches rows via `OCIStmtFetch2` and writes into DuckDB vectors.
   - VARCHAR/BLOB columns copy from buffers; BIGINT/DOUBLE map directly; TIMESTAMP strings are parsed into `timestamp_t`.
 

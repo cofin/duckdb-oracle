@@ -112,12 +112,13 @@ TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_p
 
 	auto bind = make_uniq<OracleBindData>();
 	bind->column_names = names;
-	bind_data = OracleBindInternal(context, state->connection_string, query, return_types, names, bind.release());
+	bind_data = OracleBindInternal(context, state->connection_string, query, return_types, names, bind.release(),
+	                              state.get());
 
 	TableFunction tf({}, OracleQueryFunction, nullptr, nullptr, nullptr);
 	tf.filter_pushdown = true;
 	tf.pushdown_complex_filter = OraclePushdownComplexFilter;
-	tf.projection_pushdown = false; // fetch all columns
+	tf.projection_pushdown = true;
 	tf.name = table_name;
 	return tf;
 }

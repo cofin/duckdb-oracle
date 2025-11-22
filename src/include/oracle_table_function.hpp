@@ -4,6 +4,9 @@
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include <oci.h>
+#include "oracle_settings.hpp"
+
+class OracleCatalogState;
 
 namespace duckdb {
 
@@ -25,6 +28,7 @@ struct OracleBindData : public FunctionData {
 	vector<string> column_names;
 	vector<LogicalType> original_types;
 	vector<string> original_names;
+	OracleSettings settings;
 
 	OracleBindData();
 
@@ -34,7 +38,8 @@ struct OracleBindData : public FunctionData {
 
 unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string connection_string, string query,
                                             vector<LogicalType> &return_types, vector<string> &names,
-                                            OracleBindData *bind_data_ptr = nullptr);
+                                            OracleBindData *bind_data_ptr = nullptr,
+                                            OracleCatalogState *state = nullptr);
 
 void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataChunk &output);
 

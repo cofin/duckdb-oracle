@@ -40,6 +40,19 @@ The main binaries that will be built are:
 - `unittest` is the test runner of duckdb. Again, the extension is already linked into the binary.
 - `oracle.duckdb_extension` is the loadable binary as it would be distributed.
 
+### Pushdown & tuning options
+
+Runtime options (set with `SET`):
+
+- `oracle_enable_pushdown` (default `false`): enable filter/projection pushdown into Oracle.
+- `oracle_prefetch_rows` / `oracle_prefetch_memory`: OCI prefetch tuning knobs.
+- `oracle_array_size`: rows per OCI fetch iteration (guarded to be ≥1).
+- `oracle_debug_show_queries` (default `false`): log generated Oracle SQL for debugging.
+
+Maintenance helper:
+
+- `SELECT oracle_clear_cache();` clears cached Oracle metadata/connection state for attached databases.
+
 ## Running the extension
 
 To run the extension code, simply start the shell with `./build/release/duckdb`.

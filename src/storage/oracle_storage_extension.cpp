@@ -24,10 +24,13 @@ static unique_ptr<Catalog> OracleAttach(optional_ptr<StorageExtensionInfo> stora
 		state = oracle_info->state;
 	} else {
 		state = make_shared_ptr<OracleCatalogState>(connection_string);
+		OracleCatalogState::Register(state);
 		if (oracle_info) {
 			oracle_info->state = state;
 		}
 	}
+	// Map attach options to state settings (best-effort, ignore unknown keys).
+	state->ApplyOptions(options.options);
 	return CreateOracleCatalog(db, state);
 }
 

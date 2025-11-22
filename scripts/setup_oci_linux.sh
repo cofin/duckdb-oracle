@@ -8,15 +8,17 @@ OCI_VER_FULL=23.6.0.24.10
 BASE_URL="https://download.oracle.com/otn_software/linux/instantclient/2360000"
 
 INSTALL_DIR=$PWD/oracle_sdk
-mkdir -p $INSTALL_DIR
+# Ensure a clean install location to avoid unzip prompts on CI reruns
+rm -rf "$INSTALL_DIR"
+mkdir -p "$INSTALL_DIR"
 
 echo "Downloading Oracle Instant Client ${OCI_VER_FULL}..."
 wget -q -O basic.zip "${BASE_URL}/instantclient-basic-linux.x64-${OCI_VER_FULL}.zip"
 wget -q -O sdk.zip "${BASE_URL}/instantclient-sdk-linux.x64-${OCI_VER_FULL}.zip"
 
 echo "Extracting..."
-unzip -q basic.zip -d $INSTALL_DIR
-unzip -q sdk.zip -d $INSTALL_DIR
+unzip -oq basic.zip -d "$INSTALL_DIR"
+unzip -oq sdk.zip -d "$INSTALL_DIR"
 
 # The zip extracts to a folder like 'instantclient_23_6'
 # We need to find it and normalize or export path

@@ -97,6 +97,8 @@ make format
 
 - Connection strings are passed straight to `OCILogon` as the database argument; include credentials in the EZCONNECT style: `user/password@//host:port/service`.
 - Wallet-based auth uses `oracle_attach_wallet('/path/to/wallet')`, which sets `TNS_ADMIN` for the current process before issuing `oracle_query`/`oracle_scan`.
+- Pushdown and tuning knobs (set via `SET`): `oracle_enable_pushdown`, `oracle_prefetch_rows`, `oracle_prefetch_memory`, `oracle_array_size`, `oracle_debug_show_queries`, `oracle_connection_cache`, `oracle_connection_limit`.
+- Maintenance: `SELECT oracle_clear_cache();` clears cached schema/connection state for attached Oracle databases.
 
 ## Code Review Checklist
 

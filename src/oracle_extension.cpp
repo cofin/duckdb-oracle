@@ -8,14 +8,18 @@
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/common/types/timestamp.hpp"
+#include "duckdb/common/limits.hpp"
+#include "duckdb/common/types/value.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
 #include "duckdb/planner/expression/bound_operator_expression.hpp"
 #include "duckdb/planner/expression.hpp"
 #include "duckdb/main/config.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "oracle_storage_extension.hpp"
 #include "oracle_table_function.hpp"
+#include "oracle_catalog_state.hpp"
 #include <oci.h>
 #include <iostream>
 #include <sys/stat.h>
@@ -61,6 +65,7 @@ unique_ptr<FunctionData> OracleBindData::Copy() const {
 	copy->column_names = column_names;
 	copy->original_types = original_types;
 	copy->original_names = original_names;
+	copy->settings = settings;
 	return std::move(copy);
 }
 
@@ -110,7 +115,7 @@ static void ParseOracleConnectionString(const string &connection_string, string 
 	auto slash_pos = connection_string.find('/');
 	auto at_pos = connection_string.find('@', slash_pos == string::npos ? 0 : slash_pos);
 	if (slash_pos == string::npos || at_pos == string::npos || slash_pos == 0 || at_pos <= slash_pos + 1 ||
-	    at_pos == connection_string.size() - 1) {
+ 	    at_pos == connection_string.size() - 1) {
 		throw IOException("Invalid Oracle connection string. Expected user/password@connect_identifier");
 	}
 	user = connection_string.substr(0, slash_pos);
@@ -121,12 +126,49 @@ static void ParseOracleConnectionString(const string &connection_string, string 
 	}
 }
 
+static OracleSettings GetOracleSettings(ClientContext &context, OracleCatalogState *state) {
+	OracleSettings settings;
+	if (state) {
+		settings = state->settings;
+	}
+
+	Value option_value;
+	if (context.TryGetCurrentSetting("oracle_enable_pushdown", option_value) == SettingLookupResult::FOUND) {
+		settings.enable_pushdown = option_value.GetValue<bool>();
+	}
+	if (context.TryGetCurrentSetting("oracle_prefetch_rows", option_value) == SettingLookupResult::FOUND) {
+		auto val = option_value.GetValue<int64_t>();
+		settings.prefetch_rows = MaxValue<idx_t>(1, static_cast<idx_t>(val));
+	}
+	if (context.TryGetCurrentSetting("oracle_prefetch_memory", option_value) == SettingLookupResult::FOUND) {
+		auto val = option_value.GetValue<int64_t>();
+		settings.prefetch_memory = val <= 0 ? 0 : static_cast<idx_t>(val);
+	}
+	if (context.TryGetCurrentSetting("oracle_array_size", option_value) == SettingLookupResult::FOUND) {
+		auto val = option_value.GetValue<int64_t>();
+		settings.array_size = MaxValue<idx_t>(1, static_cast<idx_t>(val));
+	}
+	if (context.TryGetCurrentSetting("oracle_connection_cache", option_value) == SettingLookupResult::FOUND) {
+		settings.connection_cache = option_value.GetValue<bool>();
+	}
+	if (context.TryGetCurrentSetting("oracle_connection_limit", option_value) == SettingLookupResult::FOUND) {
+		auto val = option_value.GetValue<int64_t>();
+		settings.connection_limit = MaxValue<idx_t>(1, static_cast<idx_t>(val));
+	}
+	if (context.TryGetCurrentSetting("oracle_debug_show_queries", option_value) == SettingLookupResult::FOUND) {
+		settings.debug_show_queries = option_value.GetValue<bool>();
+	}
+	return settings;
+}
+
 unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string connection_string, string query,
                                             vector<LogicalType> &return_types, vector<string> &names,
-                                            OracleBindData *bind_data_ptr /* = nullptr */) {
+                                            OracleBindData *bind_data_ptr /* = nullptr */,
+                                            OracleCatalogState *state /* = nullptr */) {
 	auto result = bind_data_ptr ? unique_ptr<OracleBindData>(bind_data_ptr) : make_uniq<OracleBindData>();
 	result->base_query = query;
 	result->query = query;
+	result->settings = GetOracleSettings(context, state);
 	auto &ctx = result->ctx;
 	string user, password, db;
 	if (getenv("ORACLE_DEBUG")) {
@@ -150,11 +192,19 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
 	CheckOCIError(OCIHandleAlloc(ctx->envhp, (dvoid **)&ctx->stmthp, OCI_HTYPE_STMT, 0, nullptr), ctx->errhp,
 	              "Failed to allocate OCI statement handle");
 
-	// Set a modest prefetch to reduce round-trips; safe for general workloads.
-	ub4 prefetch_rows = 200;
+	// Set prefetch/array tuning from settings
+	ub4 prefetch_rows = result->settings.prefetch_rows;
 	CheckOCIError(OCIAttrSet(ctx->stmthp, OCI_HTYPE_STMT, &prefetch_rows, 0, OCI_ATTR_PREFETCH_ROWS, ctx->errhp),
 	              ctx->errhp, "Failed to set OCI prefetch rows");
+	if (result->settings.prefetch_memory > 0) {
+		ub4 prefetch_mem = result->settings.prefetch_memory;
+		CheckOCIError(OCIAttrSet(ctx->stmthp, OCI_HTYPE_STMT, &prefetch_mem, 0, OCI_ATTR_PREFETCH_MEMORY, ctx->errhp),
+		              ctx->errhp, "Failed to set OCI prefetch memory");
+	}
 
+	if (result->settings.debug_show_queries) {
+		fprintf(stderr, "[oracle] preparing SQL: %s\n", result->query.c_str());
+	}
 	status = OCIStmtPrepare(ctx->stmthp, ctx->errhp, (OraText *)result->query.c_str(), result->query.size(),
 	                        OCI_NTV_SYNTAX, OCI_DEFAULT);
 	CheckOCIError(status, ctx->errhp, "Failed to prepare OCI statement");
@@ -289,6 +339,10 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 	OCIDefine *defnp = nullptr;
 	sword status;
 	idx_t row_count = 0;
+
+	if (bind_data.settings.debug_show_queries) {
+		fprintf(stderr, "[oracle] executing SQL: %s\n", bind_data.query.c_str());
+	}
 
 	// Re-prepare statement in case filter pushdown modified SQL.
 	status = OCIStmtPrepare(ctx->stmthp, ctx->errhp, (OraText *)bind_data.query.c_str(), bind_data.query.size(),
@@ -473,6 +527,9 @@ static bool TryExtractIsNull(Expression &expr, const vector<string> &names, stri
 void OraclePushdownComplexFilter(ClientContext &, LogicalGet &get, FunctionData *bind_data_p,
                                  vector<unique_ptr<Expression>> &expressions) {
 	auto &bind = bind_data_p->Cast<OracleBindData>();
+	if (!bind.settings.enable_pushdown) {
+		return;
+	}
 	vector<unique_ptr<Expression>> remaining;
 	vector<string> clauses;
 	for (auto &expr : expressions) {
@@ -529,6 +586,9 @@ void OraclePushdownComplexFilter(ClientContext &, LogicalGet &get, FunctionData 
 	bind.oci_sizes = projected_oci_sizes;
 
 	bind.query = "SELECT " + select_sql + " FROM (" + bind.base_query + ")" + where_sql;
+	if (bind.settings.debug_show_queries) {
+		fprintf(stderr, "[oracle] pushdown query: %s\n", bind.query.c_str());
+	}
 	expressions = std::move(remaining);
 }
 
@@ -541,29 +601,53 @@ static void OracleAttachWallet(DataChunk &args, ExpressionState &state, Vector &
 	result.SetValue(0, Value("Wallet attached: " + wallet_path));
 }
 
+static void OracleClearCache(DataChunk &, ExpressionState &, Vector &result) {
+	OracleCatalogState::ClearAllCaches();
+	result.SetValue(0, Value("oracle caches cleared"));
+}
+
 static void LoadInternal(ExtensionLoader &loader) {
 	auto oracle_scan_func =
 	    TableFunction("oracle_scan", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                  OracleQueryFunction, OracleScanBind);
 	oracle_scan_func.filter_pushdown = true;
 	oracle_scan_func.pushdown_complex_filter = OraclePushdownComplexFilter;
+	oracle_scan_func.projection_pushdown = true;
 	loader.RegisterFunction(oracle_scan_func);
 
 	auto oracle_query_func = TableFunction("oracle_query", {LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                                       OracleQueryFunction, OracleQueryBind);
 	oracle_query_func.filter_pushdown = true;
 	oracle_query_func.pushdown_complex_filter = OraclePushdownComplexFilter;
+	oracle_query_func.projection_pushdown = true;
 	loader.RegisterFunction(oracle_query_func);
 
 	auto attach_wallet_func =
 	    ScalarFunction("oracle_attach_wallet", {LogicalType::VARCHAR}, LogicalType::VARCHAR, OracleAttachWallet);
 	loader.RegisterFunction(attach_wallet_func);
+
+	auto clear_cache_func = ScalarFunction("oracle_clear_cache", {}, LogicalType::VARCHAR, OracleClearCache);
+	loader.RegisterFunction(clear_cache_func);
 }
 
 void OracleExtension::Load(ExtensionLoader &loader) {
 	LoadInternal(loader);
 	auto &db = loader.GetDatabaseInstance();
 	auto &config = DBConfig::GetConfig(db);
+	config.AddExtensionOption("oracle_enable_pushdown", "Enable Oracle filter/projection pushdown", LogicalType::BOOLEAN,
+	                         Value::BOOLEAN(false));
+	config.AddExtensionOption("oracle_prefetch_rows", "OCI prefetch row count", LogicalType::UBIGINT,
+	                         Value::UBIGINT(200));
+	config.AddExtensionOption("oracle_prefetch_memory", "OCI prefetch memory (bytes, 0=auto)", LogicalType::UBIGINT,
+	                         Value::UBIGINT(0));
+	config.AddExtensionOption("oracle_array_size", "Rows fetched per OCI iteration (used for tuning)",
+	                         LogicalType::UBIGINT, Value::UBIGINT(256));
+	config.AddExtensionOption("oracle_connection_cache", "Reuse Oracle connections when possible", LogicalType::BOOLEAN,
+	                         Value::BOOLEAN(true));
+	config.AddExtensionOption("oracle_connection_limit", "Maximum cached Oracle connections", LogicalType::UBIGINT,
+	                         Value::UBIGINT(8));
+	config.AddExtensionOption("oracle_debug_show_queries", "Log generated Oracle SQL for debugging",
+	                         LogicalType::BOOLEAN, Value::BOOLEAN(false));
 	config.storage_extensions["oracle"] = CreateOracleStorageExtension();
 }
 

@@ -1,0 +1,13 @@
+# Validate Oracle extension settings and cache utilities without requiring a live Oracle instance.
+
+statement ok
+SET oracle_enable_pushdown=false;
+
+statement ok
+SET oracle_prefetch_rows=10;
+
+statement ok
+SET oracle_array_size=32;
+
+statement ok
+SELECT oracle_clear_cache();

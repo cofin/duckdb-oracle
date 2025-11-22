@@ -4,8 +4,11 @@
 #include "duckdb/common/types.hpp"
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/vector.hpp"
+#include "duckdb/common/types/value.hpp"
 #include "oracle_connection.hpp"
+#include "oracle_settings.hpp"
 #include <string>
+#include <memory>
 
 namespace duckdb {
 
@@ -17,6 +20,13 @@ public:
 	}
 
 	OracleConnection &EnsureConnection();
+	void ApplyOptions(const unordered_map<string, Value> &options);
+	void ClearCaches();
+
+	static void Register(const std::shared_ptr<OracleCatalogState> &state);
+	static void ClearAllCaches();
+
+	OracleSettings settings;
 
 	vector<string> ListSchemas();
 	vector<string> ListTables(const string &schema);
