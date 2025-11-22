@@ -13,7 +13,7 @@ INSTALL_DIR=$PWD/oracle_sdk
 rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 
-echo "Downloading Oracle Instant Client ${OCI_VER_FULL}..."
+echo "Downloading Oracle Instant Client ${OCI_VER_FULL}"...
 wget -q -O basic.zip "${BASE_URL}/instantclient-basic-linux.x64-${OCI_VER_FULL}.zip" || \
   wget -q -O basic.zip "${LATEST_BASE_URL}/instantclient-basic-linux.x64.zip"
 wget -q -O sdk.zip "${BASE_URL}/instantclient-sdk-linux.x64-${OCI_VER_FULL}.zip" || \
@@ -29,20 +29,26 @@ OCI_HOME=$(find $INSTALL_DIR -maxdepth 1 -name "instantclient_*" | head -n 1)
 
 echo "Oracle Home found at: $OCI_HOME"
 
-# Ensure libaio is available on Ubuntu 24.04 (libaio1 → libaio1t64) and other runners.
+# Ensure libaio is available on Ubuntu 24.04 (libaio1 -> libaio1t64) and other runners.
 # Avoid sudo; CI containers typically run as root.
 if ! [ -f /usr/lib/x86_64-linux-gnu/libaio.so.1 ] && ! [ -f /lib/x86_64-linux-gnu/libaio.so.1 ]; then
   echo "Installing libaio runtime dependency..."
+  
+  SUDO=""
+  if [ "$EUID" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
+    SUDO="sudo"
+  fi
+
   if command -v apt-get >/dev/null 2>&1; then
-    apt-get update -y >/dev/null
-    apt-get install -y --no-install-recommends libaio1t64 || apt-get install -y --no-install-recommends libaio-dev || true
+    $SUDO apt-get update -y >/dev/null
+    $SUDO apt-get install -y --no-install-recommends libaio1t64 || $SUDO apt-get install -y --no-install-recommends libaio-dev || true
   elif command -v apk >/dev/null 2>&1; then
         apk add --no-cache libaio || true
   else
         echo "Warning: no supported package manager found; continuing without installing libaio."
   fi
     if [ -f /usr/lib/x86_64-linux-gnu/libaio.so.1t64 ] && [ ! -f /usr/lib/x86_64-linux-gnu/libaio.so.1 ]; then
-        ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1
+        $SUDO ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1
     fi
 fi
 
@@ -60,8 +66,17 @@ echo "export LD_LIBRARY_PATH=\"$LD_LIBRARY_PATH\"" >> "$INSTALL_DIR/env.sh"
 
 # Try to register with ldconfig when permitted
 if command -v ldconfig >/dev/null 2>&1; then
-  echo "$OCI_HOME" > /etc/ld.so.conf.d/oracle-instantclient.conf || true
-  ldconfig || true
+  SUDO=""
+  if [ "$EUID" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
+    SUDO="sudo"
+  fi
+  
+  if [ -n "$SUDO" ]; then
+     echo "$OCI_HOME" | $SUDO tee /etc/ld.so.conf.d/oracle-instantclient.conf > /dev/null || true
+  else
+     echo "$OCI_HOME" > /etc/ld.so.conf.d/oracle-instantclient.conf || true
+  fi
+  $SUDO ldconfig || true
 fi
 
 echo "OCI setup complete."
