@@ -20,11 +20,19 @@ include extension-ci-tools/makefiles/duckdb_extension.Makefile
 
 ORACLE_IMAGE ?= gvenzl/oracle-free:23-slim
 
-.PHONY: configure_ci integration help clean-all
+.PHONY: configure_ci tidy-check integration help clean-all
 
 configure_ci:
 	./scripts/setup_oci_linux.sh
 
+tidy-check:
+	./scripts/setup_oci_linux.sh
+	export ORACLE_HOME=$$(find $$(pwd)/oracle_sdk -maxdepth 1 -name "instantclient_*" | head -n1) && \
+	export LD_LIBRARY_PATH=$$ORACLE_HOME:$$LD_LIBRARY_PATH && \
+	mkdir -p ./build/tidy && \
+	cmake $(GENERATOR) $(BUILD_FLAGS) $(EXT_DEBUG_FLAGS) -DDISABLE_UNITY=1 -DCLANG_TIDY=1 -S $(DUCKDB_SRCDIR) -B build/tidy && \
+	cp duckdb/.clang-tidy build/tidy/.clang-tidy && \
+	cd build/tidy && python3 ../../duckdb/scripts/run-clang-tidy.py '$(PROJ_DIR)src/.*/' -header-filter '$(PROJ_DIR)src/.*/' -quiet ${TIDY_THREAD_PARAMETER} ${TIDY_BINARY_PARAMETER} ${TIDY_PERFORM_CHECKS}
 
 
 # Build (release) then run integration tests against containerized Oracle.

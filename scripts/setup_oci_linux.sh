@@ -32,6 +32,10 @@ if [ ! -f "$OCI_HOME/libclntsh.so" ]; then
     ln -s "$OCI_HOME/libclntsh.so.23.1" "$OCI_HOME/libclntsh.so" || true
 fi
 
-# Export for subsequent steps (this script runs in subshell in make, 
-# so we rely on the Workflow env vars or strict paths)
+# Export for subsequent steps (callers should `source` this script if they want env vars in-shell)
+export ORACLE_HOME="$OCI_HOME"
+export LD_LIBRARY_PATH="$OCI_HOME:${LD_LIBRARY_PATH}"
+echo "export ORACLE_HOME=\"$ORACLE_HOME\"" > "$INSTALL_DIR/env.sh"
+echo "export LD_LIBRARY_PATH=\"$LD_LIBRARY_PATH\"" >> "$INSTALL_DIR/env.sh"
+
 echo "OCI setup complete."
