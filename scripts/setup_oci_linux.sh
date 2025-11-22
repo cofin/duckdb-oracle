@@ -50,7 +50,7 @@ echo "Oracle Home found at: $OCI_HOME"
 
 # Ensure libaio is available on Ubuntu 24.04 (libaio1 -> libaio1t64) and other runners.
 # Avoid sudo; CI containers typically run as root.
-if ! [ -f /usr/lib/${LIBAIO_ARCH}/libaio.so.1 ] && ! [ -f /lib/${LIBAIO_ARCH}/libaio.so.1 ]; then
+if ! [ -f /usr/lib/${LIBAIO_ARCH}/libaio.so.1 ] && ! [ -f /lib/${LIBAIO_ARCH}/libaio.so.1 ] && ! [ -f /usr/lib64/libaio.so.1 ]; then
   echo "Installing libaio runtime dependency..."
 
   SUDO=""
@@ -58,17 +58,24 @@ if ! [ -f /usr/lib/${LIBAIO_ARCH}/libaio.so.1 ] && ! [ -f /lib/${LIBAIO_ARCH}/li
     SUDO="sudo"
   fi
 
+  # Try various package managers
   if command -v apt-get >/dev/null 2>&1; then
     $SUDO apt-get update -y >/dev/null
     $SUDO apt-get install -y --no-install-recommends libaio1t64 || $SUDO apt-get install -y --no-install-recommends libaio-dev || true
+  elif command -v yum >/dev/null 2>&1; then
+    $SUDO yum install -y libaio || true
+  elif command -v dnf >/dev/null 2>&1; then
+    $SUDO dnf install -y libaio || true
   elif command -v apk >/dev/null 2>&1; then
-        apk add --no-cache libaio || true
+    apk add --no-cache libaio || true
   else
-        echo "Warning: no supported package manager found; continuing without installing libaio."
+    echo "Warning: no supported package manager found; continuing without installing libaio."
   fi
-    if [ -f /usr/lib/${LIBAIO_ARCH}/libaio.so.1t64 ] && [ ! -f /usr/lib/${LIBAIO_ARCH}/libaio.so.1 ]; then
-        $SUDO ln -sf /usr/lib/${LIBAIO_ARCH}/libaio.so.1t64 /usr/lib/${LIBAIO_ARCH}/libaio.so.1
-    fi
+
+  # Handle Ubuntu 24.04 libaio1t64 -> libaio.so.1 symlink
+  if [ -f /usr/lib/${LIBAIO_ARCH}/libaio.so.1t64 ] && [ ! -f /usr/lib/${LIBAIO_ARCH}/libaio.so.1 ]; then
+    $SUDO ln -sf /usr/lib/${LIBAIO_ARCH}/libaio.so.1t64 /usr/lib/${LIBAIO_ARCH}/libaio.so.1
+  fi
 fi
 
 # Symlink libclntsh.so (sometimes needed if only .so.version exists)
@@ -80,16 +87,25 @@ fi
 # Export for subsequent steps (callers should `source` this script if they want env vars in-shell)
 export ORACLE_HOME="$OCI_HOME"
 export LD_LIBRARY_PATH="$OCI_HOME:${LD_LIBRARY_PATH}"
+
+# For GitHub Actions: add to PATH and environment
+if [ -n "$GITHUB_PATH" ]; then
+    echo "$OCI_HOME" >> "$GITHUB_PATH"
+    echo "ORACLE_HOME=$OCI_HOME" >> "$GITHUB_ENV"
+    echo "LD_LIBRARY_PATH=$OCI_HOME:\$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
+fi
+
+# For local use: save to env file
 echo "export ORACLE_HOME=\"$ORACLE_HOME\"" > "$INSTALL_DIR/env.sh"
 echo "export LD_LIBRARY_PATH=\"$LD_LIBRARY_PATH\"" >> "$INSTALL_DIR/env.sh"
 
-# Try to register with ldconfig when permitted
+# Try to register with ldconfig when permitted (helps local builds and Docker)
 if command -v ldconfig >/dev/null 2>&1; then
   SUDO=""
   if [ "$EUID" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
     SUDO="sudo"
   fi
-  
+
   if [ -d "/etc/ld.so.conf.d" ]; then
       if [ -n "$SUDO" ]; then
          echo "$OCI_HOME" | $SUDO tee /etc/ld.so.conf.d/oracle-instantclient.conf > /dev/null || true

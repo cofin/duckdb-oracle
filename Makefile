@@ -18,11 +18,23 @@ ORACLE_IMAGE ?= gvenzl/oracle-free:23-slim
 
 .PHONY: configure_ci tidy-check integration help clean-all
 
+# Detect OS for Oracle Instant Client setup
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Linux)
+    OCI_SETUP_SCRIPT := ./scripts/setup_oci_linux.sh
+endif
+ifeq ($(UNAME_S),Darwin)
+    OCI_SETUP_SCRIPT := ./scripts/setup_oci_macos.sh
+endif
+ifeq ($(OS),Windows_NT)
+    OCI_SETUP_SCRIPT := powershell -ExecutionPolicy Bypass -File ./scripts/setup_oci_windows.ps1
+endif
+
 configure_ci:
-	./scripts/setup_oci_linux.sh
+	$(OCI_SETUP_SCRIPT)
 
 tidy-check:
-	./scripts/setup_oci_linux.sh
+	$(OCI_SETUP_SCRIPT)
 	export ORACLE_HOME=$$(find $$(pwd)/oracle_sdk -maxdepth 1 -name "instantclient_*" | head -n1) && \
 	export LD_LIBRARY_PATH=$$ORACLE_HOME:$$LD_LIBRARY_PATH && \
 	mkdir -p ./build/tidy && \
