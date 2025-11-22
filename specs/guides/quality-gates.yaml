@@ -1,0 +1,45 @@
+metadata:
+  version: "2.0"
+  adaptive: true
+  description: "Quality gates for C++ DuckDB Extension"
+
+implementation_gates:
+  - name: clean_build
+    command: "make release"
+    required: true
+    description: "Code must compile in release mode"
+
+  - name: format_check
+    command: "make format-check"
+    required: true
+    description: "Code must follow DuckDB formatting style"
+
+  - name: tidy_check
+    command: "make tidy-check"
+    required: true
+    description: "Clang-tidy static analysis must pass"
+
+testing_gates:
+  - name: unit_tests
+    command: "make test"
+    required: true
+    description: "All SQL unit tests must pass"
+
+  - name: integration_tests
+    command: "make integration"
+    required: false
+    adaptive: true # Only run if Docker/OCI available
+    description: "Integration tests against real Oracle DB"
+
+documentation_gates:
+  - name: doxygen_comments
+    description: "Public C++ API must have Doxygen comments"
+    required: true
+
+  - name: pattern_documentation
+    description: "New patterns must be captured in specs/guides/patterns/"
+    required: true
+
+  - name: example_code
+    description: "Complex patterns need working examples in specs/guides/examples/"
+    required_when: "architectural_change"

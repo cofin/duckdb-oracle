@@ -3,6 +3,8 @@
 
 # Validate Oracle extension settings and cache utilities without requiring a live Oracle instance.
 
+require oracle
+
 statement ok
 SET oracle_enable_pushdown=false;
 

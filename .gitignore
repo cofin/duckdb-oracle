@@ -13,6 +13,19 @@ vcpkg/downloads/
 
 # Gemini Agent System 
 test_connection.test
-CLAUDE.md
-.claude
 vcpkg
+
+# Gemini Agent System
+specs/archive/
+.gemini/mcp-tools.txt
+.gemini/mcp-strategy.md
+!specs/active/.gitkeep
+!specs/archive/.gitkeep
+!specs/guides/
+!specs/guides/**/*.md
+!specs/guides/**/*.yaml
+!specs/template-spec/
+!specs/template-spec/**/*.md
+
+# Agent telemetry logs
+specs/guides/telemetry/*.jsonl

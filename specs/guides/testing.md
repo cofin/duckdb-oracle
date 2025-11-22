@@ -14,7 +14,7 @@ For robust testing against a real Oracle Database (including Vector and JSON typ
 
 ```bash
 # Runs integration tests against a local container
-make test_integration
+make integration
 ```
 
 This script:

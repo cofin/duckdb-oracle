@@ -13,8 +13,8 @@ static std::mutex &RegistryLock() {
 	return lock;
 }
 
-static std::vector<std::weak_ptr<OracleCatalogState>> &Registry() {
-	static std::vector<std::weak_ptr<OracleCatalogState>> registry;
+static std::vector<weak_ptr<OracleCatalogState>> &Registry() {
+	static std::vector<weak_ptr<OracleCatalogState>> registry;
 	return registry;
 }
 } // namespace
@@ -65,7 +65,7 @@ void OracleCatalogState::ClearCaches() {
 
 void OracleCatalogState::Register(const shared_ptr<OracleCatalogState> &state) {
 	lock_guard<std::mutex> guard(RegistryLock());
-	Registry().push_back(state);
+	Registry().push_back(weak_ptr<OracleCatalogState>(state));
 }
 
 void OracleCatalogState::ClearAllCaches() {

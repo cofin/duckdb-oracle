@@ -39,6 +39,12 @@ std::string SayHello(const std::string& name);
 
 The project uses `clang-tidy` for deeper static analysis. This helps to catch common errors and enforce best practices.
 
+To run the linter (requires OCI SDK setup):
+
+```bash
+make tidy-check
+```
+
 ## Auto-Formatting
 
 To automatically format your code to match the project's style, run:

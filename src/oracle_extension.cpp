@@ -133,29 +133,29 @@ static OracleSettings GetOracleSettings(ClientContext &context, OracleCatalogSta
 	}
 
 	Value option_value;
-	if (context.TryGetCurrentSetting("oracle_enable_pushdown", option_value) == SettingLookupResult::FOUND) {
+	if (context.TryGetCurrentSetting("oracle_enable_pushdown", option_value)) {
 		settings.enable_pushdown = option_value.GetValue<bool>();
 	}
-	if (context.TryGetCurrentSetting("oracle_prefetch_rows", option_value) == SettingLookupResult::FOUND) {
+	if (context.TryGetCurrentSetting("oracle_prefetch_rows", option_value)) {
 		auto val = option_value.GetValue<int64_t>();
 		settings.prefetch_rows = MaxValue<idx_t>(1, static_cast<idx_t>(val));
 	}
-	if (context.TryGetCurrentSetting("oracle_prefetch_memory", option_value) == SettingLookupResult::FOUND) {
+	if (context.TryGetCurrentSetting("oracle_prefetch_memory", option_value)) {
 		auto val = option_value.GetValue<int64_t>();
 		settings.prefetch_memory = val <= 0 ? 0 : static_cast<idx_t>(val);
 	}
-	if (context.TryGetCurrentSetting("oracle_array_size", option_value) == SettingLookupResult::FOUND) {
+	if (context.TryGetCurrentSetting("oracle_array_size", option_value)) {
 		auto val = option_value.GetValue<int64_t>();
 		settings.array_size = MaxValue<idx_t>(1, static_cast<idx_t>(val));
 	}
-	if (context.TryGetCurrentSetting("oracle_connection_cache", option_value) == SettingLookupResult::FOUND) {
+	if (context.TryGetCurrentSetting("oracle_connection_cache", option_value)) {
 		settings.connection_cache = option_value.GetValue<bool>();
 	}
-	if (context.TryGetCurrentSetting("oracle_connection_limit", option_value) == SettingLookupResult::FOUND) {
+	if (context.TryGetCurrentSetting("oracle_connection_limit", option_value)) {
 		auto val = option_value.GetValue<int64_t>();
 		settings.connection_limit = MaxValue<idx_t>(1, static_cast<idx_t>(val));
 	}
-	if (context.TryGetCurrentSetting("oracle_debug_show_queries", option_value) == SettingLookupResult::FOUND) {
+	if (context.TryGetCurrentSetting("oracle_debug_show_queries", option_value)) {
 		settings.debug_show_queries = option_value.GetValue<bool>();
 	}
 	return settings;

@@ -12,7 +12,14 @@ This extension adds Oracle connectivity to DuckDB via the **Oracle Call Interfac
 duckdb-oracle/
 ├── src/
 │   ├── oracle_extension.cpp        # Main entry point and implementation
-│   └── include/oracle_extension.hpp
+│   ├── include/                    # Header files
+│   │   ├── oracle_extension.hpp
+│   │   ├── oracle_storage_extension.hpp
+│   │   └── ...
+│   └── storage/                    # Storage extension implementation
+│       ├── oracle_storage_extension.cpp
+│       ├── oracle_catalog.cpp
+│       └── ...
 ├── test/sql/                       # SQL-based test suite
 ├── vcpkg.json                      # Dependency management (includes OpenSSL)
 ├── CMakeLists.txt                  # Build configuration (DuckDB macros + OCI detection)
@@ -29,6 +36,14 @@ duckdb-oracle/
 - `oracle_query` (Table Function): runs an arbitrary SQL query against Oracle with optional pushdown for simple filters/projection.
 - `oracle_attach_wallet` (Scalar Function): sets `TNS_ADMIN` for wallet-based authentication.
 - `oracle_clear_cache` (Scalar Function): clears cached Oracle metadata/connection state held by attached databases.
+
+### Storage Extension (`src/storage/`)
+
+The storage extension allows attaching Oracle databases directly using `ATTACH '...' AS oracle`.
+
+- `OracleStorageExtension` (`src/storage/oracle_storage_extension.cpp`): Handles the `ATTACH` command and creates the catalog.
+- `OracleCatalog` (`src/storage/oracle_catalog.cpp`): Implements the DuckDB catalog interface for Oracle.
+- `OracleTransactionManager`: Manages transactions (currently read-only auto-commit).
 
 ### OCI Resource Management
 
