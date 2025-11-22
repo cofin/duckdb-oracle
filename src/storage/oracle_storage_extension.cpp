@@ -19,7 +19,7 @@ static unique_ptr<Catalog> OracleAttach(optional_ptr<StorageExtensionInfo> stora
 	string connection_string;
 
 	// Decision logic: path vs secret
-	if (!info.path.empty() && info.path != "") {
+	if (!info.path.empty()) {
 		// Existing behavior: use provided connection string
 		connection_string = info.path;
 	} else {
