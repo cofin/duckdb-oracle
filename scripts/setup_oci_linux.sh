@@ -26,13 +26,20 @@ OCI_HOME=$(find $INSTALL_DIR -maxdepth 1 -name "instantclient_*" | head -n 1)
 
 echo "Oracle Home found at: $OCI_HOME"
 
-# Ensure libaio is available on Ubuntu 24.04 where libaio1 was replaced by libaio1t64
-if ! ldconfig -p | grep -q "libaio.so.1"; then
+# Ensure libaio is available on Ubuntu 24.04 (libaio1 → libaio1t64) and other runners.
+# Avoid sudo; CI containers typically run as root.
+if ! [ -f /usr/lib/x86_64-linux-gnu/libaio.so.1 ] && ! [ -f /lib/x86_64-linux-gnu/libaio.so.1 ]; then
     echo "Installing libaio runtime dependency..."
-    sudo apt-get update -y >/dev/null
-    sudo apt-get install -y libaio1t64 || sudo apt-get install -y libaio-dev
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get update -y >/dev/null
+        apt-get install -y libaio1t64 || apt-get install -y libaio-dev || true
+    elif command -v apk >/dev/null 2>&1; then
+        apk add --no-cache libaio || true
+    else
+        echo "Warning: no supported package manager found; continuing without installing libaio."
+    fi
     if [ -f /usr/lib/x86_64-linux-gnu/libaio.so.1t64 ] && [ ! -f /usr/lib/x86_64-linux-gnu/libaio.so.1 ]; then
-        sudo ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1
+        ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1
     fi
 fi
 
