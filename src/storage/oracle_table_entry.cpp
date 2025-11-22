@@ -140,14 +140,16 @@ TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_p
 
 		if (is_spatial) {
 			// Convert SDO_GEOMETRY to WKT CLOB using Oracle's built-in function
-			column_list += StringUtil::Format("SDO_UTIL.TO_WKTGEOMETRY(%s) AS %s", quoted_col.c_str(), quoted_col.c_str());
+			column_list +=
+			    StringUtil::Format("SDO_UTIL.TO_WKTGEOMETRY(%s) AS %s", quoted_col.c_str(), quoted_col.c_str());
 		} else {
 			column_list += quoted_col;
 		}
 		col_idx++;
 	}
 
-	auto query = StringUtil::Format("SELECT %s FROM %s.%s", column_list.c_str(), quoted_schema.c_str(), quoted_table.c_str());
+	auto query =
+	    StringUtil::Format("SELECT %s FROM %s.%s", column_list.c_str(), quoted_schema.c_str(), quoted_table.c_str());
 
 	auto bind = make_uniq<OracleBindData>();
 	bind->column_names = names;
