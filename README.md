@@ -1,11 +1,19 @@
 # Oracle
 
+> **Community Extension**: This is an unofficial, community-maintained extension. It is not affiliated with or endorsed by DuckDB Labs or Oracle Corporation.
+
 This repository provides a native Oracle extension for DuckDB. It allows:
 
 - Attaching an Oracle database with `ATTACH ... (TYPE oracle)` and querying tables directly.
 - Table/query functions: `oracle_scan`, `oracle_query`.
 - Wallet helper: `oracle_attach_wallet`.
 - Cache maintenance: `oracle_clear_cache`.
+
+## Platform Support
+
+> This extension uses [Oracle Instant Client](https://www.oracle.com/database/technologies/instant-client/downloads.html) and supports the following platforms: `linux_amd64`, `linux_arm64`, `osx_amd64` (Intel), `osx_arm64` (Apple Silicon M1/M2/M3), and `windows_amd64`.
+>
+> **WebAssembly (WASM) is not supported** as Oracle Instant Client requires native system libraries that cannot run in the browser sandbox. The builds `wasm_mvp`, `wasm_eh`, and `wasm_threads` are excluded from distribution.
 
 ## Quickstart (DuckDB ≥ v1.4.1)
 
