@@ -31,7 +31,26 @@ ifeq ($(OS),Windows_NT)
 endif
 
 configure_ci:
+	@echo "Running Oracle Instant Client setup..."
 	$(OCI_SETUP_SCRIPT)
+	@echo "Verifying libaio installation..."
+	@if ! [ -f /usr/lib/x86_64-linux-gnu/libaio.so.1 ] && ! [ -f /lib/x86_64-linux-gnu/libaio.so.1 ] && ! [ -f /usr/lib64/libaio.so.1 ] && ! [ -f /usr/lib/aarch64-linux-gnu/libaio.so.1 ] && ! [ -f /lib/aarch64-linux-gnu/libaio.so.1 ]; then \
+		echo "WARNING: libaio.so.1 not found. Tests may fail to run."; \
+		echo "Attempting to install libaio..."; \
+		if command -v apt-get >/dev/null 2>&1; then \
+			apt-get update -y && (apt-get install -y --no-install-recommends libaio1t64 || apt-get install -y --no-install-recommends libaio1 || apt-get install -y --no-install-recommends libaio-dev); \
+		fi; \
+	fi
+	@echo "Creating libaio symlink if needed (Ubuntu 24.04 libaio1t64)..."
+	@if [ -f /usr/lib/x86_64-linux-gnu/libaio.so.1t64 ] && ! [ -f /usr/lib/x86_64-linux-gnu/libaio.so.1 ]; then \
+		ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1; \
+		echo "Created symlink: /usr/lib/x86_64-linux-gnu/libaio.so.1 -> libaio.so.1t64"; \
+	fi
+	@if [ -f /usr/lib/aarch64-linux-gnu/libaio.so.1t64 ] && ! [ -f /usr/lib/aarch64-linux-gnu/libaio.so.1 ]; then \
+		ln -sf /usr/lib/aarch64-linux-gnu/libaio.so.1t64 /usr/lib/aarch64-linux-gnu/libaio.so.1; \
+		echo "Created symlink: /usr/lib/aarch64-linux-gnu/libaio.so.1 -> libaio.so.1t64"; \
+	fi
+	@echo "configure_ci complete"
 
 tidy-check:
 	$(OCI_SETUP_SCRIPT)
