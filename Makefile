@@ -11,10 +11,6 @@ ifneq ($(shell command -v ninja 2>/dev/null),)
 GEN ?= ninja
 endif
 
-ifneq ($(shell command -v ccache 2>/dev/null),)
-EXT_FLAGS += -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-endif
-
 # Include the Makefile from extension-ci-tools
 include extension-ci-tools/makefiles/duckdb_extension.Makefile
 
