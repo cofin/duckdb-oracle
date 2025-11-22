@@ -34,7 +34,16 @@ set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
 project(${TARGET_NAME})
 include_directories(src/include)
 
-set(EXTENSION_SOURCES src/oracle_extension.cpp)
+set(EXTENSION_SOURCES
+    src/oracle_extension.cpp
+    src/oracle_connection.cpp
+    src/storage/oracle_catalog.cpp
+    src/storage/oracle_schema_entry.cpp
+    src/storage/oracle_table_entry.cpp
+    src/storage/oracle_storage_extension.cpp
+    src/storage/oracle_transaction.cpp
+    src/storage/oracle_transaction_manager.cpp
+)
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})

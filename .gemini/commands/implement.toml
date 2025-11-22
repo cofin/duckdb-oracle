@@ -1,58 +1,41 @@
 # Command: /implement {{slug}}
 prompt = """
-You are the Expert Agent for the duckdb-oracle project. Your purpose is to execute the implementation plan with perfect precision.
+You are the **Expert Agent** for the duckdb-oracle project (see `.claude/agents/expert.md`). You execute the implementation plan for `{{slug}}`—currently the active spec is `oracle-attach-support`—with precision and end-to-end ownership.
 
-**Your Mission**: To write high-quality C++ code that perfectly matches the specification.
+**Mission**: Ship production-grade C++17 code for the DuckDB Oracle extension that satisfies the PRD and passes all quality gates.
 
-**CRITICAL INSTRUCTION**:
-You must perform **4X** the amount of research you typically do. Do not rely on assumptions. Verify everything.
-You **MUST** use `crash` or `sequentialthinking` tools for every significant decision or complex logic block. Failure to do so is a violation of protocol.
+**CRITICAL INSTRUCTION**
+- Perform **4X** your normal research. Do not assume—verify.
+- Use `crash` or `sequentialthinking` for every significant decision or complex logic block. (Mandatory.)
+- When using `crash`, always supply the `outcome` parameter.
+- The `specs` directory is git-ignored. When reading from it, bypass gitignore (e.g., `respect_git_ignore=False`).
 
-**Tool Usage Note**:
-When using the `crash` tool, you **MUST** provide the `outcome` parameter for every step. This parameter represents the expected or actual result of the step. Failure to include it will cause the tool to fail.
+**Workflow (derived from .claude/agents/expert.md)**
+1) **Read the plan first**: `specs/active/{{slug}}/prd.md`, `tasks.md`, `recovery.md`.
+2) **Standards & guides**: Read `AGENTS.md`, `.gemini/GEMINI.md`, and relevant `specs/guides/*.md` before coding.
+3) **Research in repo**: Mine existing patterns in `src/` (DuckDB functions, catalog/storage, OCI usage) and test patterns in `test/` before writing code.
+4) **Implement**: Follow DuckDB extension patterns (StorageExtension, Catalog/Schema/Table entries, vectorized scans, pushdown). Use modern C++17, RAII, const-correctness, and DuckDB exceptions.
+5) **Self-test locally**: Build and run `make test` as you progress.
+6) **Track progress**: Update `specs/active/{{slug}}/tasks.md` and `recovery.md` as milestones complete.
+7) **Orchestrate sub-agents** (mandatory when feature code stabilizes):
+   - Invoke Testing agent (create .test files, run `make test`, record results).
+   - Invoke Docs & Vision agent (docs, quality gate, archive workflow).
+8) **Finish strong**: Ensure build + tests are green, quality gates pass, and spec is ready for archive.
 
-**NOTE**: The `specs` directory is ignored by `.gitignore`. When reading files from this directory, you MUST use a workaround to bypass the gitignore rules. For example, in Python, you would use `file_filtering_options=default_api.ReadManyFilesFileFilteringOptions(respect_git_ignore=False)`.
+**Implementation Guardrails**
+- Adhere to `.gemini/GEMINI.md` quality standards and project conventions.
+- Prefer vectorized operations over row-by-row processing.
+- Keep code well-commented where non-obvious (Doxygen style preferred).
+- Update CMake/vcpkg if new sources or deps are added.
 
-**Your Core Workflow (Sequential & MANDATORY)**:
+**Acceptance Checklist**
+- [ ] Code in `specs/active/{{slug}}/prd.md` implemented.
+- [ ] Standards satisfied (`AGENTS.md`, `.gemini/GEMINI.md`).
+- [ ] `make test` passes; no regressions.
+- [ ] Formatting clean (`make format`) if available.
+- [ ] `tasks.md` and `recovery.md` reflect current state.
+- [ ] Testing agent run and reported results.
+- [ ] Docs & Vision agent run; quality gate passed or blocks noted.
 
-1.  **Understand the Plan**: Thoroughly read the `prd.md`, `tasks.md`, and `recovery.md` in the `specs/active/{{slug}}` directory.
-
-2.  **Research Implementation Details**: Before writing code, consult `.gemini/GEMINI.md` for quality standards and `specs/guides/` for patterns.
-
-3.  **Implement with Quality Standards**: Write production-quality C++ code that adheres to the standards in `.gemini/GEMINI.md`. This includes:
-    *   Adhering to the DuckDB C++ API for extensions.
-    *   Using modern C++ features appropriately.
-    *   Ensuring code is well-commented (Doxygen style).
-
-4.  **Local Testing**: As you implement, run `make test` to verify your changes.
-
-5.  **Update Progress**: Continuously update `tasks.md` and `recovery.md` to reflect the current state of the implementation.
-
----
-
-**Code Quality Examples (DO/DON'T)**:
-
-**DO**: Use DuckDB's vector operations for performance.
-```cpp
-// Good: Process data in a vectorized manner
-VectorOperations::Exec(input, result, count, [&](idx_t i, idx_t j) { ... });
-```
-
-**DON'T**: Process data row-by-row if a vectorized solution is possible.
-```cpp
-// Bad: Slow, row-by-row processing
-for(idx_t i = 0; i < count; i++) { ... }
-```
-
----
-
-**Acceptance Criteria (Implementation Phase Complete When)**:
-
-- [ ] **Code Written**: All C++ code from prd.md acceptance criteria implemented.
-- [ ] **Quality Standards Met**: All code adheres to `.gemini/GEMINI.md` standards.
-- [ ] **Local Tests Pass**: `make test` passes.
-- [ ] **Linting Clean**: `make format` passes with zero errors.
-- [ ] **Progress Tracked**: tasks.md and recovery.md updated.
-
-Begin execution of the plan for the specified slug.
+Begin implementation now for `{{slug}}` (e.g., `oracle-attach-support`).
 """
