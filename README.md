@@ -21,6 +21,65 @@ ATTACH 'user/password@//host:1521/service' AS ora (TYPE oracle);
 SELECT * FROM ora.HR.EMPLOYEES WHERE employee_id = 101;
 ```
 
+## Authentication Methods
+
+The Oracle extension supports three authentication methods:
+
+### 1. Connection String (Quick Start)
+
+```sql
+ATTACH 'user/password@host:1521/service' AS ora (TYPE oracle);
+```
+
+**Best for:** Development, quick testing
+
+### 2. Secret Manager (Recommended for Scripts)
+
+```sql
+-- Create a reusable secret
+CREATE SECRET (
+    TYPE oracle,
+    HOST 'localhost',
+    PORT 1521,
+    SERVICE 'XEPDB1',
+    USER 'scott',
+    PASSWORD 'tiger'
+);
+
+-- Attach using the default secret
+ATTACH '' AS ora (TYPE oracle);
+
+-- Or create named secrets for multiple databases
+CREATE SECRET ora_dev (TYPE oracle, HOST 'dev.example.com', SERVICE 'DEVDB', USER 'dev_user', PASSWORD 'dev_pass');
+CREATE SECRET ora_prod (TYPE oracle, HOST 'prod.example.com', SERVICE 'PRODDB', USER 'prod_user', PASSWORD 'prod_pass');
+
+-- Attach using a named secret
+ATTACH '' AS dev (TYPE oracle, SECRET ora_dev);
+ATTACH '' AS prod (TYPE oracle, SECRET ora_prod);
+```
+
+**Best for:** CI/CD pipelines, scripts with multiple databases, when you need credential reusability
+
+**Secret Parameters:**
+- `HOST` (optional, default: `localhost`) - Oracle server hostname
+- `PORT` (optional, default: `1521`) - Oracle listener port
+- `SERVICE` or `DATABASE` (required) - Oracle service name
+- `USER` (required) - Oracle username
+- `PASSWORD` (required) - Oracle password
+- `WALLET_PATH` (optional) - Path to Oracle Wallet directory
+
+### 3. Oracle Wallet (Production)
+
+```sql
+-- Set wallet location
+SELECT oracle_attach_wallet('/path/to/wallet');
+
+-- Attach (credentials from wallet)
+ATTACH 'user@service' AS ora (TYPE oracle);
+```
+
+**Best for:** Production deployments, Autonomous Database, enterprise security requirements
+
 ### Functions
 
 | Function | Description |
