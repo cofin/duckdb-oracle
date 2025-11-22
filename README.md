@@ -43,32 +43,34 @@ ATTACH 'user/password@host:1521/service' AS ora (TYPE oracle);
 
 ### 2. Secret Manager (Recommended for Scripts)
 
+Store credentials in secrets, specify connection details in ATTACH:
+
 ```sql
--- Create a reusable secret
-CREATE SECRET (
+-- Create a secret with just credentials
+CREATE SECRET oracle_creds (
     TYPE oracle,
-    HOST 'localhost',
-    PORT 1521,
-    SERVICE 'XEPDB1',
     USER 'scott',
     PASSWORD 'tiger'
 );
 
--- Attach using the default secret
-ATTACH '' AS ora (TYPE oracle);
+-- Attach using EZConnect syntax + secret
+ATTACH 'localhost:1521/XEPDB1' AS ora (TYPE oracle, SECRET oracle_creds);
 
--- Or create named secrets for multiple databases
-CREATE SECRET ora_dev (TYPE oracle, HOST 'dev.example.com', SERVICE 'DEVDB', USER 'dev_user', PASSWORD 'dev_pass');
-CREATE SECRET ora_prod (TYPE oracle, HOST 'prod.example.com', SERVICE 'PRODDB', USER 'prod_user', PASSWORD 'prod_pass');
+-- Or use TNS alias (requires tnsnames.ora)
+ATTACH 'PRODDB' AS prod (TYPE oracle, SECRET oracle_creds);
 
--- Attach using a named secret
-ATTACH '' AS dev (TYPE oracle, SECRET ora_dev);
-ATTACH '' AS prod (TYPE oracle, SECRET ora_prod);
+-- Multiple environments with different credentials
+CREATE SECRET dev_creds (TYPE oracle, USER 'dev_user', PASSWORD 'dev_pass');
+CREATE SECRET prod_creds (TYPE oracle, USER 'prod_user', PASSWORD 'prod_pass');
+
+ATTACH 'dev.example.com:1521/DEVDB' AS dev (TYPE oracle, SECRET dev_creds);
+ATTACH 'prod.example.com:1521/PRODDB' AS prod (TYPE oracle, SECRET prod_creds);
 ```
 
-**Best for:** CI/CD pipelines, scripts with multiple databases, when you need credential reusability
+**Best for:** CI/CD pipelines, scripts with multiple databases, when you need credential reusability without embedding passwords
 
 **Secret Parameters:**
+
 - `HOST` (optional, default: `localhost`) - Oracle server hostname
 - `PORT` (optional, default: `1521`) - Oracle listener port
 - `SERVICE` or `DATABASE` (required) - Oracle service name
@@ -76,17 +78,43 @@ ATTACH '' AS prod (TYPE oracle, SECRET ora_prod);
 - `PASSWORD` (required) - Oracle password
 - `WALLET_PATH` (optional) - Path to Oracle Wallet directory
 
-### 3. Oracle Wallet (Production)
+### 3. Oracle Wallet Integration
+
+Oracle Wallet securely stores credentials and connection strings. The extension can leverage your existing Oracle Wallet configuration.
 
 ```sql
--- Set wallet location
+-- Set wallet location (contains ewallet.p12, tnsnames.ora, sqlnet.ora)
 SELECT oracle_attach_wallet('/path/to/wallet');
 
--- Attach (credentials from wallet)
-ATTACH 'user@service' AS ora (TYPE oracle);
+-- Attach using TNS alias from wallet (credentials auto-loaded from wallet)
+ATTACH 'PRODDB_HIGH' AS prod (TYPE oracle);
+
+-- Example: Oracle Autonomous Database
+SELECT oracle_attach_wallet('/home/app/wallet_autonomous');
+ATTACH 'myatp_high' AS atp (TYPE oracle);
+ATTACH 'myatp_medium' AS atp_medium (TYPE oracle);
+
+-- Wallet + explicit username (useful when wallet has multiple schemas)
+ATTACH 'admin@PRODDB_HIGH' AS prod_admin (TYPE oracle);
+
+-- Combine wallet with secret for additional flexibility
+CREATE SECRET app_user (TYPE oracle, USER 'app_schema', PASSWORD 'app_pass');
+ATTACH 'PRODDB_HIGH' AS prod (TYPE oracle, SECRET app_user);
 ```
 
-**Best for:** Production deployments, Autonomous Database, enterprise security requirements
+**Best for:**
+
+- Production deployments with Oracle Wallet
+- Oracle Autonomous Database (ATP/ADW)
+- Enterprise environments with centralized credential management
+- When using Oracle TNS aliases for connection failover/load balancing
+
+**How it works:**
+
+1. `oracle_attach_wallet()` sets the `TNS_ADMIN` environment variable
+2. Oracle Instant Client reads `tnsnames.ora` for connection aliases
+3. `sqlnet.ora` configures wallet location
+4. Credentials are automatically loaded from `ewallet.p12` or `cwallet.sso`
 
 ### Functions
 

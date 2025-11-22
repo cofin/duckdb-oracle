@@ -139,6 +139,105 @@ void Connect(const string &connection_string);
 - **Error handling**: Use `CheckOCIError()` for all OCI calls
 - **Mutex protection**: Protect shared state (see `OracleCatalogState::lock`)
 - **Lazy loading**: Defer expensive operations (see `OracleTableEntry::GetColumns()`)
+- **Secret Management**: Use DuckDB SecretManager for credential storage (see `oracle_secret.cpp`)
+
+### Pattern: DuckDB Secret Manager Integration
+
+When adding secret support to a DuckDB extension:
+
+```cpp
+// 1. Define secret parameters structure
+struct OracleSecretParameters {
+    string host = "localhost";
+    idx_t port = 1521;
+    string service;     // required
+    string user;        // required
+    string password;    // required
+};
+
+// 2. Create secret parsing function
+OracleSecretParameters ParseOracleSecret(const CreateSecretInput &input) {
+    OracleSecretParameters params;
+    // Extract parameters from input.options map
+    auto host_lookup = input.options.find("host");
+    if (host_lookup != input.options.end()) {
+        params.host = host_lookup->second.ToString();
+    }
+    // ... parse other parameters
+    return params;
+}
+
+// 3. Validate required parameters
+void ValidateOracleSecret(const OracleSecretParameters &params) {
+    if (params.user.empty()) {
+        throw InvalidInputException("Oracle secret missing required parameter: USER");
+    }
+    // ... validate other required fields
+}
+
+// 4. Create secret function
+unique_ptr<BaseSecret> CreateOracleSecretFromConfig(ClientContext &context, CreateSecretInput &input) {
+    auto params = ParseOracleSecret(input);
+    ValidateOracleSecret(params);
+
+    // Build KeyValueSecret
+    auto secret = make_uniq<KeyValueSecret>(scope, type, provider, name);
+    secret->redact_keys = {"password"};  // Passwords auto-redacted
+    // ... set parameters
+    return std::move(secret);
+}
+
+// 5. Register secret type and function in extension LoadInternal()
+SecretType secret_type;
+secret_type.name = "oracle";
+secret_type.deserializer = KeyValueSecret::Deserialize<KeyValueSecret>;
+secret_type.default_provider = "config";
+ExtensionUtil::RegisterSecretType(instance, secret_type);
+
+CreateSecretFunction secret_function = {"oracle", "config", CreateOracleSecretFromConfig};
+ExtensionUtil::RegisterFunction(instance, secret_function);
+
+// 6. Retrieve secrets in ATTACH function
+static unique_ptr<Catalog> OracleAttach(...) {
+    string connection_string;
+
+    if (!info.path.empty()) {
+        // Use provided connection string
+        connection_string = info.path;
+    } else {
+        // Retrieve from secret manager
+        auto &secret_manager = SecretManager::Get(context);
+        auto transaction = CatalogTransaction::GetSystemCatalogTransaction(context);
+
+        // Check for named secret
+        shared_ptr<KeyValueSecret> secret;
+        auto secret_opt = options.options.find("secret");
+        if (secret_opt != options.options.end()) {
+            auto secret_name = secret_opt->second.ToString();
+            secret = dynamic_pointer_cast<KeyValueSecret>(
+                secret_manager.GetSecretByName(transaction, secret_name, "oracle"));
+        } else {
+            // Use default secret
+            secret = dynamic_pointer_cast<KeyValueSecret>(
+                secret_manager.GetSecretByName(transaction, "__default_oracle", "oracle"));
+        }
+
+        if (!secret) {
+            throw BinderException("No Oracle secret found. Create with: CREATE SECRET (TYPE oracle, ...)");
+        }
+
+        connection_string = BuildConnectionStringFromSecret(*secret);
+    }
+    // ... continue with existing attach logic
+}
+```
+
+**Key Points:**
+- Use `KeyValueSecret` for structured parameter storage
+- Set `redact_keys` to hide sensitive values in output
+- Validate all required parameters in secret creation
+- Provide clear error messages with usage examples
+- Maintain backward compatibility with existing auth methods
 
 ## Project Structure
 
@@ -147,6 +246,7 @@ duckdb-oracle/
 ├── src/
 │   ├── oracle_extension.cpp           # Entry point, registration
 │   ├── oracle_connection.cpp          # OCI connection wrapper
+│   ├── oracle_secret.cpp              # Secret Manager integration
 │   ├── storage/
 │   │   ├── oracle_catalog.cpp         # Catalog implementation
 │   │   ├── oracle_schema_entry.cpp    # Schema discovery
@@ -158,12 +258,15 @@ duckdb-oracle/
 │       ├── oracle_catalog_state.hpp   # Shared state per attached DB
 │       ├── oracle_settings.hpp        # Extension settings
 │       ├── oracle_table_function.hpp  # Query execution (OracleBindData)
+│       ├── oracle_secret.hpp          # Secret parameters and functions
 │       └── *.hpp
 ├── test/
 │   ├── sql/*.test                     # DuckDB SQL tests
 │   └── integration/init_sql/*.sql     # Oracle container setup
 ├── scripts/
-│   ├── setup_oci_linux.sh            # Install Oracle Instant Client
+│   ├── setup_oci_linux.sh            # Install Oracle Instant Client (Linux)
+│   ├── setup_oci_macos.sh            # Install Oracle Instant Client (macOS)
+│   ├── setup_oci_windows.ps1         # Install Oracle Instant Client (Windows)
 │   └── test_integration.sh           # Integration test runner
 ├── CMakeLists.txt
 ├── Makefile
