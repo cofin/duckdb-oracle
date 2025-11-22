@@ -115,7 +115,7 @@ static void ParseOracleConnectionString(const string &connection_string, string 
 	auto slash_pos = connection_string.find('/');
 	auto at_pos = connection_string.find('@', slash_pos == string::npos ? 0 : slash_pos);
 	if (slash_pos == string::npos || at_pos == string::npos || slash_pos == 0 || at_pos <= slash_pos + 1 ||
- 	    at_pos == connection_string.size() - 1) {
+	    at_pos == connection_string.size() - 1) {
 		throw IOException("Invalid Oracle connection string. Expected user/password@connect_identifier");
 	}
 	user = connection_string.substr(0, slash_pos);
@@ -634,20 +634,20 @@ void OracleExtension::Load(ExtensionLoader &loader) {
 	LoadInternal(loader);
 	auto &db = loader.GetDatabaseInstance();
 	auto &config = DBConfig::GetConfig(db);
-	config.AddExtensionOption("oracle_enable_pushdown", "Enable Oracle filter/projection pushdown", LogicalType::BOOLEAN,
-	                         Value::BOOLEAN(false));
+	config.AddExtensionOption("oracle_enable_pushdown", "Enable Oracle filter/projection pushdown",
+	                          LogicalType::BOOLEAN, Value::BOOLEAN(false));
 	config.AddExtensionOption("oracle_prefetch_rows", "OCI prefetch row count", LogicalType::UBIGINT,
-	                         Value::UBIGINT(200));
+	                          Value::UBIGINT(200));
 	config.AddExtensionOption("oracle_prefetch_memory", "OCI prefetch memory (bytes, 0=auto)", LogicalType::UBIGINT,
-	                         Value::UBIGINT(0));
+	                          Value::UBIGINT(0));
 	config.AddExtensionOption("oracle_array_size", "Rows fetched per OCI iteration (used for tuning)",
-	                         LogicalType::UBIGINT, Value::UBIGINT(256));
+	                          LogicalType::UBIGINT, Value::UBIGINT(256));
 	config.AddExtensionOption("oracle_connection_cache", "Reuse Oracle connections when possible", LogicalType::BOOLEAN,
-	                         Value::BOOLEAN(true));
+	                          Value::BOOLEAN(true));
 	config.AddExtensionOption("oracle_connection_limit", "Maximum cached Oracle connections", LogicalType::UBIGINT,
-	                         Value::UBIGINT(8));
+	                          Value::UBIGINT(8));
 	config.AddExtensionOption("oracle_debug_show_queries", "Log generated Oracle SQL for debugging",
-	                         LogicalType::BOOLEAN, Value::BOOLEAN(false));
+	                          LogicalType::BOOLEAN, Value::BOOLEAN(false));
 	config.storage_extensions["oracle"] = CreateOracleStorageExtension();
 }
 

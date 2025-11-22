@@ -112,8 +112,8 @@ TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_p
 
 	auto bind = make_uniq<OracleBindData>();
 	bind->column_names = names;
-	bind_data = OracleBindInternal(context, state->connection_string, query, return_types, names, bind.release(),
-	                              state.get());
+	bind_data =
+	    OracleBindInternal(context, state->connection_string, query, return_types, names, bind.release(), state.get());
 
 	TableFunction tf({}, OracleQueryFunction, nullptr, nullptr, nullptr);
 	tf.filter_pushdown = true;

@@ -1,3 +1,6 @@
+# name: test/sql/oracle_pushdown.test
+# group: [sql]
+
 # Validate Oracle extension settings and cache utilities without requiring a live Oracle instance.
 
 statement ok

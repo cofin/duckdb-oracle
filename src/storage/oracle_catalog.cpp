@@ -9,7 +9,7 @@ namespace {
 using namespace duckdb;
 static mutex oracle_state_registry_lock;
 static vector<weak_ptr<OracleCatalogState>> oracle_state_registry;
-}
+} // namespace
 
 namespace duckdb {
 
