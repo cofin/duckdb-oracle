@@ -73,6 +73,9 @@ You must follow this priority order when seeking information.
 5.  **🌐 WebSearch - FIFTH**
 6.  **🧠 Zen MCP - LAST**
 
+**Tool Usage Note**:
+When using the `crash` tool, you **MUST** provide the `outcome` parameter for every step. This parameter represents the expected or actual result of the step. Failure to include it will cause the tool to fail.
+
 ## Section 6: Code Quality Standards (Project-Specific)
 
 These standards are derived from the project analysis and are **non-negotiable**.

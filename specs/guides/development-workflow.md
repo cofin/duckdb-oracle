@@ -1,6 +1,6 @@
 # Development Workflow: duckdb-oracle
 
-**Last Updated**: 2025-10-30
+**Last Updated**: 2025-11-22
 
 ## Setup
 
@@ -10,6 +10,10 @@
 - CMake
 - Make (or Ninja)
 - Python 3
+- **Oracle Instant Client SDK**: You must download and extract the Oracle Instant Client (Basic + SDK) and set `ORACLE_HOME` environment variable to the directory.
+- **Oracle Instant Client SDK**: You must have the Oracle Instant Client SDK installed and the OCI headers/libraries available.
+    - Set `ORACLE_HOME` to your installation directory if not in a standard location.
+    - Example: `/usr/lib/oracle/19.6/client64`
 
 ### Installation
 

@@ -1,60 +1,79 @@
 # Architecture Guide: duckdb-oracle
 
-**Last Updated**: 2025-10-30
+**Last Updated**: 2025-11-22
 
 ## Overview
 
-This project is a C++ extension for DuckDB. It follows the standard architectural pattern for DuckDB extensions, leveraging DuckDB's internal APIs to add custom functionality.
+This project is a C++ extension for DuckDB. It follows the standard architectural pattern for DuckDB extensions, leveraging DuckDB's internal APIs to add custom functionality. It specifically uses the **Oracle Call Interface (OCI)** to interact with Oracle databases.
 
 ## Project Structure
 
 ```
 /usr/local/google/home/codyfincher/code/utils/duckdb-oracle/
-├───.gitignore
-├───.gitmodules
-├───AGENTS.md
-├───CMakeLists.txt
-├───extension_config.cmake
-├───LICENSE
-├───Makefile
-├───README.md
-├───vcpkg.json
-├───.git/...
-├───.github/
-│   └───workflows/
-│       └───MainDistributionPipeline.yml
-├───build/...
-├───docs/
-│   └───UPDATING.md
-├───duckdb/
-├───extension-ci-tools/
-├───scripts/
-│   └───extension-upload.sh
 ├───src/
-│   ├───oracle_extension.cpp
+│   ├───oracle_extension.cpp  # Main entry point and implementation
 │   └───include/
+│       └───oracle_extension.hpp
 ├───test/
-│   ├───README.md
-│   └───sql/
-└───vcpkg/
+│   └───sql/                  # SQL-based test suite
+├───vcpkg.json                # Dependency management (includes OpenSSL)
+├───CMakeLists.txt            # Build configuration
+└───Makefile                  # Build automation
 ```
 
 ## Core Components
 
-- **`src/oracle_extension.cpp`**: The main entry point for the extension. It contains the `Load` function that DuckDB calls when the extension is loaded, and it's where custom functions are registered.
-- **`CMakeLists.txt`**: Defines the build process, linking against DuckDB and other dependencies.
-- **`vcpkg.json`**: Manages C++ dependencies using vcpkg.
-- **`test/sql/`**: Contains SQL test files that are used to verify the extension's functionality.
+### 1. Extension Entry Point (`src/oracle_extension.cpp`)
+
+The `OracleExtension` class implements the `Load` function, which is the hook DuckDB calls. It registers:
+
+- **`oracle_scan`** (Table Function): Scans a specific Oracle table.
+- **`oracle_query`** (Table Function): Executes a raw SQL query against Oracle.
+- **`oracle_attach_wallet`** (Scalar Function): Configures the environment for Oracle Wallet authentication.
+
+### 2. OCI Resource Management (`OracleBindData`)
+
+The `OracleBindData` struct (in `oracle_extension.cpp`) encapsulates the state required for an Oracle connection using RAII principles. It manages:
+
+- `OCIEnv*`: The OCI environment handle.
+- `OCISvcCtx*`: The service context.
+- `OCIStmt*`: The statement handle.
+- `OCIError*`: The error handle.
+
+The destructor of `OracleBindData` ensures these handles are properly freed (`OCIHandleFree`, `OCILogoff`) to prevent memory leaks.
 
 ## Design Patterns
 
-- **DuckDB Extension API**: The core of the extension is built using the C++ API provided by DuckDB. This involves creating scalar or table functions, registering them with the database instance, and using DuckDB's data structures (like `Vector` and `Value`) to manipulate data.
-- **CMake for Build Management**: The project uses CMake to handle the complexities of building a C++ project, especially one that links against a larger library like DuckDB.
+- **DuckDB Extension API**: Utilizes `TableFunction` and `ScalarFunction` to expose C++ logic to SQL.
+- **Bind & Execute Model**:
+  - **Bind Phase (`OracleBindInternal`)**: Establishes the OCI connection, prepares the statement, and deduces return types (`SQLT_*` -> `LogicalType`).
+  - **Execute Phase (`OracleQueryFunction`)**: Executes the statement and fetches results row-by-row using `OCIStmtFetch2`, populating DuckDB's `DataChunk`.
+- **RAII**: Used for OCI handles to ensure exception safety.
 
 ## Data Flow
 
-1. A user executes a SQL query that calls the `oracle_query` function (e.g., `SELECT * FROM oracle_query('connection_string', 'SELECT * FROM users')`).
-2. DuckDB's parser identifies the function call and looks it up in its catalog.
-3. Finding that the function is provided by this extension, DuckDB invokes the `OracleQueryBind` function to prepare the Oracle OCI statement and define return types.
-4. DuckDB then invokes `OracleQueryFunction` which executes the OCI statement, fetches results row by row, and fills the DuckDB `DataChunk`.
-5. DuckDB presents the result to the user.
+1.  **Scanning**: A user executes `SELECT * FROM oracle_scan('connection_string', 'SCHEMA', 'TABLE')`.
+    *   DuckDB invokes `OracleScanBind`.
+    *   Extension connects via OCI, retrieves table metadata (columns, types).
+    *   Extension maps OCI types (including JSON, Vector) to DuckDB types.
+    *   DuckDB invokes `OracleQueryFunction` to fetch data row-by-row (or batched) using OCI fetch).
+
+2.  **Querying**: A user executes `SELECT * FROM oracle_query('connection_string', 'SELECT ...')`.
+    *   DuckDB invokes `OracleQueryBind`.
+    *   Extension prepares the statement.
+    *   If it's a SELECT, it describes columns and proceeds like scan.
+    *   If it's PL/SQL (`BEGIN...`), it executes immediately and returns a status row.
+
+3.  **Configuration**: User calls `oracle_attach_wallet('/path')`.
+    *   Extension sets `TNS_ADMIN` environment variable for the process.
+
+### Data Type Mapping
+
+| Oracle Type (`SQLT`) | DuckDB Type | Notes |
+| :--- | :--- | :--- |
+| `SQLT_CHR`, `SQLT_AFC`, `SQLT_VCS` | `VARCHAR` | Standard strings |
+| `SQLT_NUM`, `SQLT_INT` | `BIGINT`, `DECIMAL`, `DOUBLE` | Depends on precision/scale |
+| `SQLT_FLT`, `SQLT_BDOUBLE` | `DOUBLE` | Floating point |
+| `SQLT_DAT`, `SQLT_TIMESTAMP` | `TIMESTAMP` | |
+| `SQLT_CLOB`, `SQLT_BLOB` | `BLOB` | |
+| `SQLT_JSON` | `VARCHAR` | Fetched as string |

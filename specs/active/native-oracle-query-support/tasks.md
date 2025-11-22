@@ -1,7 +1,7 @@
 # Implementation Tasks: Native Oracle Query Support
 
 **Created**: 2025-11-21
-**Status**: In Progress
+**Status**: Complete
 
 ## Phase 1: Research & Planning ✓
 
@@ -9,30 +9,41 @@
 - [x] Create PRD
 - [x] Create tasks list
 - [x] Research OCI data types and mappings
+- [x] Research JSON and Wallet support
+- [x] Enhance CMake OCI detection (handle `ORACLE_HOME`, `LD_LIBRARY_PATH`, pkg-config if applicable).
 
-## Phase 2: Core Implementation (Data Types)
+## Phase 2: Core Implementation (Scan & Query) ✓
 
-- [ ] Refactor `OracleQueryBind` to perform detailed type introspection (`OCI_ATTR_DATA_TYPE`, `OCI_ATTR_PRECISION`, `OCI_ATTR_SCALE`).
-- [ ] Implement mapping logic for `NUMBER` (to `BIGINT`, `DECIMAL`, or `DOUBLE`).
-- [ ] Implement mapping logic for `DATE` and `TIMESTAMP` (to `TIMESTAMP`).
-- [ ] Implement mapping logic for `CLOB` and `BLOB` (to `VARCHAR` and `BLOB`).
-- [ ] Implement mapping logic for `RAW` (to `BLOB`).
-- [ ] Update `OracleQueryFunction` to define output variables using correct OCI types (`SQLT_INT`, `SQLT_FLT`, `SQLT_LBI`, etc.).
-- [ ] Handle `NULL` indicators correctly for all types.
+- [x] Rename `oracle_query` internal implementation to support both modes (scan vs query).
+- [x] Implement `oracle_scan(conn_str, schema, table)`:
+    - [x] Construct `SELECT * FROM schema.table` query.
+    - [x] Reuse the `OracleQueryBind` logic.
+- [x] Implement `oracle_query(conn_str, query)`:
+    - [x] Existing logic, refined for types.
 
-## Phase 3: PL/SQL Support
+## Phase 3: Data Type Support ✓
 
-- [ ] Add logic to detect PL/SQL blocks (or allow a flag/separate function).
-- [ ] Modify execution path to handle non-SELECT statements (PL/SQL blocks).
-- [ ] Ensure transaction commit/rollback is handled (OCI default is usually auto-commit off, check this).
+- [x] **JSON**: Detect `SQLT_JSON` (or check constraint) and map to DuckDB `JSON` type (via VARCHAR fallback).
+- [x] **Numeric**: Handle `SQLT_NUM` with precision/scale -> `BIGINT`/`DECIMAL`/`DOUBLE`.
+- [x] **LOBs**: Handle `CLOB`/`BLOB` using `OCILobLocator` reading.
+- [x] **Date/Time**: Handle `SQLT_TIMESTAMP_TZ` and `SQLT_DAT`.
+- [x] **Vector**: Handle `SQLT_VEC` (Oracle 23ai) by mapping to `VARCHAR` (DuckDB can cast string repr).
 
-## Phase 4: Testing & Refinement
+## Phase 4: PL/SQL & Connectivity ✓
 
-- [ ] Create `test/sql/oracle_types.test` (placeholder for manual verification or if mock available).
-- [ ] Verify error handling (e.g. bad connection string, SQL syntax error).
-- [ ] Run `make format` and `make tidy-check`.
+- [x] Detect PL/SQL blocks (starts with `BEGIN`, `DECLARE`).
+- [x] Execute PL/SQL with `iters=1` and return status row.
+- [x] **Wallet**: Add `oracle_attach_wallet(path)` scalar function to set `TNS_ADMIN`.
 
-## Phase 5: Documentation
+## Phase 5: Testing & Refinement ✓
 
-- [ ] Update `README.md` with supported types list.
-- [ ] Update `specs/guides/` if new patterns emerge.
+- [x] Manual verification test plan.
+- [x] Mocking OCI (if feasible) or create robust error handling tests.
+- [x] `make format` and `make tidy-check`.
+- [x] Implement GitHub Actions CI with Oracle SDK support.
+- [x] Implement Integration Tests with Docker/Podman.
+
+## Phase 6: Documentation ✓
+
+- [x] Update `README.md` with `oracle_scan`, `oracle_query`, and JSON/Wallet usage.
+- [x] Update `specs/guides/` to reflect final API.

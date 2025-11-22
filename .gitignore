@@ -10,3 +10,4 @@ test/python/__pycache__/
 # Gemini Agent System 
 specs/archive/
 !specs/archive/.gitkeep
+test_connection.test

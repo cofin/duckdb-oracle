@@ -1,11 +1,13 @@
 -- name: test_oracle_query_simple
--- description: Test a simple query
+-- description: Test a simple query (expecting connection failure in CI)
 -- group: [oracle]
 
 -- load the extension
-LOAD oracle;
+require oracle
 
--- run a query
-SELECT * FROM oracle_query('user/password@host:port/service', 'SELECT 1 FROM DUAL');
+-- run a query with dummy credentials
+-- We expect an IO Error or similar due to missing OCI or connection failure
+statement error
+SELECT * FROM oracle_query('dummy/dummy@//localhost:1521/dummy', 'SELECT 1 FROM DUAL');
 ----
-1
+IO Error

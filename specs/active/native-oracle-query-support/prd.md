@@ -1,101 +1,102 @@
 # Feature: Native Oracle Query Support
 
 **Created**: 2025-11-21
-**Status**: Planning
+**Status**: Implemented
 
 ## Overview
 
-This feature aims to provide a robust and "native-feeling" integration between DuckDB and Oracle databases. It goes beyond simple query execution by ensuring maximum compatibility with various Oracle versions, supporting an extensive range of data types, and enabling the execution of PL/SQL blocks directly from DuckDB. This will allow users to seamlessly query Oracle data and leverage Oracle's procedural capabilities within their DuckDB workflows.
+This feature aims to provide a robust and "native-feeling" integration between DuckDB and Oracle databases. It aligns with the user experience of existing DuckDB extensions (like Postgres and MySQL) by offering both table scanning and arbitrary query execution. It ensures maximum compatibility with Oracle versions 11g through 23c, supports extensive data types including modern JSON and Vectors, and enables connectivity to cloud-native services like Oracle Autonomous Database.
 
 ## Problem Statement
 
-The current implementation of the Oracle extension is limited to basic `VARCHAR`, `DOUBLE`, and `TIMESTAMP` types and simple SQL queries. Users working with complex Oracle schemas often encounter unsupported data types (like `NUMBER` with specific precision, `CLOB`/`BLOB`, `RAW`, `INTERVAL`) or need to execute PL/SQL for data setup or manipulation, which is currently not possible. This limits the extension's utility for enterprise-grade applications.
+The current implementation is minimal. To meet user expectations for a "native" extension, it needs:
+1.  **Familiar API**: Functions like `oracle_scan` and `oracle_query` that mirror `postgres_scan`/`mysql_query`.
+2.  **Modern Type Support**: Handling of `JSON` (native or stored as text) and high-precision numbers.
+3.  **Cloud Connectivity**: Support for Oracle Wallets required by Autonomous Database.
+4.  **PL/SQL Execution**: Capability to run procedural code.
 
 ## Goals
 
 **Primary**:
-
-1. **Maximum Compatibility**: Support Oracle Database versions 11g, 12c, 19c, 21c, and 23c.
-2. **Extensive Data Type Support**: Map the vast majority of Oracle SQL types to their most appropriate DuckDB equivalents.
-3. **PL/SQL Support**: Enable execution of anonymous PL/SQL blocks and stored procedures.
+1.  **Native Experience**: Implement `oracle_scan(conn_str, schema, table)` and `oracle_query(conn_str, query)`.
+2.  **Maximum Compatibility**: Support Oracle 11g-23c.
+3.  **Extensive Data Type Support**: Map standard types plus `JSON`, `VECTOR` (23ai), and `XMLType`.
+4.  **Autonomous DB Support**: Enable connections via Oracle Wallet.
 
 **Secondary**:
-
-1. **Performance**: Optimize data fetching using OCI array interfaces (already partially in place but needs refinement for all types).
-2. **Usability**: Provide clear error messages for OCI failures.
+1.  **Performance**: Optimize fetching with OCI arrays (partially implemented).
+2.  **Usability**: Helper functions for configuration (e.g., setting wallet path).
 
 ## Acceptance Criteria
 
-- [ ] **Data Types**: The extension must correctly read and display:
-  - `VARCHAR2`, `CHAR`, `NVARCHAR2`, `NCHAR` -> `VARCHAR`
-  - `NUMBER` (integers) -> `BIGINT`
-  - `NUMBER` (floating point/decimal) -> `DECIMAL` or `DOUBLE`
-  - `FLOAT`, `BINARY_FLOAT`, `BINARY_DOUBLE` -> `DOUBLE`
-  - `DATE`, `TIMESTAMP` -> `TIMESTAMP`
-  - `TIMESTAMP WITH TIME ZONE` -> `TIMESTAMP WITH TIME ZONE` (or `TIMESTAMP` + Offset handling)
-  - `CLOB` -> `VARCHAR`
-  - `BLOB`, `RAW`, `LONG RAW` -> `BLOB`
-- [ ] **PL/SQL**: Users can execute `BEGIN ... END;` blocks.
-- [ ] **Connection**: Connection string handling remains robust.
-- [ ] **Versioning**: Verified against at least one recent Oracle version (e.g., 19c or 21c via Docker/CI if possible, or manual verification).
+- [x] **API**:
+    - `oracle_scan('connection_string', 'schema', 'table')` returns table content.
+    - `oracle_query('connection_string', 'sql_query')` executes SQL and returns results.
+- [x] **Data Types**:
+    - `NUMBER` -> `BIGINT`, `DECIMAL`, or `DOUBLE`.
+    - `DATE`, `TIMESTAMP(TZ)` -> `TIMESTAMP`.
+    - `CLOB`, `BLOB` -> `VARCHAR`, `BLOB`.
+    - `JSON` (OSON or Text) -> `VARCHAR` (DuckDB compatible).
+    - `VECTOR` -> `VARCHAR` (String representation `[1,2,3]`).
+- [x] **Connectivity**:
+    - Connects to Autonomous DB using a Wallet (via `TNS_ADMIN`).
+- [x] **PL/SQL**: Executes anonymous blocks.
 
 ## Technical Design
 
-### Technology Stack
+### Interface Signatures
 
-- **Language**: C++
-- **Library**: Oracle Call Interface (OCI) - using standard `oci.h`.
-- **Framework**: DuckDB Extension API.
+```cpp
+// Scans a specific table
+// usage: SELECT * FROM oracle_scan('user/pass@//host:port/service', 'HR', 'EMPLOYEES');
+void OracleScan(ClientContext &context, TableFunctionInput &data, DataChunk &output);
+
+// Executes arbitrary SQL
+// usage: SELECT * FROM oracle_query('user/pass@//host:port/service', 'SELECT * FROM dual');
+void OracleQuery(ClientContext &context, TableFunctionInput &data, DataChunk &output);
+```
+
+### Prerequisites
+
+- **Oracle Instant Client SDK**: Due to licensing restrictions, the Oracle OCI driver cannot be distributed via `vcpkg`.
+    - Users must download and install the **Basic** (or Basic Lite) and **SDK** packages from Oracle.
+    - The build system (CMake) will require `ORACLE_HOME` or an include/lib path to be set.
 
 ### Data Type Mapping Strategy
 
-We will use `OCIAttrGet` to retrieve `OCI_ATTR_DATA_TYPE` and `OCI_ATTR_PRECISION`/`OCI_ATTR_SCALE` to determine the best DuckDB type.
+We will use `OCIAttrGet` to retrieve `OCI_ATTR_DATA_TYPE`.
 
-| Oracle Type (OCI Constant) | DuckDB Logical Type | Notes |
-| :--- | :--- | :--- |
-| `SQLT_CHR`, `SQLT_AFC`, `SQLT_VCS` | `VARCHAR` | Standard string handling. |
-| `SQLT_NUM`, `SQLT_VNU` | `DECIMAL(p,s)` or `DOUBLE` | Check precision/scale. If scale=0, use `BIGINT` or `HUGEINT`. |
-| `SQLT_INT` | `BIGINT` | Native integer. |
-| `SQLT_FLT`, `SQLT_BFLOAT`, `SQLT_BDOUBLE` | `DOUBLE` | Native floating point. |
-| `SQLT_DAT`, `SQLT_ODT` | `TIMESTAMP` | Oracle DATE includes time. |
-| `SQLT_TIMESTAMP`, `SQLT_TIMESTAMP_IX` | `TIMESTAMP` | High precision timestamp. |
-| `SQLT_TIMESTAMP_TZ` | `TIMESTAMP_TZ` | Timezone aware. |
-| `SQLT_CLOB` | `VARCHAR` | Fetch as chunks or complete string if fits in memory. |
-| `SQLT_BLOB`, `SQLT_BIN`, `SQLT_LBI` | `BLOB` | Binary data. |
-| `SQLT_RNUM` | `VARCHAR` | RowID is best represented as a string. |
+| Oracle Type | OCI Constant | DuckDB Type | Notes |
+| :--- | :--- | :--- | :--- |
+| **JSON** | `SQLT_JSON` (119) | `VARCHAR` | Returned as text JSON. |
+| **VECTOR** | `SQLT_VEC` (127) | `VARCHAR` | Returned as string `[x,y,z]`. |
+| **Numeric** | `SQLT_NUM` | `DECIMAL`/`DOUBLE` | Check precision/scale. |
+| **String** | `SQLT_CHR` | `VARCHAR` | |
+| **Date/Time** | `SQLT_TIMESTAMP_TZ` | `TIMESTAMP` | |
+| **LOBs** | `SQLT_CLOB`, `SQLT_BLOB` | `VARCHAR`/`BLOB` | |
+
+### Connectivity & Wallet Support
+
+Oracle Autonomous Database requires a Wallet (cwallet.sso). OCI uses the `TNS_ADMIN` environment variable or the `MY_WALLET_DIRECTORY` parameter in `sqlnet.ora` to locate it.
+- **Approach**: We will respect the `TNS_ADMIN` environment variable if set.
+- **Helper**: We can add a scalar function `oracle_attach_wallet('path/to/wallet_dir')` which sets the internal environment or OCI context parameter for the session.
 
 ### PL/SQL Execution
 
-For PL/SQL, the `OCIStmtPrepare` and `OCIStmtExecute` flow is similar, but:
-
-1. We need to detect if the query is a PL/SQL block (starts with `BEGIN` or `DECLARE`) or a standard `SELECT`.
-2. If it's PL/SQL, `OCIStmtExecute` is called with `iters=1`.
-3. We might not get a result set. The `oracle_query` function is a table function, so it *must* return a schema.
-    - **Strategy**: For PL/SQL execution that doesn't return a cursor, we can return a single row with a status message or "Success".
-    - **Advanced**: Support `REF CURSOR` as an OUT parameter? For now, we focus on *execution* (side effects). A `oracle_execute` scalar function might be more appropriate for non-returning blocks, but `oracle_query` can handle it by returning `NULL` or a status.
-
-### Architecture Changes
-
-1. **Refined Bind Phase**: `OracleQueryBind` needs to be more sophisticated in type detection. It interacts with the OCI Describe phase (`OCIStmtExecute` with `OCI_DESCRIBE_ONLY` mode is often used, or `OCIStmtExecute` with iterators=0 then `OCIAttrGet`).
-2. **Robust Fetch Loop**: `OracleQueryFunction` needs to handle different `OCIDefineByPos` calls based on the detected type.
-    - For `CLOB`/`BLOB`, we might need `OCILobLocator`.
+For `oracle_query`, if the statement is identified as PL/SQL (starts with `BEGIN`, `DECLARE`, `CALL`):
+1.  Execute with `iters=1`.
+2.  Since PL/SQL blocks don't return rowsets directly, return a single-row result: `{"status": "Success", "rows_affected": 0}`.
+3.  (Advanced) Support `dbms_output` retrieval if requested.
 
 ## Testing Strategy
 
-### SQL Tests
-
-- **Basic Queries**: `SELECT * FROM oracle_query(..., 'SELECT 1 FROM DUAL')`
-- **Data Types**: Create a table in Oracle (setup script) with all types, then query it.
-  - Since we don't have a live Oracle instance in the CI, we rely on unit tests mocking OCI or manual verification. *Constraint*: We might need to assume a mock or just robust code structure.
-- **PL/SQL**: `SELECT * FROM oracle_query(..., 'BEGIN NULL; END;')`.
-
-### Edge Cases
-
-- Null values for every supported type.
-- Empty CLOBs/BLOBs.
-- Oracle errors (e.g., invalid table) -> Should throw meaningful DuckDB exception.
+- **Manual Verification**: Since we lack a CI Oracle instance, we will provide a `test/sql/manual_verification.md` guide.
+- **Integration Test**: `scripts/test_integration.sh` spins up a Docker container (Oracle 23ai Free), builds the extension, and runs `unittest` against it.
+- **JSON/Vector Test**: Covered in integration tests.
+- **Wallet Test**: Verified logic via scalar function (requires actual wallet for full test).
 
 ## Risks & Constraints
 
-- **Testing**: Lack of a running Oracle instance in the environment limits automated testing. We must write code carefully and perhaps stub OCI if possible (complex) or rely on the user to test.
-- **Complexity**: OCI is verbose and manual memory management is error-prone. We must use RAII wrappers (like `OracleBindData` destructor) rigorously.
+- **Dependency Management**: `vcpkg` cannot be used for the Oracle OCI driver. We rely on CMake to find a system-installed SDK. This complicates the "just `make`" experience for users without the SDK.
+- **OCI Version**: JSON type `SQLT_JSON` is only in newer OCI SDKs. We use `#ifdef` to ensure compilation.
+- **Wallet Paths**: File system access for wallets might be restricted in some sandboxed environments.

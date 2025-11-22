@@ -1,10 +1,27 @@
 # Testing Guide: duckdb-oracle
 
-**Last Updated**: 2025-10-30
+**Last Updated**: 2025-11-22
 
 ## Test Framework
 
 The project uses DuckDB's built-in SQL testing framework. This involves writing SQL scripts that are executed by a special `unittest` runner.
+
+**Note on CI/CD**: Because the CI environment does not have access to a running Oracle Database instance, the automated tests in `test/sql/*.test` are primarily **negative tests** or checks that verify the extension loads correctly and handles connection errors gracefully.
+
+## Integration Tests (Docker)
+
+For robust testing against a real Oracle Database (including Vector and JSON types), use the integration test script. This requires Docker or Podman.
+
+```bash
+# Runs integration tests against a local container
+make test_integration
+```
+
+This script:
+1. Starts an Oracle Database container (gvenzl/oracle-free:23-slim).
+2. Waits for readiness.
+3. Runs setup SQL (creating types, users).
+4. Executes DuckDB tests against this container using `unittest`.
 
 ## Running Tests
 
@@ -26,8 +43,8 @@ Tests are located in the `test/sql/` directory. Each `.test` file represents a t
 ```
 test/
 └── sql/
-    ├─── ...
-    └─── new_feature.test
+    ├─── manual_verification.md # Instructions for live DB testing
+    └─── test_oracle_query.test # Automated (negative) tests
 ```
 
 ## Writing Tests
@@ -36,17 +53,21 @@ Tests are written in SQL. The test runner parses special comments to understand 
 
 - A test case is defined by a `----` separator.
 - The expected result of a query is provided immediately after the query.
+- Use `statement error` for tests that are expected to fail (e.g., due to connection issues in CI).
 
-### Example
+### Example (Automated Test)
 
 ```sql
--- file: test/sql/oracle_query.test
+-- file: test/sql/test_oracle_query.test
 
--- A simple test case for the oracle_query function
-statement ok
-SELECT * FROM oracle_query('connection_string', 'SELECT 1 FROM DUAL');
+-- load the extension
+require oracle
+
+-- We expect an error because the connection string is invalid/unreachable in CI
+statement error
+SELECT * FROM oracle_query('dummy/dummy@//localhost:1521/dummy', 'SELECT 1 FROM DUAL');
 ----
-1
+IO Error
 ```
 
 ## Test Standards

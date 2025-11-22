@@ -1,0 +1,52 @@
+name: Oracle Extension CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  linux-build:
+    name: Linux Build & Test
+    runs-on: ubuntu-latest
+    env:
+      ORACLE_HOME: ${{ github.workspace }}/oracle_sdk/instantclient_23_6
+      LD_LIBRARY_PATH: ${{ github.workspace }}/oracle_sdk/instantclient_23_6
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        submodules: true
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libaio1 unzip ninja-build
+    
+    - name: Install Oracle Instant Client
+      run: ./scripts/setup_oci_linux.sh
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install CMake
+      uses: jwlawrence/cmake-installer@v1.4
+      with:
+        cmake-version: '3.27.7'
+
+    - name: Build Extension
+      run: |
+        # We set ORACLE_HOME in env, CMake should pick it up
+        make release
+
+    - name: Run Tests
+      run: |
+        # Tests expecting failure (smoke tests) will pass.
+        # Real connection tests require a running DB (not present), but we verifying linking.
+        make test

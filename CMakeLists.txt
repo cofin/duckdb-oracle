@@ -1,4 +1,5 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.10)
+cmake_policy(SET CMP0079 NEW)
 
 # Set extension name here
 set(TARGET_NAME oracle)
@@ -7,10 +8,27 @@ set(TARGET_NAME oracle)
 # used in cmake with find_package. Feel free to remove or replace with other dependencies.
 # Note that it should also be removed from vcpkg.json to prevent needlessly installing it..
 find_package(OpenSSL REQUIRED)
-find_library(OCI_LIBRARY NAMES occi HINTS /usr/share/oracle/instantclient_23_26)
-if (NOT OCI_LIBRARY)
-    message(FATAL_ERROR "OCI library not found.")
+
+# OCI Library Detection
+if(DEFINED ENV{ORACLE_HOME})
+    set(ORACLE_HOME $ENV{ORACLE_HOME})
+    message(STATUS "Found ORACLE_HOME: ${ORACLE_HOME}")
+else()
+    # Fallback to a common location (e.g., Linux Instant Client RPM install)
+    set(ORACLE_HOME "/usr/share/oracle/instantclient_23_26")
+    message(STATUS "ORACLE_HOME not set, using default: ${ORACLE_HOME}")
 endif()
+
+find_library(OCI_LIBRARY NAMES clntsh HINTS ${ORACLE_HOME} ${ORACLE_HOME}/lib)
+find_path(OCI_INCLUDE_DIR NAMES oci.h HINTS ${ORACLE_HOME}/sdk/include ${ORACLE_HOME}/include)
+
+if (NOT OCI_LIBRARY OR NOT OCI_INCLUDE_DIR)
+    message(FATAL_ERROR "OCI library or include headers not found. Please set ORACLE_HOME environment variable.")
+endif()
+
+# Force linking via global flags (robust against target scoping)
+set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${OCI_LIBRARY}")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OCI_LIBRARY}")
 
 set(EXTENSION_NAME ${TARGET_NAME}_extension)
 set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
@@ -31,11 +49,15 @@ target_link_libraries(${LOADABLE_EXTENSION_NAME} OpenSSL::SSL OpenSSL::Crypto)
 target_link_libraries(${EXTENSION_NAME} ${OCI_LIBRARY})
 target_link_libraries(${LOADABLE_EXTENSION_NAME} ${OCI_LIBRARY})
 
-target_include_directories(${EXTENSION_NAME} PRIVATE /usr/share/oracle/instantclient_23_26/sdk/include)
-target_include_directories(${LOADABLE_EXTENSION_NAME} PRIVATE /usr/share/oracle/instantclient_23_26/sdk/include)
+target_include_directories(${EXTENSION_NAME} PRIVATE ${OCI_INCLUDE_DIR})
+target_include_directories(${LOADABLE_EXTENSION_NAME} PRIVATE ${OCI_INCLUDE_DIR})
 
 install(
   TARGETS ${EXTENSION_NAME}
   EXPORT "${DUCKDB_EXPORT_SET}"
   LIBRARY DESTINATION "${INSTALL_LIB_DIR}"
   ARCHIVE DESTINATION "${INSTALL_LIB_DIR}")
+
+# Force linking via global flags (robust against target scoping)
+set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${OCI_LIBRARY}")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OCI_LIBRARY}")
