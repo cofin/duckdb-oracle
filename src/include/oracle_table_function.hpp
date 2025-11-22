@@ -6,9 +6,9 @@
 #include <oci.h>
 #include "oracle_settings.hpp"
 
-class OracleCatalogState;
-
 namespace duckdb {
+
+class OracleCatalogState;
 
 struct OracleContext {
 	OCIEnv *envhp = nullptr;

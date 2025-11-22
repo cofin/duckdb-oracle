@@ -4,14 +4,20 @@
 #include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/limits.hpp"
 #include <mutex>
-
-namespace {
-using namespace duckdb;
-static mutex oracle_state_registry_lock;
-static vector<weak_ptr<OracleCatalogState>> oracle_state_registry;
-} // namespace
+#include <memory>
 
 namespace duckdb {
+namespace {
+static std::mutex &RegistryLock() {
+	static std::mutex lock;
+	return lock;
+}
+
+static std::vector<std::weak_ptr<OracleCatalogState>> &Registry() {
+	static std::vector<std::weak_ptr<OracleCatalogState>> registry;
+	return registry;
+}
+} // namespace
 
 OracleConnection &OracleCatalogState::EnsureConnection() {
 	if (!settings.connection_cache) {
@@ -50,7 +56,7 @@ void OracleCatalogState::ApplyOptions(const unordered_map<string, Value> &option
 }
 
 void OracleCatalogState::ClearCaches() {
-	lock_guard<mutex> guard(lock);
+	lock_guard<std::mutex> guard(lock);
 	schema_cache.clear();
 	table_cache.clear();
 	// Reset connection if caching is enabled; a fresh connect will be created lazily.
@@ -58,16 +64,17 @@ void OracleCatalogState::ClearCaches() {
 }
 
 void OracleCatalogState::Register(const shared_ptr<OracleCatalogState> &state) {
-	lock_guard<mutex> guard(oracle_state_registry_lock);
-	oracle_state_registry.push_back(state);
+	lock_guard<std::mutex> guard(RegistryLock());
+	Registry().push_back(state);
 }
 
 void OracleCatalogState::ClearAllCaches() {
-	lock_guard<mutex> guard(oracle_state_registry_lock);
-	for (auto it = oracle_state_registry.begin(); it != oracle_state_registry.end();) {
+	lock_guard<std::mutex> guard(RegistryLock());
+	auto &registry = Registry();
+	for (auto it = registry.begin(); it != registry.end();) {
 		auto ptr = it->lock();
 		if (!ptr) {
-			it = oracle_state_registry.erase(it);
+			it = registry.erase(it);
 			continue;
 		}
 		ptr->ClearCaches();
@@ -76,7 +83,7 @@ void OracleCatalogState::ClearAllCaches() {
 }
 
 vector<string> OracleCatalogState::ListSchemas() {
-	lock_guard<mutex> guard(lock);
+	lock_guard<std::mutex> guard(lock);
 	if (!schema_cache.empty()) {
 		return schema_cache;
 	}
@@ -91,7 +98,7 @@ vector<string> OracleCatalogState::ListSchemas() {
 }
 
 vector<string> OracleCatalogState::ListTables(const string &schema) {
-	lock_guard<mutex> guard(lock);
+	lock_guard<std::mutex> guard(lock);
 	auto entry = table_cache.find(schema);
 	if (entry != table_cache.end()) {
 		return entry->second;

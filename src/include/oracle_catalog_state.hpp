@@ -23,7 +23,7 @@ public:
 	void ApplyOptions(const unordered_map<string, Value> &options);
 	void ClearCaches();
 
-	static void Register(const std::shared_ptr<OracleCatalogState> &state);
+	static void Register(const shared_ptr<OracleCatalogState> &state);
 	static void ClearAllCaches();
 
 	OracleSettings settings;
@@ -34,7 +34,7 @@ public:
 	const string connection_string;
 
 private:
-	mutex lock;
+	std::mutex lock;
 	unique_ptr<OracleConnection> connection;
 	vector<string> schema_cache;
 	unordered_map<string, vector<string>> table_cache;

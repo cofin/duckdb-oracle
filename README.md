@@ -1,118 +1,115 @@
 # Oracle
 
-This repository is based on <https://github.com/duckdb/extension-template>, check it out if you want to build and ship your own DuckDB extension.
+This repository provides a native Oracle extension for DuckDB. It allows:
 
----
+- Attaching an Oracle database with `ATTACH ... (TYPE oracle)` and querying tables directly.
+- Table/query functions: `oracle_scan`, `oracle_query`.
+- Wallet helper: `oracle_attach_wallet`.
+- Cache maintenance: `oracle_clear_cache`.
 
-This extension, Oracle, allow you to ... <extension_goal>.
+## Quickstart (DuckDB ≥ v1.4.1)
 
-## Building
+```sql
+-- one-time install from your extension repo (unsigned example)
+INSTALL oracle;
+LOAD oracle;
 
-### Managing dependencies
+-- attach an Oracle database (read-only)
+ATTACH 'user/password@//host:1521/service' AS ora (TYPE oracle);
 
-DuckDB extensions use VCPKG for dependency management. The repository does **not** vendor vcpkg as a submodule; CI downloads the pinned commit automatically via `extension-ci-tools`. For local builds, bootstrap vcpkg alongside the repo:
+-- query a table
+SELECT * FROM ora.HR.EMPLOYEES WHERE employee_id = 101;
+```
+
+### Functions
+
+| Function | Description |
+| --- | --- |
+| `oracle_query(conn, sql)` | Runs arbitrary SQL/PLSQL against Oracle. |
+| `oracle_scan(conn, schema, table)` | Scans a table (`SELECT * FROM schema.table`). |
+| `oracle_attach_wallet(path)` | Sets `TNS_ADMIN` to the wallet directory (for Autonomous DB etc.). |
+| `oracle_clear_cache()` | Clears cached Oracle metadata/connections for attached DBs. |
+
+### Attach options (TYPE oracle)
+
+```
+ATTACH 'user/password@//host:port/service' AS ora (
+  TYPE oracle,
+  enable_pushdown=true,
+  prefetch_rows=200,
+  array_size=256,
+  read_only
+);
+```
+
+Options map to settings below; unknown options are ignored.
+
+### Extension settings (set at runtime)
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `oracle_enable_pushdown` | `false` | Push down filters/projection into Oracle. |
+| `oracle_prefetch_rows` | `200` | OCI prefetch rows per round-trip. |
+| `oracle_prefetch_memory` | `0` | OCI prefetch memory in bytes (0 = auto). |
+| `oracle_array_size` | `256` | Rows fetched per OCI iteration. |
+| `oracle_connection_cache` | `true` | Reuse OCI connections inside an attached DB. |
+| `oracle_connection_limit` | `8` | Max cached connections. |
+| `oracle_debug_show_queries` | `false` | Log generated Oracle SQL. |
+
+Example:
+
+```sql
+SET oracle_enable_pushdown=true;
+SET oracle_prefetch_rows=500;
+```
+
+### Wallet / Autonomous Database
+
+```sql
+CALL oracle_attach_wallet('/path/to/wallet_dir');
+-- then use ezconnect or tnsnames entries from that wallet
+ATTACH 'user/pass@myadb_tp' AS adb (TYPE oracle);
+```
+
+## Build from source
+
+Requirements: CMake ≥3.10, C++17 compiler, vcpkg (for OpenSSL), Oracle Instant Client (Basic + SDK).
 
 ```sh
+# install Instant Client and set ORACLE_HOME (contains sdk/include/oci.h, lib/libclntsh.so)
+export ORACLE_HOME=/opt/oracle/instantclient_23_6
+
+# bootstrap vcpkg (not vendored)
 git clone https://github.com/microsoft/vcpkg.git
 ./vcpkg/bootstrap-vcpkg.sh
-export VCPKG_TOOLCHAIN_PATH="$(pwd)/vcpkg/scripts/buildsystems/vcpkg.cmake"
-```
+export VCPKG_TOOLCHAIN_PATH="$PWD/vcpkg/scripts/buildsystems/vcpkg.cmake"
 
-Note: VCPKG is only required if you rely on it for dependencies (we do, for OpenSSL). If you manage dependencies yourself, you can skip these steps—just ensure required libs are available.
-
-### Build steps
-
-Now to build the extension, run:
-
-```sh
+# build
 make
-```
 
-The main binaries that will be built are:
-
-```sh
-./build/release/duckdb
-./build/release/test/unittest
-./build/release/extension/oracle/oracle.duckdb_extension
-```
-
-- `duckdb` is the binary for the duckdb shell with the extension code automatically loaded.
-- `unittest` is the test runner of duckdb. Again, the extension is already linked into the binary.
-- `oracle.duckdb_extension` is the loadable binary as it would be distributed.
-
-### Pushdown & tuning options
-
-Runtime options (set with `SET`):
-
-- `oracle_enable_pushdown` (default `false`): enable filter/projection pushdown into Oracle.
-- `oracle_prefetch_rows` / `oracle_prefetch_memory`: OCI prefetch tuning knobs.
-- `oracle_array_size`: rows per OCI fetch iteration (guarded to be ≥1).
-- `oracle_debug_show_queries` (default `false`): log generated Oracle SQL for debugging.
-
-Maintenance helper:
-
-- `SELECT oracle_clear_cache();` clears cached Oracle metadata/connection state for attached databases.
-
-## Running the extension
-
-To run the extension code, simply start the shell with `./build/release/duckdb`.
-
-Now we can use the features from the extension directly in DuckDB. The template contains a single scalar function `oracle()` that takes a string arguments and returns a string:
-
-```
-D select oracle('Jane') as result;
-┌───────────────┐
-│    result     │
-│    varchar    │
-├───────────────┤
-│ Oracle Jane 🐥 │
-└───────────────┘
-```
-
-## Running the tests
-
-Different tests can be created for DuckDB extensions. The primary way of testing DuckDB extensions should be the SQL tests in `./test/sql`. These SQL tests can be run using:
-
-```sh
+# run tests (SQL suite)
 make test
 ```
 
-### Installing the deployed binaries
+Outputs (release):
 
-To install your extension binaries from S3, you will need to do two things. Firstly, DuckDB should be launched with the
-`allow_unsigned_extensions` option set to true. How to set this will depend on the client you're using. Some examples:
+- `build/release/duckdb` — DuckDB shell with oracle extension preloaded
+- `build/release/test/unittest` — DuckDB tests (extension linked)
+- `build/release/extension/oracle/oracle.duckdb_extension` — loadable binary
 
-CLI:
+## Troubleshooting
 
-```shell
-duckdb -unsigned
-```
+- **OCI not found**: ensure `ORACLE_HOME` points to the Instant Client root (`sdk/include/oci.h`, `lib/libclntsh.so`). The CI helper defaults to `/usr/share/oracle/instantclient_23_26`.
+- **libaio missing on Ubuntu 24.04**: install `libaio1t64` (or `libaio-dev`) and ensure `libaio.so.1` exists.
+- **Pushdown issues**: set `SET oracle_debug_show_queries=true` to see generated SQL; disable with `SET oracle_enable_pushdown=false`.
+- **Stale metadata/connection**: `SELECT oracle_clear_cache();`
 
-Python:
+## Limits (current)
 
-```python
-con = duckdb.connect(':memory:', config={'allow_unsigned_extensions' : 'true'})
-```
+- Read-only; write/COPY not implemented.
+- Views treated as tables only if present in `ALL_TABLES`.
+- No transaction management; auto-commit reads.
 
-NodeJS:
+## License
 
-```js
-db = new duckdb.Database(':memory:', {"allow_unsigned_extensions": "true"});
-```
-
-Secondly, you will need to set the repository endpoint in DuckDB to the HTTP url of your bucket + version of the extension
-you want to install. To do this run the following SQL query in DuckDB:
-
-```sql
-SET custom_extension_repository='bucket.s3.eu-west-1.amazonaws.com/<your_extension_name>/latest';
-```
-
-Note that the `/latest` path will allow you to install the latest extension version available for your current version of
-DuckDB. To specify a specific version, you can pass the version instead.
-
-After running these steps, you can install and load your extension using the regular INSTALL/LOAD commands in DuckDB:
-
-```sql
-INSTALL oracle
-LOAD oracle
-```
+Apache-2.0 (DuckDB extension template heritage). Instant Client is governed by Oracle’s license; users must obtain it separately.
