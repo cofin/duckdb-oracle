@@ -4,76 +4,73 @@
 
 ## Overview
 
-This project is a C++ extension for DuckDB. It follows the standard architectural pattern for DuckDB extensions, leveraging DuckDB's internal APIs to add custom functionality. It specifically uses the **Oracle Call Interface (OCI)** to interact with Oracle databases.
+This extension adds Oracle connectivity to DuckDB via the **Oracle Call Interface (OCI)**. It uses DuckDB's extension API to expose table functions and a helper scalar function.
 
 ## Project Structure
 
 ```
-/usr/local/google/home/codyfincher/code/utils/duckdb-oracle/
-├───src/
-│   ├───oracle_extension.cpp  # Main entry point and implementation
-│   └───include/
-│       └───oracle_extension.hpp
-├───test/
-│   └───sql/                  # SQL-based test suite
-├───vcpkg.json                # Dependency management (includes OpenSSL)
-├───CMakeLists.txt            # Build configuration
-└───Makefile                  # Build automation
+duckdb-oracle/
+├── src/
+│   ├── oracle_extension.cpp        # Main entry point and implementation
+│   └── include/oracle_extension.hpp
+├── test/sql/                       # SQL-based test suite
+├── vcpkg.json                      # Dependency management (includes OpenSSL)
+├── CMakeLists.txt                  # Build configuration (DuckDB macros + OCI detection)
+└── Makefile                        # Build/test automation
 ```
 
 ## Core Components
 
-### 1. Extension Entry Point (`src/oracle_extension.cpp`)
+### Extension Entry Point (`src/oracle_extension.cpp`)
 
-The `OracleExtension` class implements the `Load` function, which is the hook DuckDB calls. It registers:
+`OracleExtension::Load` registers three functions:
 
-- **`oracle_scan`** (Table Function): Scans a specific Oracle table.
-- **`oracle_query`** (Table Function): Executes a raw SQL query against Oracle.
-- **`oracle_attach_wallet`** (Scalar Function): Configures the environment for Oracle Wallet authentication.
+- `oracle_scan` (Table Function): runs `SELECT * FROM <schema>.<table>` against Oracle.
+- `oracle_query` (Table Function): runs an arbitrary SQL query against Oracle.
+- `oracle_attach_wallet` (Scalar Function): sets `TNS_ADMIN` for wallet-based authentication.
 
-### 2. OCI Resource Management (`OracleBindData`)
+### OCI Resource Management
 
-The `OracleBindData` struct (in `oracle_extension.cpp`) encapsulates the state required for an Oracle connection using RAII principles. It manages:
+`OracleBindData` owns a shared `OracleContext` with `OCIEnv`, `OCISvcCtx`, `OCIStmt`, and `OCIError` handles. `OracleContext`'s destructor frees each handle (`OCIHandleFree` and `OCILogoff`), matching Oracle's guidance on handle cleanup.
 
-- `OCIEnv*`: The OCI environment handle.
-- `OCISvcCtx*`: The service context.
-- `OCIStmt*`: The statement handle.
-- `OCIError*`: The error handle.
+### Bind & Execute Model
 
-The destructor of `OracleBindData` ensures these handles are properly freed (`OCIHandleFree`, `OCILogoff`) to prevent memory leaks.
+- **Bind (`OracleBindInternal`)**
+  - Creates OCI environment/error/service/statement handles.
+  - Calls `OCILogon` with the provided connection string (credentials embedded).
+  - Prepares and describes the SQL to infer column metadata.
+  - Maps `SQLT_*` types to DuckDB `LogicalType` values and records buffer sizes.
+- **Execute (`OracleQueryFunction`)**
+  - Uses `OCIDefineByPos` per column with buffers sized from metadata (default 4000 bytes, multiplied by 4 for UTF-8 safety).
+  - Sets `OCI_ATTR_PREFETCH_ROWS` (default 200) to reduce round-trips.
+  - Fetches rows via `OCIStmtFetch2` and writes into DuckDB vectors.
+  - VARCHAR/BLOB columns copy from buffers; BIGINT/DOUBLE map directly; TIMESTAMP strings are parsed into `timestamp_t`.
 
-## Design Patterns
+### Error Handling
 
-- **DuckDB Extension API**: Utilizes `TableFunction` and `ScalarFunction` to expose C++ logic to SQL.
-- **Bind & Execute Model**:
-  - **Bind Phase (`OracleBindInternal`)**: Establishes the OCI connection, prepares the statement, and deduces return types (`SQLT_*` -> `LogicalType`).
-  - **Execute Phase (`OracleQueryFunction`)**: Executes the statement and fetches results row-by-row using `OCIStmtFetch2`, populating DuckDB's `DataChunk`.
-- **RAII**: Used for OCI handles to ensure exception safety.
+`CheckOCIError` wraps OCI status codes and raises `IOException` with the server error text when a call fails.
 
 ## Data Flow
 
-1.  **Scanning**: A user executes `SELECT * FROM oracle_scan('connection_string', 'SCHEMA', 'TABLE')`.
-    *   DuckDB invokes `OracleScanBind`.
-    *   Extension connects via OCI, retrieves table metadata (columns, types).
-    *   Extension maps OCI types (including JSON, Vector) to DuckDB types.
-    *   DuckDB invokes `OracleQueryFunction` to fetch data row-by-row (or batched) using OCI fetch).
+1. `oracle_scan(conn, schema, table)` → binds connection and constructed `SELECT *` → fetches rows.
+2. `oracle_query(conn, sql)` → binds connection and provided SQL → fetches rows (or executes PL/SQL).
+3. `oracle_attach_wallet(path)` → sets `TNS_ADMIN=path` for subsequent OCI connections in the process.
 
-2.  **Querying**: A user executes `SELECT * FROM oracle_query('connection_string', 'SELECT ...')`.
-    *   DuckDB invokes `OracleQueryBind`.
-    *   Extension prepares the statement.
-    *   If it's a SELECT, it describes columns and proceeds like scan.
-    *   If it's PL/SQL (`BEGIN...`), it executes immediately and returns a status row.
+## Type Mapping (current implementation)
 
-3.  **Configuration**: User calls `oracle_attach_wallet('/path')`.
-    *   Extension sets `TNS_ADMIN` environment variable for the process.
+| Oracle `SQLT`        | DuckDB Type | Notes |
+|----------------------|-------------|-------|
+| `SQLT_CHR`, `SQLT_AFC`, `SQLT_VCS`, `SQLT_AVC` | `VARCHAR` | |
+| `SQLT_NUM`, `SQLT_VNU` | `BIGINT` if scale 0 and precision ≤18, else `DOUBLE` | Precision >18 coerces to `DOUBLE` for portability |
+| `SQLT_INT`, `SQLT_UIN` | `BIGINT` | |
+| `SQLT_FLT`, `SQLT_BFLOAT`, `SQLT_BDOUBLE`, `SQLT_IBFLOAT`, `SQLT_IBDOUBLE` | `DOUBLE` | |
+| `SQLT_DAT`, `SQLT_ODT`, `SQLT_TIMESTAMP`, `SQLT_TIMESTAMP_TZ`, `SQLT_TIMESTAMP_LTZ` | `TIMESTAMP` (fetched as string today) | |
+| `SQLT_CLOB`, `SQLT_BLOB`, `SQLT_BIN`, `SQLT_LBI`, `SQLT_LNG`, `SQLT_LVC` | `BLOB` | |
+| `SQLT_JSON`, `SQLT_VEC` | `VARCHAR` | |
+| default/unknown       | `VARCHAR` | fallback |
 
-### Data Type Mapping
+## Build & Linking Notes
 
-| Oracle Type (`SQLT`) | DuckDB Type | Notes |
-| :--- | :--- | :--- |
-| `SQLT_CHR`, `SQLT_AFC`, `SQLT_VCS` | `VARCHAR` | Standard strings |
-| `SQLT_NUM`, `SQLT_INT` | `BIGINT`, `DECIMAL`, `DOUBLE` | Depends on precision/scale |
-| `SQLT_FLT`, `SQLT_BDOUBLE` | `DOUBLE` | Floating point |
-| `SQLT_DAT`, `SQLT_TIMESTAMP` | `TIMESTAMP` | |
-| `SQLT_CLOB`, `SQLT_BLOB` | `BLOB` | |
-| `SQLT_JSON` | `VARCHAR` | Fetched as string |
+- `CMakeLists.txt` requires CMake ≥ 3.10, links OpenSSL (from vcpkg) and OCI (from `ORACLE_HOME`).
+- OCI library and include paths are discovered via `ORACLE_HOME` with a fallback to `/usr/share/oracle/instantclient_23_26`; builds fail fast if not found.
+- Both static and loadable DuckDB extension targets are produced via `build_static_extension` and `build_loadable_extension`.

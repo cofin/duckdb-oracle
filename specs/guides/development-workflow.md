@@ -10,10 +10,8 @@
 - CMake
 - Make (or Ninja)
 - Python 3
-- **Oracle Instant Client SDK**: You must download and extract the Oracle Instant Client (Basic + SDK) and set `ORACLE_HOME` environment variable to the directory.
-- **Oracle Instant Client SDK**: You must have the Oracle Instant Client SDK installed and the OCI headers/libraries available.
-    - Set `ORACLE_HOME` to your installation directory if not in a standard location.
-    - Example: `/usr/lib/oracle/19.6/client64`
+- **Oracle Instant Client SDK**: Install the Basic + SDK packages and expose headers/libs via `ORACLE_HOME` (e.g., `/usr/lib/oracle/19.6/client64`). The CMakeLists.txt auto-detects `ORACLE_HOME` and falls back to `/usr/share/oracle/instantclient_23_26` if unset.
+    - `ORACLE_HOME` must contain `sdk/include/oci.h` and `lib/libclntsh.so`.
 
 ### Installation
 
@@ -70,6 +68,10 @@ make
 make debug
 ```
 
+Notes:
+- The `Makefile` drives an out-of-source CMake build under `./build/{release,debug}` (CMake >= 3.10).
+- OCI linking is performed through `ORACLE_HOME`; pass a different SDK by exporting that variable before `make`.
+
 ### Test
 
 ```bash
@@ -90,6 +92,11 @@ make format
 - **Commits**: Use descriptive commit messages.
 - **Pull Requests**: Open a pull request on GitHub to merge changes into `main`. The CI will automatically run tests.
 - **Updating DuckDB**: To pull in the latest changes from the DuckDB submodule, run `git submodule update --remote --merge`.
+
+## Oracle Connectivity Quick Reference
+
+- Connection strings are passed straight to `OCILogon` as the database argument; include credentials in the EZCONNECT style: `user/password@//host:port/service`.
+- Wallet-based auth uses `oracle_attach_wallet('/path/to/wallet')`, which sets `TNS_ADMIN` for the current process before issuing `oracle_query`/`oracle_scan`.
 
 ## Code Review Checklist
 

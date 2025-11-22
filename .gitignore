@@ -6,8 +6,15 @@ duckdb_unittest_tempdir/
 testext
 test/python/__pycache__/
 .Rhistory
+vcpkg_installed/
+vcpkg/buildtrees/
+vcpkg/packages/
+vcpkg/downloads/
 
 # Gemini Agent System 
 specs/archive/
 !specs/archive/.gitkeep
 test_connection.test
+CLAUDE.md
+.claude
+vcpkg

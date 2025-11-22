@@ -18,6 +18,8 @@
 - [x] Added `oracle_attach_wallet` for Autonomous DB support.
 - [x] Added GitHub Actions CI (`.github/workflows/OracleCI.yml`) and setup script.
 - [x] Added Integration Tests (`scripts/test_integration.sh`).
+- [x] Hardened OCI error handling, identifier quoting, and wallet path validation.
+- [x] Improved Makefile with `integration` target and container image override for smoother test runs.
 
 ## Next Steps
 

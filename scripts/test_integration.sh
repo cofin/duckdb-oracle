@@ -116,7 +116,7 @@ wait_for_db() {
 # Main execution.
 #######################################
 main() {
-  local oracle_image="${1:-${DEFAULT_ORACLE_IMAGE}}"
+  local oracle_image="${1:-${ORACLE_IMAGE:-${DEFAULT_ORACLE_IMAGE}}}"
   
   trap cleanup EXIT
 
@@ -153,11 +153,15 @@ main() {
   
   # Example: Verify connection with a simple DuckDB query
   # We need to ensure the extension is built first
-  echo "Building extension..."
-  make release
-  
-  echo "Building unittest runner..."
-  cmake --build build/release --target unittest
+  if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
+    echo "Building extension..."
+    make release
+
+    echo "Building unittest runner..."
+    cmake --build build/release --target unittest
+  else
+    echo "SKIP_BUILD=1 set; assuming build artifacts already present."
+  fi
   
   # Create a temporary test script (SQLLogicTest format) inside test directory
   # unittest runner expects files in test/ directory usually

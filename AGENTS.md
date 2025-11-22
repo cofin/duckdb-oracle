@@ -1,6 +1,6 @@
 # Project Overview
 
-This is a template repository for creating DuckDB extensions. The project is written in C++ and uses CMake for building and vcpkg for dependency management. The template provides a simple example of a scalar function that can be loaded into DuckDB.
+This repository builds the DuckDB Oracle extension. It is C++-based, built with CMake (≥3.10) via the provided `Makefile`, and uses vcpkg for third‑party dependencies (OpenSSL).
 
 ## Building and Running
 
@@ -19,8 +19,10 @@ This is a template repository for creating DuckDB extensions. The project is wri
     ```
 
 2. **Install dependencies with vcpkg:**
-    Follow the instructions in the `docs/README.md` to install and set up vcpkg.
-3. **Build the extension:**
+    Follow the instructions in the `vcpkg/` submodule to bootstrap vcpkg.
+3. **Install Oracle Instant Client (Basic + SDK):**
+    Set `ORACLE_HOME` to the Instant Client root containing `sdk/include/oci.h` and `lib/libclntsh.so`. The build falls back to `/usr/share/oracle/instantclient_23_26` if `ORACLE_HOME` is unset.
+4. **Build the extension:**
 
     ```sh
     make
@@ -56,3 +58,4 @@ D select oracle('Jane') as result;
 * **Testing:** The primary way of testing is through SQL tests located in the `./test/sql` directory. To run the tests, use the command `make test`.
 * **Dependency Management:** Dependencies are managed using vcpkg. Add dependencies to the `vcpkg.json` file and use `find_package` in `CMakeLists.txt` to link them.
 * **Distribution:** The repository is set up with GitHub Actions to automatically build and upload binaries for distribution. The recommended way to distribute the extension is through the community extensions repository.
+* **Oracle connectivity:** Connection strings are passed directly to `OCILogon` (embed credentials, e.g., `user/password@//host:port/service`). Wallet auth uses `oracle_attach_wallet('/path')` to set `TNS_ADMIN`.

@@ -1,0 +1,23 @@
+-- name: test_oracle_scan_and_wallet
+-- description: Negative scan connectivity and wallet path validation
+-- group: [oracle]
+
+require oracle
+
+-- invalid connection should raise IO error (OCI unavailable in CI)
+statement error
+SELECT * FROM oracle_scan('dummy/dummy@//localhost:1521/dummy', 'HR', 'EMPLOYEES');
+----
+IO Error
+
+-- wallet path must exist
+statement error
+SELECT oracle_attach_wallet('/this/path/does/not/exist');
+----
+IO Error
+
+-- wallet path success on a known directory
+query I
+SELECT oracle_attach_wallet('/tmp');
+----
+Wallet attached: /tmp

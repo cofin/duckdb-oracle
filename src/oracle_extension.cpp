@@ -3,10 +3,14 @@
 #include "oracle_extension.hpp"
 #include "duckdb.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
+#include "duckdb/parser/keyword_helper.hpp"
+#include "duckdb/common/types/timestamp.hpp"
 #include <oci.h>
 #include <iostream>
+#include <sys/stat.h>
 
 // OpenSSL linked through vcpkg
 #include <openssl/opensslv.h>
@@ -74,6 +78,30 @@ static void CheckOCIError(sword status, OCIError *errhp, const string &msg) {
     }
 }
 
+static timestamp_t ParseOciTimestamp(const char *data, ub2 len) {
+    if (len == 0 || !data) {
+        return timestamp_t();
+    }
+    // Oracle default string representation for DATE/TIMESTAMP is ISO-like; rely on DuckDB parser.
+    string s(data, len);
+    try {
+        return Timestamp::FromString(s, false);
+    } catch (...) {
+        // Fallback: remove trailing fractional seconds if present
+        auto dot = s.find('.');
+        if (dot != string::npos) {
+            s = s.substr(0, dot);
+            return Timestamp::FromString(s, false);
+        }
+        throw IOException("Failed to parse Oracle timestamp: " + s);
+    }
+}
+
+static bool PathIsDirectory(const string &path) {
+    struct stat st {};
+    return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+}
+
 static unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string connection_string, string query,
                                                         vector<LogicalType> &return_types, vector<string> &names,
                                                         OracleBindData *bind_data_ptr = nullptr) {
@@ -81,24 +109,25 @@ static unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, strin
     result->query = query;
     auto &ctx = result->ctx;
 
-    if (OCIEnvCreate(&ctx->envhp, OCI_DEFAULT, nullptr, nullptr, nullptr, nullptr, 0, nullptr) != OCI_SUCCESS) {
-        throw IOException("Failed to create OCI environment.");
-    }
+    CheckOCIError(OCIEnvCreate(&ctx->envhp, OCI_DEFAULT, nullptr, nullptr, nullptr, nullptr, 0, nullptr), nullptr,
+                  "Failed to create OCI environment");
 
-    if (OCIHandleAlloc(ctx->envhp, (dvoid **)&ctx->errhp, OCI_HTYPE_ERROR, 0, nullptr) != OCI_SUCCESS) {
-        throw IOException("Failed to allocate OCI error handle.");
-    }
+    CheckOCIError(OCIHandleAlloc(ctx->envhp, (dvoid **)&ctx->errhp, OCI_HTYPE_ERROR, 0, nullptr), nullptr,
+                  "Failed to allocate OCI error handle");
 
-    if (OCIHandleAlloc(ctx->envhp, (dvoid **)&ctx->svchp, OCI_HTYPE_SVCCTX, 0, nullptr) != OCI_SUCCESS) {
-        throw IOException("Failed to allocate OCI service context handle.");
-    }
+    CheckOCIError(OCIHandleAlloc(ctx->envhp, (dvoid **)&ctx->svchp, OCI_HTYPE_SVCCTX, 0, nullptr), ctx->errhp,
+                  "Failed to allocate OCI service context handle");
 
     sword status = OCILogon(ctx->envhp, ctx->errhp, &ctx->svchp, (OraText *)"", 0, (OraText *)"", 0, (OraText *)connection_string.c_str(), connection_string.size());
     CheckOCIError(status, ctx->errhp, "Failed to connect to Oracle");
 
-    if (OCIHandleAlloc(ctx->envhp, (dvoid **)&ctx->stmthp, OCI_HTYPE_STMT, 0, nullptr) != OCI_SUCCESS) {
-        throw IOException("Failed to allocate OCI statement handle.");
-    }
+    CheckOCIError(OCIHandleAlloc(ctx->envhp, (dvoid **)&ctx->stmthp, OCI_HTYPE_STMT, 0, nullptr), ctx->errhp,
+                  "Failed to allocate OCI statement handle");
+
+    // Set a modest prefetch to reduce round-trips; safe for general workloads.
+    ub4 prefetch_rows = 200;
+    CheckOCIError(OCIAttrSet(ctx->stmthp, OCI_HTYPE_STMT, &prefetch_rows, 0, OCI_ATTR_PREFETCH_ROWS, ctx->errhp),
+                  ctx->errhp, "Failed to set OCI prefetch rows");
 
     status = OCIStmtPrepare(ctx->stmthp, ctx->errhp, (OraText *)result->query.c_str(), result->query.size(), OCI_NTV_SYNTAX, OCI_DEFAULT);
     CheckOCIError(status, ctx->errhp, "Failed to prepare OCI statement");
@@ -107,29 +136,36 @@ static unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, strin
     CheckOCIError(status, ctx->errhp, "Failed to execute OCI statement (Describe)");
 
     ub4 param_count;
-    OCIAttrGet(ctx->stmthp, OCI_HTYPE_STMT, &param_count, 0, OCI_ATTR_PARAM_COUNT, ctx->errhp);
+    CheckOCIError(OCIAttrGet(ctx->stmthp, OCI_HTYPE_STMT, &param_count, 0, OCI_ATTR_PARAM_COUNT, ctx->errhp),
+                  ctx->errhp, "Failed to get OCI parameter count");
 
     for (ub4 i = 1; i <= param_count; i++) {
         OCIParam *param;
-        OCIParamGet(ctx->stmthp, OCI_HTYPE_STMT, ctx->errhp, (dvoid **)&param, i);
+        CheckOCIError(OCIParamGet(ctx->stmthp, OCI_HTYPE_STMT, ctx->errhp, (dvoid **)&param, i), ctx->errhp,
+                      "Failed to get OCI parameter");
 
         ub2 data_type;
-        OCIAttrGet(param, OCI_DTYPE_PARAM, &data_type, 0, OCI_ATTR_DATA_TYPE, ctx->errhp);
+        CheckOCIError(OCIAttrGet(param, OCI_DTYPE_PARAM, &data_type, 0, OCI_ATTR_DATA_TYPE, ctx->errhp), ctx->errhp,
+                      "Failed to get OCI data type");
 
         OraText *col_name;
         ub4 col_name_len;
-        OCIAttrGet(param, OCI_DTYPE_PARAM, &col_name, &col_name_len, OCI_ATTR_NAME, ctx->errhp);
+        CheckOCIError(OCIAttrGet(param, OCI_DTYPE_PARAM, &col_name, &col_name_len, OCI_ATTR_NAME, ctx->errhp),
+                      ctx->errhp, "Failed to get OCI column name");
 
         names.emplace_back((char *)col_name, col_name_len);
         result->oci_types.push_back(data_type);
         
         ub2 precision = 0;
         sb1 scale = 0;
-        OCIAttrGet(param, OCI_DTYPE_PARAM, &precision, 0, OCI_ATTR_PRECISION, ctx->errhp);
-        OCIAttrGet(param, OCI_DTYPE_PARAM, &scale, 0, OCI_ATTR_SCALE, ctx->errhp);
+        CheckOCIError(OCIAttrGet(param, OCI_DTYPE_PARAM, &precision, 0, OCI_ATTR_PRECISION, ctx->errhp), ctx->errhp,
+                      "Failed to get OCI precision");
+        CheckOCIError(OCIAttrGet(param, OCI_DTYPE_PARAM, &scale, 0, OCI_ATTR_SCALE, ctx->errhp), ctx->errhp,
+                      "Failed to get OCI scale");
 
         ub4 char_len = 0;
-        OCIAttrGet(param, OCI_DTYPE_PARAM, &char_len, 0, OCI_ATTR_CHAR_SIZE, ctx->errhp);
+        CheckOCIError(OCIAttrGet(param, OCI_DTYPE_PARAM, &char_len, 0, OCI_ATTR_CHAR_SIZE, ctx->errhp), ctx->errhp,
+                      "Failed to get OCI char size");
         result->oci_sizes.push_back(char_len > 0 ? char_len : 4000); // Default buffer size
 
         switch (data_type) {
@@ -142,11 +178,11 @@ static unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, strin
         case SQLT_NUM:
         case SQLT_VNU:
             if (scale == 0) {
-                 if (precision > 18) {
-                    return_types.push_back(LogicalType::DECIMAL(38, 0)); 
-                 } else {
+                if (precision > 18) {
+                    return_types.push_back(LogicalType::DOUBLE);
+                } else {
                     return_types.push_back(LogicalType::BIGINT);
-                 }
+                }
             } else {
                 return_types.push_back(LogicalType::DOUBLE);
             }
@@ -191,7 +227,7 @@ static unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, strin
 
     // Re-execute for fetching
     status = OCIStmtExecute(ctx->svchp, ctx->stmthp, ctx->errhp, 0, 0, nullptr, nullptr, OCI_DEFAULT);
-     if (status != OCI_SUCCESS && status != OCI_SUCCESS_WITH_INFO) {
+    if (status != OCI_SUCCESS && status != OCI_SUCCESS_WITH_INFO) {
         CheckOCIError(status, ctx->errhp, "Failed to execute OCI statement");
     }
 
@@ -203,7 +239,9 @@ static unique_ptr<FunctionData> OracleScanBind(ClientContext &context, TableFunc
     auto connection_string = input.inputs[0].GetValue<string>();
     auto schema_name = input.inputs[1].GetValue<string>();
     auto table_name = input.inputs[2].GetValue<string>();
-    string query = "SELECT * FROM " + schema_name + "." + table_name;
+    auto quoted_schema = KeywordHelper::WriteQuoted(schema_name, '"');
+    auto quoted_table = KeywordHelper::WriteQuoted(table_name, '"');
+    string query = StringUtil::Format("SELECT * FROM %s.%s", quoted_schema.c_str(), quoted_table.c_str());
     return OracleBindInternal(context, connection_string, query, return_types, names);
 }
 
@@ -242,14 +280,16 @@ static void OracleQueryFunction(ClientContext &context, TableFunctionInput &data
              default: type = SQLT_STR; break;
          }
          
-         OCIDefineByPos(ctx->stmthp, &defines[col_idx], ctx->errhp, col_idx + 1, 
-                        buffers[col_idx].data(), size, type, 
-                        &indicators[col_idx], &return_lens[col_idx], nullptr, OCI_DEFAULT);
+         CheckOCIError(OCIDefineByPos(ctx->stmthp, &defines[col_idx], ctx->errhp, col_idx + 1,
+                                      buffers[col_idx].data(), size, type, &indicators[col_idx],
+                                      &return_lens[col_idx], nullptr, OCI_DEFAULT),
+                       ctx->errhp, "Failed to define OCI column");
     }
     
     while (row_count < STANDARD_VECTOR_SIZE) {
         status = OCIStmtFetch2(ctx->stmthp, ctx->errhp, 1, OCI_FETCH_NEXT, 0, OCI_DEFAULT);
         if (status == OCI_NO_DATA) break;
+        CheckOCIError(status, ctx->errhp, "Failed to fetch OCI data");
         
         for (idx_t col_idx = 0; col_idx < output.ColumnCount(); col_idx++) {
             if (indicators[col_idx] == -1) {
@@ -271,8 +311,8 @@ static void OracleQueryFunction(ClientContext &context, TableFunctionInput &data
                     FlatVector::GetData<double>(output.data[col_idx])[row_count] = *(double*)buffers[col_idx].data();
                     break;
                 case LogicalTypeId::TIMESTAMP:
-                     string_t val((char*)buffers[col_idx].data(), return_lens[col_idx]);
-                     // Placeholder: Fetch as string for safety
+                     FlatVector::GetData<timestamp_t>(output.data[col_idx])[row_count] =
+                         ParseOciTimestamp((char*)buffers[col_idx].data(), return_lens[col_idx]);
                      break;
             }
         }
@@ -283,6 +323,9 @@ static void OracleQueryFunction(ClientContext &context, TableFunctionInput &data
 
 static void OracleAttachWallet(DataChunk &args, ExpressionState &state, Vector &result) {
     auto wallet_path = args.data[0].GetValue(0).ToString();
+    if (!PathIsDirectory(wallet_path)) {
+        throw IOException("Wallet path does not exist or is not a directory: " + wallet_path);
+    }
     setenv("TNS_ADMIN", wallet_path.c_str(), 1);
     result.SetValue(0, Value("Wallet attached: " + wallet_path));
 }

@@ -4,6 +4,8 @@ cmake_policy(SET CMP0079 NEW)
 # Set extension name here
 set(TARGET_NAME oracle)
 
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 # DuckDB's extension distribution supports vcpkg. As such, dependencies can be added in ./vcpkg.json and then
 # used in cmake with find_package. Feel free to remove or replace with other dependencies.
 # Note that it should also be removed from vcpkg.json to prevent needlessly installing it..
@@ -25,10 +27,6 @@ find_path(OCI_INCLUDE_DIR NAMES oci.h HINTS ${ORACLE_HOME}/sdk/include ${ORACLE_
 if (NOT OCI_LIBRARY OR NOT OCI_INCLUDE_DIR)
     message(FATAL_ERROR "OCI library or include headers not found. Please set ORACLE_HOME environment variable.")
 endif()
-
-# Force linking via global flags (robust against target scoping)
-set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${OCI_LIBRARY}")
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OCI_LIBRARY}")
 
 set(EXTENSION_NAME ${TARGET_NAME}_extension)
 set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
@@ -57,7 +55,3 @@ install(
   EXPORT "${DUCKDB_EXPORT_SET}"
   LIBRARY DESTINATION "${INSTALL_LIB_DIR}"
   ARCHIVE DESTINATION "${INSTALL_LIB_DIR}")
-
-# Force linking via global flags (robust against target scoping)
-set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${OCI_LIBRARY}")
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OCI_LIBRARY}")
