@@ -71,12 +71,14 @@ if command -v ldconfig >/dev/null 2>&1; then
     SUDO="sudo"
   fi
   
-  if [ -n "$SUDO" ]; then
-     echo "$OCI_HOME" | $SUDO tee /etc/ld.so.conf.d/oracle-instantclient.conf > /dev/null || true
-  else
-     echo "$OCI_HOME" > /etc/ld.so.conf.d/oracle-instantclient.conf || true
+  if [ -d "/etc/ld.so.conf.d" ]; then
+      if [ -n "$SUDO" ]; then
+         echo "$OCI_HOME" | $SUDO tee /etc/ld.so.conf.d/oracle-instantclient.conf > /dev/null || true
+      else
+         echo "$OCI_HOME" > /etc/ld.so.conf.d/oracle-instantclient.conf || true
+      fi
+      $SUDO ldconfig || true
   fi
-  $SUDO ldconfig || true
 fi
 
 echo "OCI setup complete."
