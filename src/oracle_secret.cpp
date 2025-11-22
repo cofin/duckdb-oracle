@@ -62,24 +62,21 @@ OracleSecretParameters ParseOracleSecret(const CreateSecretInput &input) {
 void ValidateOracleSecret(const OracleSecretParameters &params) {
 	// Validate required parameters
 	if (params.user.empty()) {
-		throw InvalidInputException(
-		    "Oracle secret requires USER parameter. "
-		    "Example: CREATE SECRET (TYPE oracle, HOST 'localhost', PORT 1521, "
-		    "SERVICE 'XEPDB1', USER 'scott', PASSWORD 'tiger')");
+		throw InvalidInputException("Oracle secret requires USER parameter. "
+		                            "Example: CREATE SECRET (TYPE oracle, HOST 'localhost', PORT 1521, "
+		                            "SERVICE 'XEPDB1', USER 'scott', PASSWORD 'tiger')");
 	}
 
 	if (params.service.empty()) {
-		throw InvalidInputException(
-		    "Oracle secret requires SERVICE or DATABASE parameter. "
-		    "Example: CREATE SECRET (TYPE oracle, HOST 'localhost', PORT 1521, "
-		    "SERVICE 'XEPDB1', USER 'scott', PASSWORD 'tiger')");
+		throw InvalidInputException("Oracle secret requires SERVICE or DATABASE parameter. "
+		                            "Example: CREATE SECRET (TYPE oracle, HOST 'localhost', PORT 1521, "
+		                            "SERVICE 'XEPDB1', USER 'scott', PASSWORD 'tiger')");
 	}
 
 	if (params.password.empty()) {
-		throw InvalidInputException(
-		    "Oracle secret requires PASSWORD parameter. "
-		    "Example: CREATE SECRET (TYPE oracle, HOST 'localhost', PORT 1521, "
-		    "SERVICE 'XEPDB1', USER 'scott', PASSWORD 'tiger')");
+		throw InvalidInputException("Oracle secret requires PASSWORD parameter. "
+		                            "Example: CREATE SECRET (TYPE oracle, HOST 'localhost', PORT 1521, "
+		                            "SERVICE 'XEPDB1', USER 'scott', PASSWORD 'tiger')");
 	}
 
 	// Validate port range

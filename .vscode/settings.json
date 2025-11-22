@@ -3,6 +3,7 @@
         "GEOMETRYCOLLECTION",
         "GEORASTER",
         "GTYPE",
+        "LESSTHANOREQUALTO",
         "LINESTRING",
         "MDSYS",
         "oraub",
