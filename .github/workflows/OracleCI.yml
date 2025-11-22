@@ -36,9 +36,9 @@ jobs:
         python-version: '3.11'
 
     - name: Install CMake
-      uses: lukka/get-cmake@v3
-      with:
-        cmakeVersion: '3.27.7'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake
 
     - name: Build Extension
       run: |
