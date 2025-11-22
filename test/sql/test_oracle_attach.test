@@ -1,0 +1,12 @@
+# name: test/sql/test_oracle_attach.test
+# description: ATTACH TYPE ORACLE should surface OCI errors when connection fails (CI has no Oracle)
+# group: [sql]
+
+# tags: [oracle]
+
+require oracle
+
+statement error
+ATTACH 'dummy/dummy@//localhost:1521/dummy' AS ora (TYPE ORACLE);
+----
+IO Error

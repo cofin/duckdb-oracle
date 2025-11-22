@@ -6,3 +6,26 @@ duckdb_unittest_tempdir/
 testext
 test/python/__pycache__/
 .Rhistory
+vcpkg_installed/
+vcpkg/buildtrees/
+vcpkg/packages/
+vcpkg/downloads/
+
+# Gemini Agent System 
+test_connection.test
+vcpkg
+
+# Gemini Agent System
+specs/archive/
+.gemini/mcp-tools.txt
+.gemini/mcp-strategy.md
+!specs/active/.gitkeep
+!specs/archive/.gitkeep
+!specs/guides/
+!specs/guides/**/*.md
+!specs/guides/**/*.yaml
+!specs/template-spec/
+!specs/template-spec/**/*.md
+
+# Agent telemetry logs
+specs/guides/telemetry/*.jsonl

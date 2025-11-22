@@ -1,0 +1,8 @@
+{
+  "general": {
+    "enablePromptCompletion": true
+  },
+  "tools": {
+    "enableToolOutputTruncation": false
+  }
+}
