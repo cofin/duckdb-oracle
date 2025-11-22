@@ -1,11 +1,19 @@
 # Oracle
 
+> **Community Extension**: This is an unofficial, community-maintained extension. It is not affiliated with or endorsed by DuckDB Labs or Oracle Corporation.
+
 This repository provides a native Oracle extension for DuckDB. It allows:
 
 - Attaching an Oracle database with `ATTACH ... (TYPE oracle)` and querying tables directly.
 - Table/query functions: `oracle_scan`, `oracle_query`.
 - Wallet helper: `oracle_attach_wallet`.
 - Cache maintenance: `oracle_clear_cache`.
+
+## Platform Support
+
+> This extension uses [Oracle Instant Client](https://www.oracle.com/database/technologies/instant-client/downloads.html) and supports the following platforms: `linux_amd64`, `linux_arm64`, `osx_amd64` (Intel), `osx_arm64` (Apple Silicon M1/M2/M3), and `windows_amd64`.
+>
+> **WebAssembly (WASM) is not supported** as Oracle Instant Client requires native system libraries that cannot run in the browser sandbox. The builds `wasm_mvp`, `wasm_eh`, and `wasm_threads` are excluded from distribution.
 
 ## Quickstart (DuckDB ≥ v1.4.1)
 
@@ -20,6 +28,93 @@ ATTACH 'user/password@//host:1521/service' AS ora (TYPE oracle);
 -- query a table
 SELECT * FROM ora.HR.EMPLOYEES WHERE employee_id = 101;
 ```
+
+## Authentication Methods
+
+The Oracle extension supports three authentication methods:
+
+### 1. Connection String (Quick Start)
+
+```sql
+ATTACH 'user/password@host:1521/service' AS ora (TYPE oracle);
+```
+
+**Best for:** Development, quick testing
+
+### 2. Secret Manager (Recommended for Scripts)
+
+Store credentials in secrets, specify connection details in ATTACH:
+
+```sql
+-- Create a secret with just credentials
+CREATE SECRET oracle_creds (
+    TYPE oracle,
+    USER 'scott',
+    PASSWORD 'tiger'
+);
+
+-- Attach using EZConnect syntax + secret
+ATTACH 'localhost:1521/XEPDB1' AS ora (TYPE oracle, SECRET oracle_creds);
+
+-- Or use TNS alias (requires tnsnames.ora)
+ATTACH 'PRODDB' AS prod (TYPE oracle, SECRET oracle_creds);
+
+-- Multiple environments with different credentials
+CREATE SECRET dev_creds (TYPE oracle, USER 'dev_user', PASSWORD 'dev_pass');
+CREATE SECRET prod_creds (TYPE oracle, USER 'prod_user', PASSWORD 'prod_pass');
+
+ATTACH 'dev.example.com:1521/DEVDB' AS dev (TYPE oracle, SECRET dev_creds);
+ATTACH 'prod.example.com:1521/PRODDB' AS prod (TYPE oracle, SECRET prod_creds);
+```
+
+**Best for:** CI/CD pipelines, scripts with multiple databases, when you need credential reusability without embedding passwords
+
+**Secret Parameters:**
+
+- `HOST` (optional, default: `localhost`) - Oracle server hostname
+- `PORT` (optional, default: `1521`) - Oracle listener port
+- `SERVICE` or `DATABASE` (required) - Oracle service name
+- `USER` (required) - Oracle username
+- `PASSWORD` (required) - Oracle password
+- `WALLET_PATH` (optional) - Path to Oracle Wallet directory
+
+### 3. Oracle Wallet Integration
+
+Oracle Wallet securely stores credentials and connection strings. The extension can leverage your existing Oracle Wallet configuration.
+
+```sql
+-- Set wallet location (contains ewallet.p12, tnsnames.ora, sqlnet.ora)
+SELECT oracle_attach_wallet('/path/to/wallet');
+
+-- Attach using TNS alias from wallet (credentials auto-loaded from wallet)
+ATTACH 'PRODDB_HIGH' AS prod (TYPE oracle);
+
+-- Example: Oracle Autonomous Database
+SELECT oracle_attach_wallet('/home/app/wallet_autonomous');
+ATTACH 'myatp_high' AS atp (TYPE oracle);
+ATTACH 'myatp_medium' AS atp_medium (TYPE oracle);
+
+-- Wallet + explicit username (useful when wallet has multiple schemas)
+ATTACH 'admin@PRODDB_HIGH' AS prod_admin (TYPE oracle);
+
+-- Combine wallet with secret for additional flexibility
+CREATE SECRET app_user (TYPE oracle, USER 'app_schema', PASSWORD 'app_pass');
+ATTACH 'PRODDB_HIGH' AS prod (TYPE oracle, SECRET app_user);
+```
+
+**Best for:**
+
+- Production deployments with Oracle Wallet
+- Oracle Autonomous Database (ATP/ADW)
+- Enterprise environments with centralized credential management
+- When using Oracle TNS aliases for connection failover/load balancing
+
+**How it works:**
+
+1. `oracle_attach_wallet()` sets the `TNS_ADMIN` environment variable
+2. Oracle Instant Client reads `tnsnames.ora` for connection aliases
+3. `sqlnet.ora` configures wallet location
+4. Credentials are automatically loaded from `ewallet.p12` or `cwallet.sso`
 
 ### Functions
 

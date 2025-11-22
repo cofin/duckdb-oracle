@@ -1,12 +1,16 @@
 {
     "cSpell.words": [
+        "ezconnect",
         "GEOMETRYCOLLECTION",
         "GEORASTER",
         "GTYPE",
+        "LESSTHANOREQUALTO",
         "LINESTRING",
         "MDSYS",
+        "myadb",
         "oraub",
         "ORCLPDB",
+        "PRODDB",
         "SRID",
         "WKBGEOMETRY",
         "WKTGEOMETRY"

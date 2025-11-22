@@ -26,6 +26,9 @@ specs/archive/
 !specs/guides/**/*.yaml
 !specs/template-spec/
 !specs/template-spec/**/*.md
-
+specs/active/*/tmp
 # Agent telemetry logs
 specs/guides/telemetry/*.jsonl
+oracle_sdk/
+basic.zip
+sdk.zip

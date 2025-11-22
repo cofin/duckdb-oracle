@@ -29,10 +29,20 @@ else()
 endif()
 
 find_library(OCI_LIBRARY NAMES clntsh HINTS ${ORACLE_HOME} ${ORACLE_HOME}/lib)
+find_library(OCICORE_LIBRARY NAMES clntshcore HINTS ${ORACLE_HOME} ${ORACLE_HOME}/lib)
+find_library(NNZ_LIBRARY NAMES nnz HINTS ${ORACLE_HOME} ${ORACLE_HOME}/lib)
 find_path(OCI_INCLUDE_DIR NAMES oci.h HINTS ${ORACLE_HOME}/sdk/include ${ORACLE_HOME}/include)
 
 if (NOT OCI_LIBRARY OR NOT OCI_INCLUDE_DIR)
     message(FATAL_ERROR "OCI library or include headers not found. Please set ORACLE_HOME environment variable.")
+endif()
+
+# Additional Oracle libraries (optional but recommended for full functionality)
+if (OCICORE_LIBRARY)
+    message(STATUS "Found libclntshcore: ${OCICORE_LIBRARY}")
+endif()
+if (NNZ_LIBRARY)
+    message(STATUS "Found libnnz: ${NNZ_LIBRARY}")
 endif()
 
 set(EXTENSION_NAME ${TARGET_NAME}_extension)
@@ -44,6 +54,7 @@ include_directories(src/include)
 set(EXTENSION_SOURCES
     src/oracle_extension.cpp
     src/oracle_connection.cpp
+    src/oracle_secret.cpp
     src/storage/oracle_catalog.cpp
     src/storage/oracle_schema_entry.cpp
     src/storage/oracle_table_entry.cpp
@@ -62,6 +73,16 @@ target_link_libraries(${LOADABLE_EXTENSION_NAME} OpenSSL::SSL OpenSSL::Crypto)
 # Link OCI in both the static library as the loadable extension
 target_link_libraries(${EXTENSION_NAME} ${OCI_LIBRARY})
 target_link_libraries(${LOADABLE_EXTENSION_NAME} ${OCI_LIBRARY})
+
+# Link additional Oracle libraries if found (required for ARM64 and some configurations)
+if (OCICORE_LIBRARY)
+    target_link_libraries(${EXTENSION_NAME} ${OCICORE_LIBRARY})
+    target_link_libraries(${LOADABLE_EXTENSION_NAME} ${OCICORE_LIBRARY})
+endif()
+if (NNZ_LIBRARY)
+    target_link_libraries(${EXTENSION_NAME} ${NNZ_LIBRARY})
+    target_link_libraries(${LOADABLE_EXTENSION_NAME} ${NNZ_LIBRARY})
+endif()
 
 target_include_directories(${EXTENSION_NAME} PRIVATE ${OCI_INCLUDE_DIR})
 target_include_directories(${LOADABLE_EXTENSION_NAME} PRIVATE ${OCI_INCLUDE_DIR})

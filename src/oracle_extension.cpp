@@ -20,6 +20,7 @@
 #include "oracle_storage_extension.hpp"
 #include "oracle_table_function.hpp"
 #include "oracle_catalog_state.hpp"
+#include "oracle_secret.hpp"
 #include <oci.h>
 #include <iostream>
 #include <sys/stat.h>
@@ -607,6 +608,24 @@ static void OracleClearCache(DataChunk &, ExpressionState &, Vector &result) {
 }
 
 static void LoadInternal(ExtensionLoader &loader) {
+	// Register Oracle secret type
+	SecretType secret_type;
+	secret_type.name = "oracle";
+	secret_type.deserializer = KeyValueSecret::Deserialize<KeyValueSecret>;
+	secret_type.default_provider = "config";
+	loader.RegisterSecretType(secret_type);
+
+	// Register Oracle secret function for "config" provider
+	CreateSecretFunction secret_function = {"oracle", "config", CreateOracleSecretFromConfig};
+	secret_function.named_parameters["host"] = LogicalType::VARCHAR;
+	secret_function.named_parameters["port"] = LogicalType::BIGINT;
+	secret_function.named_parameters["service"] = LogicalType::VARCHAR;
+	secret_function.named_parameters["database"] = LogicalType::VARCHAR;
+	secret_function.named_parameters["user"] = LogicalType::VARCHAR;
+	secret_function.named_parameters["password"] = LogicalType::VARCHAR;
+	secret_function.named_parameters["wallet_path"] = LogicalType::VARCHAR;
+	loader.RegisterFunction(secret_function);
+
 	auto oracle_scan_func =
 	    TableFunction("oracle_scan", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                  OracleQueryFunction, OracleScanBind);
