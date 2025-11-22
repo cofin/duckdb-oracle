@@ -13,6 +13,14 @@ namespace duckdb {
 
 static LogicalType MapOracleColumn(const string &data_type, idx_t precision, idx_t scale, idx_t char_len) {
 	auto upper = StringUtil::Upper(data_type);
+
+	// Spatial geometry type detection
+	if (upper == "SDO_GEOMETRY" || upper == "MDSYS.SDO_GEOMETRY") {
+		// Map to VARCHAR for WKT string representation
+		// TODO: Map to GEOMETRY type after spatial extension integration
+		return LogicalType::VARCHAR;
+	}
+
 	if (upper == "NUMBER") {
 		if (precision == 0) {
 			return LogicalType::DOUBLE;
@@ -41,13 +49,13 @@ static LogicalType MapOracleColumn(const string &data_type, idx_t precision, idx
 	return LogicalType::VARCHAR;
 }
 
-static vector<ColumnDefinition> LoadColumns(OracleCatalogState &state, const string &schema, const string &table) {
+static void LoadColumns(OracleCatalogState &state, const string &schema, const string &table,
+                        vector<ColumnDefinition> &columns, vector<OracleColumnMetadata> &metadata) {
 	auto query = StringUtil::Format("SELECT column_name, data_type, data_length, data_precision, data_scale, nullable "
 	                                "FROM all_tab_columns WHERE owner = UPPER(%s) AND table_name = UPPER(%s) "
 	                                "ORDER BY column_id",
 	                                Value(schema).ToSQLString().c_str(), Value(table).ToSQLString().c_str());
 	auto result = state.EnsureConnection().Query(query);
-	vector<ColumnDefinition> columns;
 	for (auto &row : result.rows) {
 		if (row.size() < 6) {
 			continue;
@@ -72,15 +80,17 @@ static vector<ColumnDefinition> LoadColumns(OracleCatalogState &state, const str
 		auto logical = MapOracleColumn(data_type, precision, scale, data_len);
 		ColumnDefinition col_def(col_name, logical);
 		columns.push_back(std::move(col_def));
+
+		// Store original Oracle type metadata
+		metadata.emplace_back(col_name, data_type);
 	}
-	return columns;
 }
 
 OracleTableEntry::OracleTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, unique_ptr<CreateTableInfo> info,
                                    shared_ptr<OracleCatalogState> state, const string &schema_name,
-                                   const string &table_name)
+                                   const string &table_name, vector<OracleColumnMetadata> metadata)
     : TableCatalogEntry(catalog, schema, *info), state(std::move(state)), schema_name(schema_name),
-      table_name(table_name) {
+      table_name(table_name), column_metadata(std::move(metadata)) {
 	// info consumed by base; nothing else to store
 }
 
@@ -90,12 +100,15 @@ unique_ptr<OracleTableEntry> OracleTableEntry::Create(Catalog &catalog, SchemaCa
 	auto info = make_uniq<CreateTableInfo>();
 	info->schema = schema_name;
 	info->table = table_name;
-	auto cols = LoadColumns(*state, schema_name, table_name);
+	vector<ColumnDefinition> cols;
+	vector<OracleColumnMetadata> metadata;
+	LoadColumns(*state, schema_name, table_name, cols, metadata);
 	for (auto &col : cols) {
 		info->columns.AddColumn(col.Copy());
 	}
 	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
-	return make_uniq<OracleTableEntry>(catalog, schema, std::move(info), std::move(state), schema_name, table_name);
+	return make_uniq<OracleTableEntry>(catalog, schema, std::move(info), std::move(state), schema_name, table_name,
+	                                   std::move(metadata));
 }
 
 TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) {
@@ -108,7 +121,33 @@ TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_p
 
 	auto quoted_schema = KeywordHelper::WriteQuoted(schema_name, '"');
 	auto quoted_table = KeywordHelper::WriteQuoted(table_name, '"');
-	auto query = StringUtil::Format("SELECT * FROM %s.%s", quoted_schema.c_str(), quoted_table.c_str());
+
+	// Build column list with WKT conversion for spatial columns
+	string column_list;
+	idx_t col_idx = 0;
+	for (auto &col : columns.Physical()) {
+		if (col_idx > 0) {
+			column_list += ", ";
+		}
+
+		auto quoted_col = KeywordHelper::WriteQuoted(col.Name(), '"');
+
+		// Check if this column is a spatial geometry type
+		bool is_spatial = false;
+		if (col_idx < column_metadata.size()) {
+			is_spatial = column_metadata[col_idx].is_spatial;
+		}
+
+		if (is_spatial) {
+			// Convert SDO_GEOMETRY to WKT CLOB using Oracle's built-in function
+			column_list += StringUtil::Format("SDO_UTIL.TO_WKTGEOMETRY(%s) AS %s", quoted_col.c_str(), quoted_col.c_str());
+		} else {
+			column_list += quoted_col;
+		}
+		col_idx++;
+	}
+
+	auto query = StringUtil::Format("SELECT %s FROM %s.%s", column_list.c_str(), quoted_schema.c_str(), quoted_table.c_str());
 
 	auto bind = make_uniq<OracleBindData>();
 	bind->column_names = names;

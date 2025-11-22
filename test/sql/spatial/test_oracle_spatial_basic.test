@@ -1,0 +1,29 @@
+# name: test/sql/spatial/test_oracle_spatial_basic.test
+# description: Basic tests for Oracle Spatial Geometry support (smoke tests without real Oracle connection)
+# group: [spatial]
+
+# tags: [oracle]
+
+require oracle
+
+# Verify extension loads
+statement ok
+SELECT 1;
+
+# Verify Oracle settings exist
+query I
+SELECT current_setting('oracle_enable_pushdown');
+----
+false
+
+query I
+SELECT current_setting('oracle_debug_show_queries');
+----
+false
+
+# Test ATTACH fails gracefully when Oracle not available
+# Spatial conversion is automatically enabled for SDO_GEOMETRY columns
+statement error
+ATTACH 'dummy/dummy@//localhost:1521/dummy' AS ora (TYPE ORACLE);
+----
+IO Error
