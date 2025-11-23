@@ -16,7 +16,7 @@ include extension-ci-tools/makefiles/duckdb_extension.Makefile
 
 ORACLE_IMAGE ?= gvenzl/oracle-free:23-slim
 
-.PHONY: configure_ci tidy-check integration help clean-all
+.PHONY: configure_ci tidy-check integration help clean-all test_release_internal
 
 # Detect OS for Oracle Instant Client setup
 UNAME_S := $(shell uname -s)
@@ -30,27 +30,32 @@ ifeq ($(OS),Windows_NT)
     OCI_SETUP_SCRIPT := powershell -ExecutionPolicy Bypass -File ./scripts/setup_oci_windows.ps1
 endif
 
+# Helper function to ensure libaio is available (needed for Oracle Instant Client)
+define ensure_libaio
+	@if ! [ -f /usr/lib/x86_64-linux-gnu/libaio.so.1 ] && ! [ -f /lib/x86_64-linux-gnu/libaio.so.1 ] && ! [ -f /usr/lib64/libaio.so.1 ] && ! [ -f /usr/lib/aarch64-linux-gnu/libaio.so.1 ] && ! [ -f /lib/aarch64-linux-gnu/libaio.so.1 ]; then \
+		echo "libaio.so.1 not found - installing..."; \
+		if command -v apt-get >/dev/null 2>&1; then \
+			apt-get update -qq && (apt-get install -y --no-install-recommends libaio1t64 2>/dev/null || apt-get install -y --no-install-recommends libaio1 2>/dev/null || apt-get install -y --no-install-recommends libaio-dev 2>/dev/null); \
+		fi; \
+	fi
+	@if [ -f /usr/lib/x86_64-linux-gnu/libaio.so.1t64 ] && ! [ -f /usr/lib/x86_64-linux-gnu/libaio.so.1 ]; then \
+		ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1 2>/dev/null || true; \
+	fi
+	@if [ -f /usr/lib/aarch64-linux-gnu/libaio.so.1t64 ] && ! [ -f /usr/lib/aarch64-linux-gnu/libaio.so.1 ]; then \
+		ln -sf /usr/lib/aarch64-linux-gnu/libaio.so.1t64 /usr/lib/aarch64-linux-gnu/libaio.so.1 2>/dev/null || true; \
+	fi
+endef
+
 configure_ci:
 	@echo "Running Oracle Instant Client setup..."
 	$(OCI_SETUP_SCRIPT)
-	@echo "Verifying libaio installation..."
-	@if ! [ -f /usr/lib/x86_64-linux-gnu/libaio.so.1 ] && ! [ -f /lib/x86_64-linux-gnu/libaio.so.1 ] && ! [ -f /usr/lib64/libaio.so.1 ] && ! [ -f /usr/lib/aarch64-linux-gnu/libaio.so.1 ] && ! [ -f /lib/aarch64-linux-gnu/libaio.so.1 ]; then \
-		echo "WARNING: libaio.so.1 not found. Tests may fail to run."; \
-		echo "Attempting to install libaio..."; \
-		if command -v apt-get >/dev/null 2>&1; then \
-			apt-get update -y && (apt-get install -y --no-install-recommends libaio1t64 || apt-get install -y --no-install-recommends libaio1 || apt-get install -y --no-install-recommends libaio-dev); \
-		fi; \
-	fi
-	@echo "Creating libaio symlink if needed (Ubuntu 24.04 libaio1t64)..."
-	@if [ -f /usr/lib/x86_64-linux-gnu/libaio.so.1t64 ] && ! [ -f /usr/lib/x86_64-linux-gnu/libaio.so.1 ]; then \
-		ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1; \
-		echo "Created symlink: /usr/lib/x86_64-linux-gnu/libaio.so.1 -> libaio.so.1t64"; \
-	fi
-	@if [ -f /usr/lib/aarch64-linux-gnu/libaio.so.1t64 ] && ! [ -f /usr/lib/aarch64-linux-gnu/libaio.so.1 ]; then \
-		ln -sf /usr/lib/aarch64-linux-gnu/libaio.so.1t64 /usr/lib/aarch64-linux-gnu/libaio.so.1; \
-		echo "Created symlink: /usr/lib/aarch64-linux-gnu/libaio.so.1 -> libaio.so.1t64"; \
-	fi
+	$(call ensure_libaio)
 	@echo "configure_ci complete"
+
+# Override test_release_internal to ensure libaio is available before running tests
+test_release_internal:
+	$(call ensure_libaio)
+	./build/release/$(TEST_PATH) "test/*"
 
 tidy-check:
 	$(OCI_SETUP_SCRIPT)
