@@ -35,14 +35,23 @@ define ensure_libaio
 	@if ! [ -f /usr/lib/x86_64-linux-gnu/libaio.so.1 ] && ! [ -f /lib/x86_64-linux-gnu/libaio.so.1 ] && ! [ -f /usr/lib64/libaio.so.1 ] && ! [ -f /usr/lib/aarch64-linux-gnu/libaio.so.1 ] && ! [ -f /lib/aarch64-linux-gnu/libaio.so.1 ]; then \
 		echo "libaio.so.1 not found - installing..."; \
 		if command -v apt-get >/dev/null 2>&1; then \
-			apt-get update -qq && (apt-get install -y --no-install-recommends libaio1t64 2>/dev/null || apt-get install -y --no-install-recommends libaio1 2>/dev/null || apt-get install -y --no-install-recommends libaio-dev 2>/dev/null); \
+			apt-get update -qq && (apt-get install -y --no-install-recommends libaio1t64 || apt-get install -y --no-install-recommends libaio1 || apt-get install -y --no-install-recommends libaio-dev); \
+		elif command -v yum >/dev/null 2>&1; then \
+			yum install -y libaio; \
+		elif command -v dnf >/dev/null 2>&1; then \
+			dnf install -y libaio; \
+		elif command -v apk >/dev/null 2>&1; then \
+			apk add --no-cache libaio; \
+		else \
+			echo "ERROR: No supported package manager found (apt-get, yum, dnf, apk)"; \
+			exit 1; \
 		fi; \
 	fi
 	@if [ -f /usr/lib/x86_64-linux-gnu/libaio.so.1t64 ] && ! [ -f /usr/lib/x86_64-linux-gnu/libaio.so.1 ]; then \
-		ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1 2>/dev/null || true; \
+		ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1 || true; \
 	fi
 	@if [ -f /usr/lib/aarch64-linux-gnu/libaio.so.1t64 ] && ! [ -f /usr/lib/aarch64-linux-gnu/libaio.so.1 ]; then \
-		ln -sf /usr/lib/aarch64-linux-gnu/libaio.so.1t64 /usr/lib/aarch64-linux-gnu/libaio.so.1 2>/dev/null || true; \
+		ln -sf /usr/lib/aarch64-linux-gnu/libaio.so.1t64 /usr/lib/aarch64-linux-gnu/libaio.so.1 || true; \
 	fi
 endef
 
