@@ -17,6 +17,11 @@ static std::vector<weak_ptr<OracleCatalogState>> &Registry() {
 	static std::vector<weak_ptr<OracleCatalogState>> registry;
 	return registry;
 }
+
+static unordered_map<string, weak_ptr<OracleCatalogState>> &AliasRegistry() {
+	static unordered_map<string, weak_ptr<OracleCatalogState>> registry;
+	return registry;
+}
 } // namespace
 
 OracleConnection &OracleCatalogState::EnsureConnection() {
@@ -79,6 +84,15 @@ void OracleCatalogState::Register(const shared_ptr<OracleCatalogState> &state) {
 	Registry().push_back(weak_ptr<OracleCatalogState>(state));
 }
 
+void OracleCatalogState::Register(const shared_ptr<OracleCatalogState> &state, const string &alias) {
+	lock_guard<std::mutex> guard(RegistryLock());
+	Registry().push_back(weak_ptr<OracleCatalogState>(state));
+	if (!alias.empty()) {
+		auto key = StringUtil::Lower(alias);
+		AliasRegistry()[key] = weak_ptr<OracleCatalogState>(state);
+	}
+}
+
 void OracleCatalogState::ClearAllCaches() {
 	lock_guard<std::mutex> guard(RegistryLock());
 	auto &registry = Registry();
@@ -91,6 +105,22 @@ void OracleCatalogState::ClearAllCaches() {
 		ptr->ClearCaches();
 		++it;
 	}
+}
+
+shared_ptr<OracleCatalogState> OracleCatalogState::LookupByAlias(const string &alias) {
+	lock_guard<std::mutex> guard(RegistryLock());
+	auto key = StringUtil::Lower(alias);
+	auto &areg = AliasRegistry();
+	auto entry = areg.find(key);
+	if (entry == areg.end()) {
+		return nullptr;
+	}
+	auto ptr = entry->second.lock();
+	if (!ptr) {
+		areg.erase(entry);
+		return nullptr;
+	}
+	return ptr;
 }
 
 void OracleCatalogState::DetectCurrentSchema() {

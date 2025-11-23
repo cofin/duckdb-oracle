@@ -468,6 +468,15 @@ static unique_ptr<FunctionData> OracleScanBind(ClientContext &context, TableFunc
 static unique_ptr<FunctionData> OracleQueryBind(ClientContext &context, TableFunctionBindInput &input,
                                                 vector<LogicalType> &return_types, vector<string> &names) {
 	auto connection_string = input.inputs[0].GetValue<string>();
+
+	// Support attached DB alias: if no '@' present, treat as alias of an attached Oracle database.
+	if (connection_string.find('@') == string::npos) {
+		auto state = OracleCatalogState::LookupByAlias(connection_string);
+		if (state) {
+			connection_string = state->connection_string;
+		}
+	}
+
 	auto query = input.inputs[1].GetValue<string>();
 	return OracleBindInternal(context, connection_string, query, return_types, names);
 }

@@ -24,7 +24,9 @@ public:
 	void ClearCaches();
 
 	static void Register(const shared_ptr<OracleCatalogState> &state);
+	static void Register(const shared_ptr<OracleCatalogState> &state, const string &alias);
 	static void ClearAllCaches();
+	static shared_ptr<OracleCatalogState> LookupByAlias(const string &alias);
 
 	OracleSettings settings;
 

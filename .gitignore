@@ -32,3 +32,4 @@ specs/guides/telemetry/*.jsonl
 oracle_sdk/
 basic.zip
 sdk.zip
+test/sql/test_integration_temp.test
