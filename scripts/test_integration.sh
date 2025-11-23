@@ -236,7 +236,12 @@ main() {
   # Run integration tests from test/integration directory
   if [[ -d "test/integration" && $(find test/integration -name "*.test" | wc -l) -gt 0 ]]; then
     echo "Running integration test suite from test/integration/..."
-    ./build/release/test/unittest "test/integration/*"
+    # Run tests sequentially to avoid OCI connection/resource exhaustion issues
+    # This is slower but safer than letting unittest run them in parallel
+    find test/integration -name "*.test" -print0 | while IFS= read -r -d '' test_file; do
+      echo "Running test: ${test_file}"
+      ./build/release/test/unittest "${test_file}"
+    done
     echo "Integration tests completed successfully."
   else
     echo "No integration tests found in test/integration/"

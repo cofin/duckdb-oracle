@@ -251,6 +251,14 @@ static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vecto
 		CheckOCIError(status, errhp, "Failed to connect to Oracle");
 		connected = true;
 
+		// Set timeouts to prevent infinite hangs
+		ub4 timeout = 30000; // 30 seconds
+		OCIServer *server_handle = nullptr;
+		CheckOCIError(OCIAttrGet(svchp, OCI_HTYPE_SVCCTX, &server_handle, 0, OCI_ATTR_SERVER, errhp), errhp,
+		              "Failed to get OCI server handle");
+		// Set call timeout (if supported by client/server)
+		OCIAttrSet(server_handle, OCI_HTYPE_SERVER, &timeout, 0, OCI_ATTR_CALL_TIMEOUT, errhp);
+
 		// Allocate statement handle
 		CheckOCIError(OCIHandleAlloc(envhp, (dvoid **)&stmthp, OCI_HTYPE_STMT, 0, nullptr), errhp,
 		              "Failed to allocate OCI statement handle");
@@ -276,6 +284,10 @@ static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vecto
 			ub4 row_count = 0;
 			CheckOCIError(OCIAttrGet(stmthp, OCI_HTYPE_STMT, &row_count, 0, OCI_ATTR_ROW_COUNT, errhp), errhp,
 			              "Failed to get OCI row count");
+
+			if (getenv("ORACLE_DEBUG")) {
+				fprintf(stderr, "[oracle] execute stmt_type: %d, row_count: %llu\n", stmt_type, (uint64_t)row_count);
+			}
 
 			bool is_dml = (stmt_type == OCI_STMT_UPDATE || stmt_type == OCI_STMT_DELETE ||
 			               stmt_type == OCI_STMT_INSERT || stmt_type == OCI_STMT_MERGE);
