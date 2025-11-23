@@ -264,6 +264,8 @@ static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vecto
 		status = OCIStmtExecute(svchp, stmthp, errhp, 1, 0, nullptr, nullptr, OCI_COMMIT_ON_SUCCESS);
 		CheckOCIError(status, errhp, "Failed to execute OCI statement");
 
+		// Format result message
+		string result_msg;
 		if (stmthp) {
 			// Get statement type
 			ub2 stmt_type = 0;
