@@ -15,6 +15,7 @@ struct OracleContext {
 	OCISvcCtx *svchp = nullptr;
 	OCIStmt *stmthp = nullptr;
 	OCIError *errhp = nullptr;
+	bool connected = false;
 
 	~OracleContext();
 };

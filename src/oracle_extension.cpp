@@ -80,7 +80,7 @@ OracleContext::~OracleContext() {
 	if (stmthp)
 		OCIHandleFree(stmthp, OCI_HTYPE_STMT);
 	if (svchp) {
-		if (errhp)
+		if (errhp && connected)
 			OCILogoff(svchp, errhp);
 		else
 			OCIHandleFree(svchp, OCI_HTYPE_SVCCTX); // Fallback
@@ -218,11 +218,16 @@ static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vecto
 	auto connection_string = args.data[0].GetValue(0).ToString();
 	auto sql_statement = args.data[1].GetValue(0).ToString();
 
+	if (getenv("ORACLE_DEBUG")) {
+		fprintf(stderr, "[oracle] execute start: %s\n", sql_statement.c_str());
+	}
+
 	// Create OCI environment and connection
 	OCIEnv *envhp = nullptr;
 	OCIError *errhp = nullptr;
 	OCISvcCtx *svchp = nullptr;
 	OCIStmt *stmthp = nullptr;
+	bool connected = false;
 
 	try {
 		string user, password, db;
@@ -244,6 +249,7 @@ static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vecto
 		sword status = OCILogon(envhp, errhp, &svchp, (OraText *)user.c_str(), user.size(), (OraText *)password.c_str(),
 		                        password.size(), (OraText *)db.c_str(), db.size());
 		CheckOCIError(status, errhp, "Failed to connect to Oracle");
+		connected = true;
 
 		// Allocate statement handle
 		CheckOCIError(OCIHandleAlloc(envhp, (dvoid **)&stmthp, OCI_HTYPE_STMT, 0, nullptr), errhp,
@@ -272,12 +278,18 @@ static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vecto
 			result_msg = "Statement executed successfully";
 		}
 
+		if (getenv("ORACLE_DEBUG")) {
+			fprintf(stderr, "[oracle] execute success: %s\n", result_msg.c_str());
+		}
+
 		// Cleanup
 		if (stmthp)
 			OCIHandleFree(stmthp, OCI_HTYPE_STMT);
 		if (svchp) {
-			if (errhp)
+			if (errhp && connected)
 				OCILogoff(svchp, errhp);
+			else
+				OCIHandleFree(svchp, OCI_HTYPE_SVCCTX);
 		}
 		if (envhp)
 			OCIHandleFree(envhp, OCI_HTYPE_ENV);
@@ -290,8 +302,12 @@ static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vecto
 		// Cleanup on exception
 		if (stmthp)
 			OCIHandleFree(stmthp, OCI_HTYPE_STMT);
-		if (svchp && errhp)
-			OCILogoff(svchp, errhp);
+		if (svchp) {
+			if (errhp && connected)
+				OCILogoff(svchp, errhp);
+			else
+				OCIHandleFree(svchp, OCI_HTYPE_SVCCTX);
+		}
 		if (envhp)
 			OCIHandleFree(envhp, OCI_HTYPE_ENV);
 		if (errhp)
@@ -327,6 +343,7 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
 	sword status = OCILogon(ctx->envhp, ctx->errhp, &ctx->svchp, (OraText *)user.c_str(), user.size(),
 	                        (OraText *)password.c_str(), password.size(), (OraText *)db.c_str(), db.size());
 	CheckOCIError(status, ctx->errhp, "Failed to connect to Oracle");
+	ctx->connected = true;
 
 	CheckOCIError(OCIHandleAlloc(ctx->envhp, (dvoid **)&ctx->stmthp, OCI_HTYPE_STMT, 0, nullptr), ctx->errhp,
 	              "Failed to allocate OCI statement handle");
