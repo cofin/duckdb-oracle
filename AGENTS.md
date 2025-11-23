@@ -68,7 +68,8 @@ make clean-all            # Remove all build dirs (use when switching generators
 ```bash
 make test                 # Run SQL test suite
 make integration          # Build + run tests against containerized Oracle
-ORACLE_IMAGE=gvenzl/oracle-free:23-slim make integration
+# Or run manually with options:
+ORACLE_IMAGE=gvenzl/oracle-free:23-slim ./scripts/test_integration.sh [--show-logs] [--keep-container]
 ```
 
 ### Quality
@@ -129,6 +130,10 @@ void Connect(const string &connection_string);
 - **Test types required**:
   1. Smoke tests (connection errors, require oracle)
   2. Integration tests (real Oracle container)
+     - `execute.test`: DDL/DML via `oracle_execute`
+     - `metadata.test`: Catalog/schema discovery
+     - `schema_resolution.test`: Current schema and synonyms
+     - `edge_cases.test`: Complex types, errors, PL/SQL
   3. Edge cases (NULL, empty, errors)
   4. Type mapping tests (Oracle types → DuckDB types)
   5. Pushdown tests (filter pushdown verification)

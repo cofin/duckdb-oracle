@@ -27,7 +27,7 @@
 #include "oracle_secret.hpp"
 #include "oracle_connection_manager.hpp"
 #include <oci.h>
-#include <iostream>
+#include <cstdio>
 #include <sys/stat.h>
 
 // OpenSSL linked through vcpkg
@@ -545,8 +545,6 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &context, Ta
 	state->defines_bound = true;
 	return std::move(state);
 }
-
-// OracleQueryFunction is defined once (see earlier) and reused; duplicate removed.
 
 void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &bind_data = (OracleBindData &)*data.bind_data;

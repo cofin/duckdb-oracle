@@ -1,6 +1,5 @@
 #include "oracle_connection_manager.hpp"
 #include "duckdb/common/string_util.hpp"
-#include <iostream>
 
 namespace duckdb {
 

@@ -1,4 +1,4 @@
-# name: test/integration/oracle/advanced_execute_integration.test
+# name: test/integration/oracle/execute.test
 # description: Integration tests for oracle_execute function with real Oracle database
 # group: [oracle]
 

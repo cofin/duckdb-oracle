@@ -1,4 +1,4 @@
-# name: test/integration/oracle/advanced_edge_cases.test
+# name: test/integration/oracle/edge_cases.test
 # description: Edge case tests for Oracle extension
 # group: [oracle]
 

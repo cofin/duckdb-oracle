@@ -29,6 +29,7 @@ readonly SETUP_DIR="$(pwd)/test/integration/init_sql"
 
 # Flags
 CLEANUP_ENABLED=1
+SHOW_LOGS=0
 # Per-test timeout (seconds) to avoid indefinite hangs when something goes wrong
 : "${INTEGRATION_TEST_TIMEOUT:=120}"
 
@@ -51,12 +52,17 @@ while [[ $# -gt 0 ]]; do
       CLEANUP_ENABLED=0
       shift
       ;;
+    --show-logs)
+      SHOW_LOGS=1
+      shift
+      ;;
     --help|-h)
-      echo "Usage: $0 [--keep-container] [--no-cleanup]"
+      echo "Usage: $0 [--keep-container] [--no-cleanup] [--show-logs]"
       echo ""
       echo "Options:"
       echo "  --keep-container  Keep container running after tests"
       echo "  --no-cleanup      Alias for --keep-container"
+      echo "  --show-logs       Show container logs on failure"
       echo ""
       echo "Environment Variables:"
       echo "  ORACLE_IMAGE      Oracle container image"
@@ -137,7 +143,7 @@ cleanup() {
     return 0
   fi
 
-  if [[ $exit_code -ne 0 ]]; then
+  if [[ $exit_code -ne 0 && $SHOW_LOGS -eq 1 ]]; then
     echo "Test failed (exit code: $exit_code). Container logs:"
     ${RUNTIME} logs "${CONTAINER_NAME}" 2>&1 | tail -n 100 || true
   fi
