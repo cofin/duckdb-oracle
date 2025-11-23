@@ -275,8 +275,8 @@ static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vecto
 			CheckOCIError(OCIAttrGet(stmthp, OCI_HTYPE_STMT, &row_count, 0, OCI_ATTR_ROW_COUNT, errhp), errhp,
 			              "Failed to get OCI row count");
 
-			bool is_dml = (stmt_type == OCI_STMT_UPDATE || stmt_type == OCI_STMT_DELETE || stmt_type == OCI_STMT_INSERT ||
-			               stmt_type == OCI_STMT_MERGE);
+			bool is_dml = (stmt_type == OCI_STMT_UPDATE || stmt_type == OCI_STMT_DELETE ||
+			               stmt_type == OCI_STMT_INSERT || stmt_type == OCI_STMT_MERGE);
 
 			if (row_count > 0 || is_dml) {
 				result_msg =
