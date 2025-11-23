@@ -159,7 +159,106 @@ static OracleSettings GetOracleSettings(ClientContext &context, OracleCatalogSta
 	if (context.TryGetCurrentSetting("oracle_debug_show_queries", option_value)) {
 		settings.debug_show_queries = option_value.GetValue<bool>();
 	}
+	if (context.TryGetCurrentSetting("oracle_lazy_schema_loading", option_value)) {
+		settings.lazy_schema_loading = option_value.GetValue<bool>();
+	}
+	if (context.TryGetCurrentSetting("oracle_metadata_object_types", option_value)) {
+		settings.metadata_object_types = option_value.ToString();
+	}
+	if (context.TryGetCurrentSetting("oracle_metadata_result_limit", option_value)) {
+		auto val = option_value.GetValue<int64_t>();
+		settings.metadata_result_limit = val <= 0 ? 0 : static_cast<idx_t>(val);
+	}
+	if (context.TryGetCurrentSetting("oracle_use_current_schema", option_value)) {
+		settings.use_current_schema = option_value.GetValue<bool>();
+	}
 	return settings;
+}
+
+//! Oracle Execute Function - Execute arbitrary SQL without expecting result set
+static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto connection_string = args.data[0].GetValue(0).ToString();
+	auto sql_statement = args.data[1].GetValue(0).ToString();
+
+	// Create OCI environment and connection
+	OCIEnv *envhp = nullptr;
+	OCIError *errhp = nullptr;
+	OCISvcCtx *svchp = nullptr;
+	OCIStmt *stmthp = nullptr;
+
+	try {
+		string user, password, db;
+		ParseOracleConnectionString(connection_string, user, password, db);
+
+		// Create OCI environment
+		CheckOCIError(OCIEnvCreate(&envhp, OCI_DEFAULT, nullptr, nullptr, nullptr, nullptr, 0, nullptr), nullptr,
+		              "Failed to create OCI environment");
+
+		// Allocate error handle
+		CheckOCIError(OCIHandleAlloc(envhp, (dvoid **)&errhp, OCI_HTYPE_ERROR, 0, nullptr), nullptr,
+		              "Failed to allocate OCI error handle");
+
+		// Allocate service context handle
+		CheckOCIError(OCIHandleAlloc(envhp, (dvoid **)&svchp, OCI_HTYPE_SVCCTX, 0, nullptr), errhp,
+		              "Failed to allocate OCI service context handle");
+
+		// Connect to Oracle
+		sword status = OCILogon(envhp, errhp, &svchp, (OraText *)user.c_str(), user.size(),
+		                        (OraText *)password.c_str(), password.size(), (OraText *)db.c_str(), db.size());
+		CheckOCIError(status, errhp, "Failed to connect to Oracle");
+
+		// Allocate statement handle
+		CheckOCIError(OCIHandleAlloc(envhp, (dvoid **)&stmthp, OCI_HTYPE_STMT, 0, nullptr), errhp,
+		              "Failed to allocate OCI statement handle");
+
+		// Prepare statement
+		status = OCIStmtPrepare(stmthp, errhp, (OraText *)sql_statement.c_str(), sql_statement.size(), OCI_NTV_SYNTAX,
+		                        OCI_DEFAULT);
+		CheckOCIError(status, errhp, "Failed to prepare OCI statement");
+
+		// Execute statement with auto-commit
+		status = OCIStmtExecute(svchp, stmthp, errhp, 1, 0, nullptr, nullptr, OCI_COMMIT_ON_SUCCESS);
+		CheckOCIError(status, errhp, "Failed to execute OCI statement");
+
+		// Extract row count (for DML statements)
+		ub4 row_count = 0;
+		CheckOCIError(OCIAttrGet(stmthp, OCI_HTYPE_STMT, &row_count, 0, OCI_ATTR_ROW_COUNT, errhp), errhp,
+		              "Failed to get OCI row count");
+
+		// Format result message
+		string result_msg;
+		if (row_count > 0) {
+			result_msg = StringUtil::Format("Statement executed successfully (%llu rows affected)", (uint64_t)row_count);
+		} else {
+			result_msg = "Statement executed successfully";
+		}
+
+		// Cleanup
+		if (stmthp)
+			OCIHandleFree(stmthp, OCI_HTYPE_STMT);
+		if (svchp) {
+			if (errhp)
+				OCILogoff(svchp, errhp);
+		}
+		if (envhp)
+			OCIHandleFree(envhp, OCI_HTYPE_ENV);
+		if (errhp)
+			OCIHandleFree(errhp, OCI_HTYPE_ERROR);
+
+		result.SetValue(0, Value(result_msg));
+
+	} catch (...) {
+		// Cleanup on exception
+		if (stmthp)
+			OCIHandleFree(stmthp, OCI_HTYPE_STMT);
+		if (svchp && errhp)
+			OCILogoff(svchp, errhp);
+		if (envhp)
+			OCIHandleFree(envhp, OCI_HTYPE_ENV);
+		if (errhp)
+			OCIHandleFree(errhp, OCI_HTYPE_ERROR);
+		throw;
+	}
 }
 
 unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string connection_string, string query,
@@ -647,6 +746,11 @@ static void LoadInternal(ExtensionLoader &loader) {
 
 	auto clear_cache_func = ScalarFunction("oracle_clear_cache", {}, LogicalType::VARCHAR, OracleClearCache);
 	loader.RegisterFunction(clear_cache_func);
+
+	auto oracle_execute_func =
+	    ScalarFunction("oracle_execute", {LogicalType::VARCHAR, LogicalType::VARCHAR}, LogicalType::VARCHAR,
+	                   OracleExecuteFunction);
+	loader.RegisterFunction(oracle_execute_func);
 }
 
 void OracleExtension::Load(ExtensionLoader &loader) {
@@ -667,6 +771,20 @@ void OracleExtension::Load(ExtensionLoader &loader) {
 	                          Value::UBIGINT(8));
 	config.AddExtensionOption("oracle_debug_show_queries", "Log generated Oracle SQL for debugging",
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(false));
+
+	// Advanced features settings
+	config.AddExtensionOption("oracle_lazy_schema_loading", "Load only current schema by default",
+	                          LogicalType::BOOLEAN, Value::BOOLEAN(true));
+	config.AddExtensionOption("oracle_metadata_object_types",
+	                          "Object types to enumerate (TABLE,VIEW,SYNONYM,MATERIALIZED VIEW)", LogicalType::VARCHAR,
+	                          Value("TABLE,VIEW,SYNONYM,MATERIALIZED VIEW"));
+	config.AddExtensionOption("oracle_metadata_result_limit",
+	                          "Maximum rows returned from metadata queries (0=unlimited)", LogicalType::UBIGINT,
+	                          Value::UBIGINT(10000));
+	config.AddExtensionOption("oracle_use_current_schema",
+	                          "Resolve unqualified table names to current schema first", LogicalType::BOOLEAN,
+	                          Value::BOOLEAN(true));
+
 	config.storage_extensions["oracle"] = CreateOracleStorageExtension();
 }
 

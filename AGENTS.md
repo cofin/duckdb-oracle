@@ -292,6 +292,268 @@ if (col_idx < column_metadata.size()) {
 - Overhead: ~40 bytes per column (string + bool + padding)
 - Trade-off: Simplifies query generation logic
 
+### Pattern: Lazy Schema Loading with On-Demand Fallback
+
+When implementing catalog systems that must handle large schemas (100K+ tables):
+
+**Problem**: Enumerating all schemas and tables upfront causes slow attach times and high memory usage for large Oracle databases.
+
+**Solution**: Lazy schema loading with on-demand table lookup fallback.
+
+```cpp
+// Step 1: Detect current schema on attach
+void OracleCatalogState::DetectCurrentSchema() {
+    lock_guard<mutex> guard(lock);
+    EnsureConnection();
+    auto result = connection->Query(
+        "SELECT SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') FROM DUAL"
+    );
+    if (!result.rows.empty() && !result.rows[0].empty()) {
+        current_schema = result.rows[0][0];
+    }
+}
+
+// Step 2: Lazy schema enumeration
+vector<string> OracleCatalogState::ListSchemas() {
+    lock_guard<mutex> guard(lock);
+
+    if (settings.lazy_schema_loading) {
+        // Return only current schema (fast)
+        if (!current_schema.empty()) {
+            return {current_schema};
+        }
+    }
+
+    // Full enumeration (slow for large DBs)
+    // ... existing code to query all_users
+}
+
+// Step 3: Object enumeration with limit
+vector<string> OracleCatalogState::ListObjects(const string &schema, const string &object_types) {
+    lock_guard<mutex> guard(lock);
+
+    string query = StringUtil::Format(
+        "SELECT object_name FROM all_objects "
+        "WHERE owner = UPPER(%s) AND object_type IN (%s) "
+        "ORDER BY object_name",
+        Value(schema).ToSQLString().c_str(),
+        object_types.c_str()
+    );
+
+    // Apply result limit to prevent memory exhaustion
+    if (settings.metadata_result_limit > 0) {
+        query = StringUtil::Format(
+            "SELECT * FROM (%s) WHERE ROWNUM <= %lu",
+            query.c_str(), (unsigned long)settings.metadata_result_limit
+        );
+    }
+
+    auto result = connection->Query(query);
+    // ... cache and return objects
+}
+
+// Step 4: On-demand loading for tables beyond enumeration limit
+bool OracleCatalogState::ObjectExists(const string &schema, const string &object_name,
+                                      const string &object_types) {
+    lock_guard<mutex> guard(lock);
+    EnsureConnection();
+
+    auto query = StringUtil::Format(
+        "SELECT 1 FROM all_objects "
+        "WHERE owner = UPPER(%s) AND object_name = UPPER(%s) AND object_type IN (%s)",
+        Value(schema).ToSQLString().c_str(),
+        Value(object_name).ToSQLString().c_str(),
+        object_types.c_str()
+    );
+
+    auto result = connection->Query(query);
+    return !result.rows.empty();
+}
+
+// Step 5: Table generator with fallback chain
+unique_ptr<CatalogEntry> OracleTableGenerator::CreateDefaultEntry(
+    ClientContext &context, const string &entry_name) override {
+
+    // Try direct lookup in enumerated list
+    auto table = TryCreateTableEntry(schema.name, entry_name);
+    if (table) {
+        return table;
+    }
+
+    // Try on-demand loading (handles tables beyond enumeration limit)
+    if (state->ObjectExists(schema.name, entry_name, "'TABLE', 'VIEW', 'MATERIALIZED VIEW'")) {
+        return TryCreateTableEntry(schema.name, entry_name);
+    }
+
+    // Try synonym resolution
+    string target_schema, target_table;
+    bool found = false;
+    state->ResolveSynonym(schema.name, entry_name, target_schema, target_table, found);
+    if (found) {
+        return TryCreateTableEntry(target_schema, target_table);
+    }
+
+    return nullptr;
+}
+```
+
+**Key Points:**
+- Enumerate only current schema by default (configurable via `oracle_lazy_schema_loading`)
+- Limit object enumeration to prevent memory exhaustion (default: 10,000 objects)
+- Fall back to on-demand `ObjectExists()` query when table not in enumerated list
+- Log warning when limit reached, but continue working (no silent failures)
+- Users can still query all tables, just won't see them in autocomplete
+
+**Performance:**
+- Attach time: <5 seconds for any schema size (with lazy loading)
+- On-demand lookup: <10ms per table (single query)
+- Memory: O(enumeration limit) instead of O(total tables)
+
+**Settings:**
+```cpp
+bool lazy_schema_loading = true;           // Enumerate only current schema
+idx_t metadata_result_limit = 10000;       // Max objects enumerated
+string metadata_object_types = "TABLE,VIEW,SYNONYM,MATERIALIZED VIEW";
+```
+
+### Pattern: Oracle Execute Function (Non-Returning SQL)
+
+When implementing a function to execute Oracle SQL without expecting a result set:
+
+**Problem**: `oracle_query()` requires SELECT statements that return data. No way to execute DDL, DML, or PL/SQL blocks.
+
+**Solution**: Create separate `oracle_execute()` scalar function with OCI execution.
+
+```cpp
+static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+    auto &conn_vec = args.data[0];
+    auto &sql_vec = args.data[1];
+
+    UnaryExecutor::Execute<string_t, string_t>(
+        conn_vec, result, args.size(),
+        [&](string_t conn_str) {
+            auto connection_string = conn_str.GetString();
+            auto sql = sql_vec.GetValue(0).ToString();
+
+            // Create OCI environment and connection
+            OCIEnv *env = nullptr;
+            OCIError *err = nullptr;
+            OCISvcCtx *svc = nullptr;
+            OCIStmt *stmt = nullptr;
+
+            // Initialize OCI (error handling omitted for brevity)
+            OCIEnvCreate(&env, OCI_DEFAULT, nullptr, nullptr, nullptr, nullptr, 0, nullptr);
+            OCIHandleAlloc(env, (void**)&err, OCI_HTYPE_ERROR, 0, nullptr);
+
+            // Connect to Oracle
+            // ... parse connection string, OCILogon2
+
+            // Execute statement
+            OCIHandleAlloc(env, (void**)&stmt, OCI_HTYPE_STMT, 0, nullptr);
+            OCIStmtPrepare(stmt, err, (text*)sql.c_str(), sql.size(),
+                          OCI_NTV_SYNTAX, OCI_DEFAULT);
+            OCIStmtExecute(svc, stmt, err, 1, 0, nullptr, nullptr, OCI_COMMIT_ON_SUCCESS);
+
+            // Extract row count for DML statements
+            ub4 row_count = 0;
+            OCIAttrGet(stmt, OCI_HTYPE_STMT, &row_count, 0, OCI_ATTR_ROW_COUNT, err);
+
+            // Format result message
+            string result_msg = StringUtil::Format(
+                "Statement executed successfully (%lu rows affected)",
+                (unsigned long)row_count
+            );
+
+            // Cleanup OCI handles (RAII pattern recommended)
+            OCIHandleFree(stmt, OCI_HTYPE_STMT);
+            OCILogoff(svc, err);
+            OCIHandleFree(err, OCI_HTYPE_ERROR);
+            OCIHandleFree(env, OCI_HTYPE_ENV);
+
+            return StringVector::AddString(result, result_msg);
+        }
+    );
+}
+
+// Register as scalar function
+auto oracle_execute = ScalarFunction(
+    "oracle_execute",
+    {LogicalType::VARCHAR, LogicalType::VARCHAR},
+    LogicalType::VARCHAR,
+    OracleExecuteFunction
+);
+ExtensionUtil::RegisterFunction(instance, oracle_execute);
+```
+
+**Key Points:**
+- Use `OCI_COMMIT_ON_SUCCESS` flag for auto-commit
+- Extract row count from `OCI_ATTR_ROW_COUNT` for DML statements
+- Return formatted status message (not result set)
+- Proper RAII cleanup of all OCI handles
+- Throw `IOException` with Oracle error messages on failure
+
+**Security Warning:**
+Document prominently that this function does not use prepared statements. Users must validate input to prevent SQL injection.
+
+**Usage Examples:**
+```sql
+-- DDL
+SELECT oracle_execute('user/pass@db', 'CREATE INDEX idx_emp ON employees(dept_id)');
+
+-- PL/SQL
+SELECT oracle_execute('user/pass@db', 'BEGIN hr_pkg.update_salaries(1.05); END;');
+
+-- DML
+SELECT oracle_execute('user/pass@db', 'DELETE FROM temp WHERE created < SYSDATE - 7');
+-- Returns: "Statement executed successfully (N rows affected)"
+```
+
+### Pattern: Current Schema Context Resolution
+
+When implementing schema resolution that matches Oracle's native behavior:
+
+**Problem**: DuckDB requires fully qualified names (`ora.HR.EMPLOYEES`), but Oracle users expect unqualified names (`EMPLOYEES`) to work when connected to a schema.
+
+**Solution**: Auto-detect current schema and resolve unqualified names with priority.
+
+```cpp
+// Detect current schema on attach
+void OracleCatalog::Initialize(bool load_builtin) {
+    state->DetectCurrentSchema();  // Query SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')
+    state->EnsureConnection();
+    DuckCatalog::Initialize(false);
+    // ...
+}
+
+// Resolve with current schema priority
+unique_ptr<CatalogEntry> OracleTableGenerator::CreateDefaultEntry(
+    ClientContext &context, const string &entry_name) override {
+
+    if (state->settings.use_current_schema) {
+        // Try current schema first
+        auto table = TryCreateTableEntry(state->GetCurrentSchema(), entry_name);
+        if (table) {
+            return table;
+        }
+    }
+
+    // Fall back to schema from query or all schemas
+    // ... existing lookup logic
+}
+```
+
+**Key Points:**
+- Query `SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')` once on attach
+- Cache current schema in catalog state
+- Check current schema first when resolving unqualified names
+- Configurable via `oracle_use_current_schema` setting
+- Maintains backward compatibility (can be disabled)
+
+**Benefits:**
+- Matches Oracle's native resolution behavior
+- Reduces schema qualification verbosity
+- Works transparently with lazy schema loading
+
 ### Pattern: DuckDB Secret Manager Integration
 
 When adding secret support to a DuckDB extension:

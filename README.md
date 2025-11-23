@@ -5,9 +5,11 @@
 This repository provides a native Oracle extension for DuckDB. It allows:
 
 - Attaching an Oracle database with `ATTACH ... (TYPE oracle)` and querying tables directly.
-- Table/query functions: `oracle_scan`, `oracle_query`.
+- Table/query functions: `oracle_scan`, `oracle_query`, `oracle_execute`.
 - Wallet helper: `oracle_attach_wallet`.
 - Cache maintenance: `oracle_clear_cache`.
+- Smart schema resolution with automatic current schema detection.
+- Scalable metadata enumeration for large schemas (100K+ tables).
 
 ## Platform Support
 
@@ -120,10 +122,27 @@ ATTACH 'PRODDB_HIGH' AS prod (TYPE oracle, SECRET app_user);
 
 | Function | Description |
 | --- | --- |
-| `oracle_query(conn, sql)` | Runs arbitrary SQL/PLSQL against Oracle. |
+| `oracle_query(conn, sql)` | Runs arbitrary SQL/PLSQL against Oracle (returns result set). |
+| `oracle_execute(conn, sql)` | Executes arbitrary SQL without expecting result set (DDL, DML, PL/SQL blocks). |
 | `oracle_scan(conn, schema, table)` | Scans a table (`SELECT * FROM schema.table`). |
 | `oracle_attach_wallet(path)` | Sets `TNS_ADMIN` to the wallet directory (for Autonomous DB etc.). |
 | `oracle_clear_cache()` | Clears cached Oracle metadata/connections for attached DBs. |
+
+**Example: oracle_execute()**
+
+```sql
+-- Execute stored procedure
+SELECT oracle_execute('user/pass@db', 'BEGIN hr_pkg.update_salaries(1.05); END;');
+
+-- Run DDL
+SELECT oracle_execute('user/pass@db', 'CREATE INDEX idx_emp_dept ON employees(department_id)');
+
+-- Execute DML
+SELECT oracle_execute('user/pass@db', 'DELETE FROM temp_table WHERE created < SYSDATE - 7');
+-- Returns: "Statement executed successfully (N rows affected)"
+```
+
+**Security Warning**: `oracle_execute()` does not use prepared statements. Never concatenate user input into SQL strings. Use DuckDB SecretManager for credentials and validate all inputs to prevent SQL injection.
 
 ### Attach options (TYPE oracle)
 
@@ -145,6 +164,10 @@ Options map to settings below; unknown options are ignored.
 | --- | --- | --- |
 | `oracle_enable_pushdown` | `false` | Push down filters/projection into Oracle. |
 | `oracle_enable_spatial_conversion` | `true` | Automatically convert SDO_GEOMETRY to WKT strings. |
+| `oracle_lazy_schema_loading` | `true` | Load only current schema by default (faster attach for large schemas). |
+| `oracle_metadata_object_types` | `TABLE,VIEW,SYNONYM,MATERIALIZED VIEW` | Object types to enumerate (comma-separated). |
+| `oracle_metadata_result_limit` | `10000` | Max objects enumerated (0=unlimited, beyond limit accessible via on-demand loading). |
+| `oracle_use_current_schema` | `true` | Resolve unqualified table names to current schema first. |
 | `oracle_prefetch_rows` | `200` | OCI prefetch rows per round-trip. |
 | `oracle_prefetch_memory` | `0` | OCI prefetch memory in bytes (0 = auto). |
 | `oracle_array_size` | `256` | Rows fetched per OCI iteration. |
@@ -157,6 +180,71 @@ Example:
 ```sql
 SET oracle_enable_pushdown=true;
 SET oracle_prefetch_rows=500;
+```
+
+## Advanced Features
+
+### Schema Resolution and Current Schema Context
+
+The Oracle extension automatically detects the current schema when you attach and intelligently resolves unqualified table names, matching Oracle's native behavior.
+
+```sql
+-- Connected as HR user
+ATTACH 'hr/password@host:1521/service' AS ora (TYPE oracle);
+
+-- Current schema auto-detected: HR
+-- Unqualified table names resolve to current schema first
+SELECT * FROM ora.EMPLOYEES;  -- Resolves to ora.HR.EMPLOYEES
+
+-- Explicit qualification still works
+SELECT * FROM ora.HR.EMPLOYEES;
+SELECT * FROM ora.SYS.DUAL;
+
+-- Toggle behavior if needed
+SET oracle_use_current_schema = false;  -- Require explicit schema qualification
+```
+
+### Metadata Scalability for Large Schemas
+
+For Oracle databases with thousands of tables, the extension uses lazy schema loading to provide instant attach times:
+
+```sql
+-- Lazy loading enabled by default (recommended for large schemas)
+ATTACH 'user/pass@large_db' AS ora (TYPE oracle);
+-- Attaches in <5 seconds regardless of schema size
+
+-- Only current schema enumerated, but all tables accessible
+SELECT * FROM ora.CURRENT_SCHEMA.TABLE_1;      -- In enumerated list
+SELECT * FROM ora.CURRENT_SCHEMA.TABLE_99999;  -- Beyond limit, loaded on-demand
+
+-- Control object types enumerated
+SET oracle_metadata_object_types = 'TABLE,VIEW';  -- Exclude synonyms/materialized views
+
+-- Adjust enumeration limit for better autocomplete
+SET oracle_metadata_result_limit = 50000;  -- Enumerate more objects (slower attach)
+
+-- Disable lazy loading for full schema visibility (slow for large schemas)
+SET oracle_lazy_schema_loading = false;
+ATTACH 'user/pass@db' AS ora_full (TYPE oracle);
+```
+
+**How it works:**
+
+- First 10,000 objects (tables/views/synonyms) enumerated for autocomplete/discovery
+- Tables beyond limit still accessible via on-demand loading
+- Warning logged when limit reached, but no functionality lost
+- Set limit to 0 for unlimited enumeration (not recommended for 100K+ schemas)
+
+### Synonym Resolution
+
+The extension automatically resolves Oracle synonyms to their target tables:
+
+```sql
+-- Private and public synonyms work transparently
+SELECT * FROM ora.SCHEMA.MY_SYNONYM;   -- Resolves to target table
+SELECT * FROM ora.SCHEMA.PUB_SYNONYM;  -- Public synonym resolution
+
+-- Priority: private synonyms > public synonyms
 ```
 
 ### Wallet / Autonomous Database

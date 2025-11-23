@@ -24,11 +24,30 @@ public:
 	}
 
 	vector<string> GetDefaultEntries() override {
-		return state->ListTables(schema.name);
+		// Use ListObjects with metadata_object_types setting
+		return state->ListObjects(schema.name, state->settings.metadata_object_types);
 	}
 
 	unique_ptr<CatalogEntry> CreateDefaultEntry(ClientContext &context, const string &entry_name) override {
-		return OracleTableEntry::Create(catalog, schema, schema.name, entry_name, state);
+		// Try direct table/view lookup in enumerated list first
+		auto table = OracleTableEntry::Create(catalog, schema, schema.name, entry_name, state);
+		if (table) {
+			return table;
+		}
+
+		// Try on-demand loading if not in enumerated list (handles objects beyond limit)
+		if (state->ObjectExists(schema.name, entry_name, "'TABLE','VIEW','MATERIALIZED VIEW'")) {
+			return OracleTableEntry::Create(catalog, schema, schema.name, entry_name, state);
+		}
+
+		// Try synonym resolution as fallback
+		bool found = false;
+		auto resolved = state->ResolveSynonym(schema.name, entry_name, found);
+		if (found) {
+			return OracleTableEntry::Create(catalog, schema, resolved.first, resolved.second, state);
+		}
+
+		return nullptr;
 	}
 
 private:
@@ -83,8 +102,12 @@ public:
 	}
 
 	void Initialize(bool load_builtin) override {
+		// Detect current schema before connection to support schema resolution
+		state->DetectCurrentSchema();
+
 		// Attempt connection early to fail fast
 		state->EnsureConnection();
+
 		DuckCatalog::Initialize(false);
 		GetSchemaCatalogSet().SetDefaultGenerator(make_uniq<OracleSchemaGenerator>(*this, state));
 	}

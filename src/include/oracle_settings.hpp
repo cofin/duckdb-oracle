@@ -12,6 +12,12 @@ struct OracleSettings {
 	bool connection_cache = true;
 	idx_t connection_limit = 8;
 	bool debug_show_queries = false;
+
+	// Advanced features
+	bool lazy_schema_loading = true;
+	string metadata_object_types = "TABLE,VIEW,SYNONYM,MATERIALIZED VIEW";
+	idx_t metadata_result_limit = 10000;
+	bool use_current_schema = true;
 };
 
 } // namespace duckdb
