@@ -6,15 +6,17 @@
 
 require oracle
 
+# Derive connection params from environment with defaults (uses oracle_env helper).
+
 # Setup: Create test secret
 statement ok
 CREATE SECRET oracle_meta_test (
     TYPE oracle,
-    HOST 'localhost',
-    PORT 1521,
-    SERVICE 'XEPDB1',
-    USER 'test_user',
-    PASSWORD 'test_password'
+    HOST oracle_env('ORACLE_HOST', 'localhost'),
+    PORT CAST(oracle_env('ORACLE_PORT', '1521') AS INTEGER),
+    SERVICE oracle_env('ORACLE_SERVICE', 'FREEPDB1'),
+    USER oracle_env('ORACLE_USER', 'duckdb_test'),
+    PASSWORD oracle_env('ORACLE_PASSWORD', 'duckdb_test')
 );
 
 # Test 1: Test lazy schema loading enabled (default)
@@ -33,9 +35,9 @@ SELECT COUNT(*) > 0 FROM duckdb_schemas() WHERE database_name = 'ora_lazy';
 true
 
 # Test 3: Query table in current schema (should work)
-# Assumes test_user schema has at least DUAL or a test table
+# Assumes duckdb_test schema has at least DUAL or a test table
 query I
-SELECT COUNT(*) FROM oracle_query('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT COUNT(*) FROM oracle_query(oracle_default_connection(),
     'SELECT 1 FROM DUAL');
 ----
 1
@@ -122,7 +124,7 @@ ATTACH '' AS ora_ondemand (TYPE oracle, SECRET oracle_meta_test);
 # This tests on-demand loading fallback
 # The query should work even if table not in enumerated list
 query I
-SELECT COUNT(*) FROM oracle_query('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT COUNT(*) FROM oracle_query(oracle_default_connection(),
     'SELECT 1 FROM DUAL');
 ----
 1

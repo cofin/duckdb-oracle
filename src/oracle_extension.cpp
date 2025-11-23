@@ -38,6 +38,44 @@
 
 namespace duckdb {
 
+//===--------------------------------------------------------------------===//
+// Environment helpers
+//===--------------------------------------------------------------------===//
+
+static string OracleGetEnv(const string &key, const string &default_value) {
+	auto val = getenv(key.c_str());
+	if (val && val[0] != '\0') {
+		return string(val);
+	}
+	return default_value;
+}
+
+static void OracleEnvFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	BinaryExecutor::Execute<string_t, string_t, string_t>(args.data[0], args.data[1], result, args.size(),
+	                                                      [&](string_t name, string_t deflt) {
+		                                                      auto key = name.GetString();
+		                                                      auto def_str = deflt.GetString();
+		                                                      auto value = OracleGetEnv(key, def_str);
+		                                                      return StringVector::AddString(result, value);
+	                                                      });
+}
+
+static void OracleDefaultConnectionFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto conn = OracleGetEnv("ORACLE_CONNECTION_STRING", "");
+	if (!conn.empty()) {
+		result.SetValue(0, Value(conn));
+		return;
+	}
+	auto host = OracleGetEnv("ORACLE_HOST", "localhost");
+	auto port = OracleGetEnv("ORACLE_PORT", "1521");
+	auto service = OracleGetEnv("ORACLE_SERVICE", "FREEPDB1");
+	auto user = OracleGetEnv("ORACLE_USER", "duckdb_test");
+	auto pwd = OracleGetEnv("ORACLE_PASSWORD", "duckdb_test");
+	auto dsn =
+	    StringUtil::Format("%s/%s@//%s:%s/%s", user.c_str(), pwd.c_str(), host.c_str(), port.c_str(), service.c_str());
+	result.SetValue(0, Value(dsn));
+}
+
 OracleContext::~OracleContext() {
 	if (stmthp)
 		OCIHandleFree(stmthp, OCI_HTYPE_STMT);
@@ -751,6 +789,15 @@ static void LoadInternal(ExtensionLoader &loader) {
 	auto oracle_execute_func = ScalarFunction("oracle_execute", {LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                                          LogicalType::VARCHAR, OracleExecuteFunction);
 	loader.RegisterFunction(oracle_execute_func);
+
+	// Env helper functions
+	auto oracle_env_func = ScalarFunction("oracle_env", {LogicalType::VARCHAR, LogicalType::VARCHAR},
+	                                      LogicalType::VARCHAR, OracleEnvFunction);
+	loader.RegisterFunction(oracle_env_func);
+
+	auto oracle_default_conn_func =
+	    ScalarFunction("oracle_default_connection", {}, LogicalType::VARCHAR, OracleDefaultConnectionFunction);
+	loader.RegisterFunction(oracle_default_conn_func);
 }
 
 void OracleExtension::Load(ExtensionLoader &loader) {

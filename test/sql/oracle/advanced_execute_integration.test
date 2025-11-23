@@ -2,144 +2,141 @@
 # description: Integration tests for oracle_execute function with real Oracle database
 # group: [oracle]
 
-# require: oracle_available
-
 require oracle
 
-# Setup: Create a test secret for these integration tests
-# In real integration environment, this would use actual credentials
+# Derive connection params from environment with defaults (uses oracle_env helper).
 statement ok
 CREATE SECRET oracle_test_secret (
     TYPE oracle,
-    HOST 'localhost',
-    PORT 1521,
-    SERVICE 'XEPDB1',
-    USER 'test_user',
-    PASSWORD 'test_password'
+    HOST oracle_env('ORACLE_HOST', 'localhost'),
+    PORT CAST(oracle_env('ORACLE_PORT', '1521') AS INTEGER),
+    SERVICE oracle_env('ORACLE_SERVICE', 'FREEPDB1'),
+    USER oracle_env('ORACLE_USER', 'duckdb_test'),
+    PASSWORD oracle_env('ORACLE_PASSWORD', 'duckdb_test')
 );
 
 # Test 1: Execute simple DDL - CREATE TABLE
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'CREATE TABLE test_execute_ddl (id NUMBER, name VARCHAR2(100))');
 ----
 <REGEX>:.*executed successfully.*
 
 # Test 2: Execute INSERT with row count
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'INSERT INTO test_execute_ddl (id, name) VALUES (1, ''Alice'')');
 ----
 <REGEX>:.*(1 rows? affected).*
 
 # Test 3: Execute INSERT with multiple rows
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'INSERT INTO test_execute_ddl (id, name) VALUES (2, ''Bob'')');
 ----
 <REGEX>:.*(1 rows? affected).*
 
 # Test 4: Execute UPDATE with row count
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'UPDATE test_execute_ddl SET name = ''Alice Updated'' WHERE id = 1');
 ----
 <REGEX>:.*(1 rows? affected).*
 
 # Test 5: Execute DELETE with row count
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'DELETE FROM test_execute_ddl WHERE id = 2');
 ----
 <REGEX>:.*(1 rows? affected).*
 
 # Test 6: Verify data changes via oracle_query
 query II
-SELECT * FROM oracle_query('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT * FROM oracle_query(oracle_default_connection(),
     'SELECT id, name FROM test_execute_ddl ORDER BY id');
 ----
 1	Alice Updated
 
 # Test 7: Execute DDL - CREATE INDEX
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'CREATE INDEX idx_test_execute_id ON test_execute_ddl(id)');
 ----
 <REGEX>:.*executed successfully.*
 
 # Test 8: Execute DDL - ALTER TABLE ADD COLUMN
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'ALTER TABLE test_execute_ddl ADD (email VARCHAR2(200))');
 ----
 <REGEX>:.*executed successfully.*
 
 # Test 9: Execute PL/SQL anonymous block
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'BEGIN INSERT INTO test_execute_ddl (id, name, email) VALUES (3, ''Charlie'', ''charlie@example.com''); END;');
 ----
 <REGEX>:.*executed successfully.*
 
 # Test 10: Execute PL/SQL block with DBMS_OUTPUT
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'BEGIN DBMS_OUTPUT.PUT_LINE(''Hello from PL/SQL''); END;');
 ----
 <REGEX>:.*executed successfully.*
 
 # Test 11: Execute TRUNCATE TABLE
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'TRUNCATE TABLE test_execute_ddl');
 ----
 <REGEX>:.*executed successfully.*
 
 # Test 12: Verify truncate worked
 query I
-SELECT COUNT(*) FROM oracle_query('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT COUNT(*) FROM oracle_query(oracle_default_connection(),
     'SELECT * FROM test_execute_ddl');
 ----
 0
 
 # Test 13: Execute DDL - DROP INDEX
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'DROP INDEX idx_test_execute_id');
 ----
 <REGEX>:.*executed successfully.*
 
 # Test 14: Execute DDL - DROP TABLE
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'DROP TABLE test_execute_ddl');
 ----
 <REGEX>:.*executed successfully.*
 
 # Test 15: Test error handling - Invalid SQL syntax
 statement error
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'INVALID SQL SYNTAX HERE');
 ----
 ORA-
 
 # Test 16: Test error handling - Non-existent table
 statement error
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'DROP TABLE nonexistent_table_12345');
 ----
 ORA-
 
 # Test 17: Test error handling - Permission error (attempt to drop system table)
 statement error
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'DROP TABLE SYS.DUAL');
 ----
 ORA-
 
 # Test 18: Test with transaction - multiple statements in PL/SQL block
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'BEGIN
         EXECUTE IMMEDIATE ''CREATE TABLE test_txn (id NUMBER)'';
         INSERT INTO test_txn VALUES (1);
@@ -151,14 +148,14 @@ SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
 
 # Test 19: Verify transaction committed
 query I
-SELECT COUNT(*) FROM oracle_query('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT COUNT(*) FROM oracle_query(oracle_default_connection(),
     'SELECT * FROM test_txn');
 ----
 2
 
 # Test 20: Cleanup - Drop test table
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'DROP TABLE test_txn');
 ----
 <REGEX>:.*executed successfully.*
@@ -171,7 +168,7 @@ ATTACH '' AS ora_exec (TYPE oracle, SECRET oracle_test_secret);
 # Test 22: Execute via attached database with oracle_execute
 # Note: oracle_execute still requires connection string, not attached catalog
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'SELECT 1 FROM DUAL');
 ----
 <REGEX>:.*executed successfully.*

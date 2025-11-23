@@ -2,24 +2,23 @@
 # description: Edge case tests for advanced Oracle features
 # group: [oracle]
 
-# require: oracle_available
-
 require oracle
 
-# Setup: Create test secret
+# Derive connection params from environment with defaults (uses oracle_env helper).
+
 statement ok
 CREATE SECRET oracle_edge_test (
     TYPE oracle,
-    HOST 'localhost',
-    PORT 1521,
-    SERVICE 'XEPDB1',
-    USER 'test_user',
-    PASSWORD 'test_password'
+    HOST oracle_env('ORACLE_HOST', 'localhost'),
+    PORT CAST(oracle_env('ORACLE_PORT', '1521') AS INTEGER),
+    SERVICE oracle_env('ORACLE_SERVICE', 'FREEPDB1'),
+    USER oracle_env('ORACLE_USER', 'duckdb_test'),
+    PASSWORD oracle_env('ORACLE_PASSWORD', 'duckdb_test')
 );
 
 # Edge Case 1: oracle_execute with very long SQL statement
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'CREATE TABLE edge_test_long_sql (
         id NUMBER,
         col1 VARCHAR2(100),
@@ -38,21 +37,21 @@ SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
 
 # Edge Case 2: oracle_execute with special characters in SQL
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'INSERT INTO edge_test_long_sql (id, col1) VALUES (1, ''Special: !@#$%^&*()'')');
 ----
 <REGEX>:.*(1 rows? affected).*
 
 # Edge Case 3: oracle_execute with quotes in SQL
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'INSERT INTO edge_test_long_sql (id, col1) VALUES (2, ''She said "hello"'')');
 ----
 <REGEX>:.*(1 rows? affected).*
 
 # Edge Case 4: oracle_execute with newlines in SQL
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'INSERT INTO edge_test_long_sql (id, col1) VALUES (3, ''Line1
 Line2
 Line3'')');
@@ -61,28 +60,28 @@ Line3'')');
 
 # Edge Case 5: oracle_execute UPDATE with 0 rows affected
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'UPDATE edge_test_long_sql SET col1 = ''updated'' WHERE id = 999');
 ----
 <REGEX>:.*(0 rows? affected).*
 
 # Edge Case 6: oracle_execute DELETE with 0 rows affected
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'DELETE FROM edge_test_long_sql WHERE id = 999');
 ----
 <REGEX>:.*(0 rows? affected).*
 
 # Edge Case 7: Verify data was inserted correctly
 query I
-SELECT COUNT(*) FROM oracle_query('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT COUNT(*) FROM oracle_query(oracle_default_connection(),
     'SELECT * FROM edge_test_long_sql WHERE id IN (1, 2, 3)');
 ----
 3
 
 # Cleanup edge_test_long_sql
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'DROP TABLE edge_test_long_sql');
 ----
 <REGEX>:.*executed successfully.*
@@ -109,7 +108,7 @@ ATTACH '' AS ora_limit1 (TYPE oracle, SECRET oracle_edge_test);
 
 # Should still be able to query via on-demand loading
 query I
-SELECT COUNT(*) FROM oracle_query('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT COUNT(*) FROM oracle_query(oracle_default_connection(),
     'SELECT 1 FROM DUAL');
 ----
 1
@@ -150,7 +149,7 @@ ATTACH '' AS ora_nonexist (TYPE oracle, SECRET oracle_edge_test);
 
 # This should fail with table not found, not crash
 statement error
-SELECT * FROM ora_nonexist.test_user.nonexistent_table_12345;
+SELECT * FROM ora_nonexist.duckdb_test.nonexistent_table_12345;
 ----
 
 statement ok
@@ -158,7 +157,7 @@ DETACH ora_nonexist;
 
 # Edge Case 13: oracle_execute with PL/SQL block containing multiple statements
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'BEGIN
         EXECUTE IMMEDIATE ''CREATE TABLE edge_multi (id NUMBER)'';
         INSERT INTO edge_multi VALUES (1);
@@ -171,40 +170,40 @@ SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
 
 # Verify multi-statement PL/SQL worked
 query I
-SELECT COUNT(*) FROM oracle_query('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT COUNT(*) FROM oracle_query(oracle_default_connection(),
     'SELECT * FROM edge_multi');
 ----
 3
 
 # Cleanup
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'DROP TABLE edge_multi');
 ----
 <REGEX>:.*executed successfully.*
 
 # Edge Case 14: oracle_execute with COMMIT/ROLLBACK
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'CREATE TABLE edge_txn (id NUMBER)');
 ----
 <REGEX>:.*executed successfully.*
 
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'BEGIN INSERT INTO edge_txn VALUES (1); COMMIT; END;');
 ----
 <REGEX>:.*executed successfully.*
 
 query I
-SELECT COUNT(*) FROM oracle_query('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT COUNT(*) FROM oracle_query(oracle_default_connection(),
     'SELECT * FROM edge_txn');
 ----
 1
 
 # Cleanup
 query I
-SELECT oracle_execute('test_user/test_password@//localhost:1521/XEPDB1',
+SELECT oracle_execute(oracle_default_connection(),
     'DROP TABLE edge_txn');
 ----
 <REGEX>:.*executed successfully.*
