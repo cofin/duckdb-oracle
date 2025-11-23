@@ -141,6 +141,157 @@ void Connect(const string &connection_string);
 - **Lazy loading**: Defer expensive operations (see `OracleTableEntry::GetColumns()`)
 - **Secret Management**: Use DuckDB SecretManager for credential storage (see `oracle_secret.cpp`)
 
+### Pattern: Oracle Spatial Type Conversion
+
+When converting Oracle proprietary types to portable formats:
+
+**Problem**: Oracle SDO_GEOMETRY is an object type that cannot be directly fetched via OCI as a standard type.
+
+**Solution**: Use Oracle's SQL conversion functions and query rewriting.
+
+```cpp
+// Step 1: Detect spatial types in column introspection
+static LogicalType MapOracleColumn(const string &data_type, idx_t precision, idx_t scale, idx_t char_len) {
+    auto upper = StringUtil::Upper(data_type);
+
+    if (upper == "SDO_GEOMETRY" || upper == "MDSYS.SDO_GEOMETRY") {
+        return LogicalType::VARCHAR; // WKT strings
+    }
+    // ... other mappings
+}
+
+// Step 2: Store metadata about original Oracle types
+struct OracleColumnMetadata {
+    string column_name;
+    string oracle_data_type;
+    bool is_spatial;
+
+    OracleColumnMetadata(const string &name, const string &data_type)
+        : column_name(name), oracle_data_type(data_type),
+          is_spatial(data_type == "SDO_GEOMETRY" || data_type == "MDSYS.SDO_GEOMETRY") {
+    }
+};
+
+// Step 3: Rewrite queries to use Oracle conversion functions
+TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) {
+    string column_list;
+    for (size_t i = 0; i < columns.Physical().size(); i++) {
+        auto &col = columns.Physical()[i];
+        auto quoted_col = KeywordHelper::WriteQuoted(col.Name(), '"');
+
+        if (column_metadata[i].is_spatial) {
+            // Convert SDO_GEOMETRY to WKT using Oracle built-in function
+            column_list += StringUtil::Format("SDO_UTIL.TO_WKTGEOMETRY(%s) AS %s",
+                                              quoted_col.c_str(), quoted_col.c_str());
+        } else {
+            column_list += quoted_col;
+        }
+    }
+
+    auto query = StringUtil::Format("SELECT %s FROM %s.%s", column_list.c_str(), ...);
+    // ... continue with bind data setup
+}
+
+// Step 4: Fetch converted data as standard types (VARCHAR for WKT)
+// No special OCI handling needed - fetched as regular VARCHAR
+```
+
+**Key Points:**
+- Leverage Oracle's built-in conversion functions (SDO_UTIL.TO_WKTGEOMETRY, TO_WKBGEOMETRY)
+- Store original type metadata for query rewriting decisions
+- Generate explicit SELECT column lists (replace `SELECT *`)
+- Preserve column names and ordering with AS clauses
+- Use VARCHAR for WKT strings (user can cast to GEOMETRY with ST_GeomFromText)
+
+**Trade-offs:**
+- **Pros**: Simple implementation, portable, human-readable output
+- **Cons**: Requires Oracle JVM, string overhead for large geometries
+- **Future**: Add WKB (binary) mode for 30% performance improvement
+
+**Related Settings:**
+```cpp
+// oracle_settings.hpp
+bool enable_spatial_conversion = true;  // Toggle spatial conversion
+```
+
+**Testing Strategy:**
+```sql
+-- Smoke test without Oracle connection
+require oracle
+query I
+SELECT current_setting('oracle_enable_spatial_conversion');
+----
+true
+
+-- Integration test with Oracle container
+ATTACH 'user/pass@host:1521/service' AS ora (TYPE oracle);
+SELECT geometry FROM ora.gis.parcels;  -- Returns WKT strings
+```
+
+### Pattern: Column Metadata Tracking
+
+When you need to preserve additional information about columns beyond DuckDB's ColumnDefinition:
+
+**Problem**: DuckDB's `ColumnDefinition` only stores name and `LogicalType`. Oracle-specific metadata (original type name, is_spatial flag) needs separate storage.
+
+**Solution**: Create parallel metadata structure.
+
+```cpp
+// Define metadata struct
+struct OracleColumnMetadata {
+    string column_name;
+    string oracle_data_type;  // Original Oracle type: "NUMBER", "SDO_GEOMETRY", etc.
+    bool is_spatial;          // Computed flag for quick checks
+
+    OracleColumnMetadata(const string &name, const string &data_type)
+        : column_name(name), oracle_data_type(data_type),
+          is_spatial(data_type == "SDO_GEOMETRY" || data_type == "MDSYS.SDO_GEOMETRY") {
+    }
+};
+
+// Store in table entry
+class OracleTableEntry : public TableCatalogEntry {
+private:
+    vector<OracleColumnMetadata> column_metadata;  // Parallel to columns
+    // ...
+};
+
+// Populate during column loading
+static void LoadColumns(OracleCatalogState &state, const string &schema, const string &table,
+                        vector<ColumnDefinition> &columns, vector<OracleColumnMetadata> &metadata) {
+    // Query all_tab_columns
+    for (auto &row : result.rows) {
+        auto col_name = row[0];
+        auto data_type = row[1];  // Original Oracle type
+
+        // Create DuckDB column
+        auto logical = MapOracleColumn(data_type, precision, scale, data_len);
+        columns.push_back(ColumnDefinition(col_name, logical));
+
+        // Store original metadata
+        metadata.emplace_back(col_name, data_type);
+    }
+}
+
+// Access in query generation
+if (col_idx < column_metadata.size()) {
+    bool is_spatial = column_metadata[col_idx].is_spatial;
+    if (is_spatial) {
+        // Special handling for spatial columns
+    }
+}
+```
+
+**Key Points:**
+- Keep metadata vector in sync with columns vector (same size, same order)
+- Populate both in same function (`LoadColumns`)
+- Pass metadata to table entry constructor
+- Access via index: `column_metadata[col_idx]`
+
+**Memory Efficiency:**
+- Overhead: ~40 bytes per column (string + bool + padding)
+- Trade-off: Simplifies query generation logic
+
 ### Pattern: DuckDB Secret Manager Integration
 
 When adding secret support to a DuckDB extension:
@@ -296,6 +447,7 @@ duckdb-oracle/
 - **OracleTableEntry**: Lazy column metadata loading
   - Maps Oracle types to DuckDB LogicalTypes in `MapOracleColumn()`
   - NUMBER → DECIMAL/DOUBLE, DATE/TIMESTAMP → TIMESTAMP, CHAR/VARCHAR/CLOB → VARCHAR, BLOB/RAW → BLOB
+  - SDO_GEOMETRY → VARCHAR (WKT string representation via query rewriting)
 
 ### Query Execution (Table Functions)
 

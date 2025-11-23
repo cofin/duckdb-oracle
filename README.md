@@ -144,6 +144,7 @@ Options map to settings below; unknown options are ignored.
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `oracle_enable_pushdown` | `false` | Push down filters/projection into Oracle. |
+| `oracle_enable_spatial_conversion` | `true` | Automatically convert SDO_GEOMETRY to WKT strings. |
 | `oracle_prefetch_rows` | `200` | OCI prefetch rows per round-trip. |
 | `oracle_prefetch_memory` | `0` | OCI prefetch memory in bytes (0 = auto). |
 | `oracle_array_size` | `256` | Rows fetched per OCI iteration. |
@@ -164,6 +165,164 @@ SET oracle_prefetch_rows=500;
 CALL oracle_attach_wallet('/path/to/wallet_dir');
 -- then use ezconnect or tnsnames entries from that wallet
 ATTACH 'user/pass@myadb_tp' AS adb (TYPE oracle);
+```
+
+## Working with Spatial Data
+
+The Oracle extension automatically converts Oracle Spatial `SDO_GEOMETRY` types to WKT (Well-Known Text) strings, enabling spatial analysis with DuckDB Spatial functions.
+
+### Prerequisites
+
+- Oracle Standard Edition or higher (requires Oracle JVM for SDO_UTIL functions)
+- Oracle Spatial enabled in your database
+- For spatial analysis: DuckDB Spatial extension (`INSTALL spatial; LOAD spatial;`)
+
+### Quick Example
+
+```sql
+-- Attach Oracle database with spatial data
+ATTACH 'user/password@host:1521/service' AS ora (TYPE oracle);
+
+-- Query spatial columns (returns WKT strings)
+SELECT parcel_id, geometry FROM ora.gis.parcels LIMIT 5;
+-- Result: geometry column contains "POINT(1 2)", "POLYGON((0 0, ...))", etc.
+
+-- Use with DuckDB Spatial extension for analysis
+LOAD spatial;
+SELECT
+    parcel_id,
+    ST_Area(ST_GeomFromText(geometry)) AS area,
+    ST_GeometryType(ST_GeomFromText(geometry)) AS geom_type
+FROM ora.gis.parcels
+WHERE ST_Area(ST_GeomFromText(geometry)) > 1000;
+```
+
+### Supported Oracle Spatial Types
+
+The extension detects and converts the following Oracle Spatial types:
+
+- `SDO_GEOMETRY` (standard Oracle Spatial type)
+- `MDSYS.SDO_GEOMETRY` (fully qualified schema name)
+
+All spatial types are automatically converted to WKT format using Oracle's `SDO_UTIL.TO_WKTGEOMETRY()` function.
+
+### Configuration
+
+```sql
+-- Disable automatic spatial conversion (returns raw SDO_GEOMETRY representation)
+SET oracle_enable_spatial_conversion = false;
+
+-- Enable spatial conversion (default behavior)
+SET oracle_enable_spatial_conversion = true;
+
+-- Configure during ATTACH
+ATTACH 'user/pass@host:1521/service' AS ora (
+    TYPE oracle,
+    enable_spatial_conversion = true
+);
+```
+
+### Spatial Data Workflow
+
+#### Step 1: Attach Oracle database
+
+```sql
+ATTACH 'gis_user/password@gis-server:1521/GISDB' AS gis (TYPE oracle);
+```
+
+#### Step 2: Explore spatial tables
+
+```sql
+-- List tables with geometry columns
+SELECT table_schema, table_name, column_name, data_type
+FROM gis.information_schema.columns
+WHERE data_type LIKE '%GEOMETRY%';
+```
+
+#### Step 3: Query spatial data
+
+```sql
+-- Spatial data is returned as WKT strings
+SELECT * FROM gis.spatial_schema.parcels LIMIT 10;
+```
+
+#### Step 4: Perform spatial analysis
+
+```sql
+LOAD spatial;
+
+-- Calculate areas
+SELECT
+    parcel_id,
+    owner_name,
+    ST_Area(ST_GeomFromText(geometry)) AS area_sqm
+FROM gis.spatial_schema.parcels
+ORDER BY area_sqm DESC
+LIMIT 100;
+
+-- Spatial filtering
+SELECT COUNT(*)
+FROM gis.spatial_schema.buildings
+WHERE ST_Within(
+    ST_GeomFromText(location),
+    ST_GeomFromText('POLYGON((...))')  -- bounding box
+);
+
+-- Export to GeoParquet
+INSTALL spatial;
+LOAD spatial;
+
+COPY (
+    SELECT
+        parcel_id,
+        ST_GeomFromText(geometry) AS geometry,
+        land_use,
+        assessed_value
+    FROM gis.spatial_schema.parcels
+) TO 'parcels.parquet' (FORMAT PARQUET);
+```
+
+### Limitations
+
+- **Oracle Express Edition**: Not supported (requires Oracle JVM for WKT conversion functions)
+- **Read-only**: No INSERT/UPDATE of spatial data (extension is read-only overall)
+- **Advanced types**: `SDO_TOPO_GEOMETRY`, `SDO_GEORASTER` not supported
+- **Spatial indexes**: Oracle spatial indexes are not pushed down (queries run without index hints)
+- **Large geometries**: Complex geometries with >4KB WKT representation may require Oracle-side simplification
+
+### Troubleshooting Spatial Data
+
+#### Error: "ORA-13199: SDO_UTIL function not found"
+
+This means Oracle Spatial or JVM is not available:
+
+- Check Oracle edition: `SELECT * FROM v$version;` (must not be Express)
+- Verify Oracle Spatial: `SELECT comp_name, status FROM dba_registry WHERE comp_name = 'Spatial';`
+- Verify JVM: `SELECT comp_name, status FROM dba_registry WHERE comp_name LIKE '%Java%';`
+
+#### Geometry column shows raw object representation
+
+Ensure `oracle_enable_spatial_conversion = true` (default):
+
+```sql
+SELECT current_setting('oracle_enable_spatial_conversion');
+-- Should return: true
+```
+
+#### WKT strings appear truncated
+
+For very large geometries, use Oracle-side simplification:
+
+```sql
+-- In Oracle, simplify geometry before querying
+CREATE VIEW simplified_parcels AS
+SELECT
+    parcel_id,
+    SDO_UTIL.SIMPLIFY(geometry, 0.5) AS geometry
+FROM parcels;
+
+-- Query from DuckDB
+SELECT * FROM ora.spatial_schema.simplified_parcels;
 ```
 
 ## Build from source
