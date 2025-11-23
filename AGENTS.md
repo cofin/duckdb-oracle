@@ -714,13 +714,13 @@ duckdb-oracle/
 ### Query Execution (Table Functions)
 
 - **OracleBindData** (`oracle_table_function.hpp`): Holds OCI handles + query state
-  - `OracleContext` - OCI environment/service/statement/error handles (RAII cleanup)
+  - `OracleConnectionHandle` - Managed connection from `OracleConnectionManager`
   - `base_query` - Original query template
   - `query` - Transformed query after pushdown
   - Settings snapshot (prefetch_rows, array_size, etc.)
 
 - **OracleQueryFunction** (`oracle_extension.cpp`): Fetch loop
-  - Uses OCI array fetch with configurable `array_size`
+  - Uses **Array Fetch** (`OCIDefineArrayOfStruct`) with `oracle_array_size` tuning
   - Converts OCI types → DuckDB vectors (handles NULL indicators, timestamps, LOBs)
   - Supports pushdown filters via `OraclePushdownComplexFilter()`
 

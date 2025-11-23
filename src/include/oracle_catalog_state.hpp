@@ -48,6 +48,7 @@ public:
 	// On-demand table loading
 	bool ObjectExists(const string &schema, const string &object_name, const string &object_types);
 	string GetObjectName(const string &schema, const string &object_name, const string &object_types);
+	string GetRealSchemaName(const string &name);
 
 	const string connection_string;
 

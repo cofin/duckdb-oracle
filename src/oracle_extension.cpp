@@ -429,18 +429,78 @@ static unique_ptr<FunctionData> OracleQueryBind(ClientContext &context, TableFun
 	return OracleBindInternal(context, connection_string, query, return_types, names);
 }
 
-static unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &context, TableFunctionInitInput &input) {
+unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &context, TableFunctionInitInput &input) {
 	auto &bind = input.bind_data->Cast<OracleBindData>();
 	auto state = make_uniq<OracleScanState>(bind.column_names.size());
-	if (getenv("ORACLE_DEBUG")) {
-		fprintf(stderr, "[oracle] init_global start\n");
-	}
 
 	state->conn_handle = bind.conn_handle;
 	auto ctx = state->conn_handle->Get();
 	state->svc = ctx->svchp;
-	state->stmt = bind.stmt; // prepared during bind
 	state->err = ctx->errhp;
+
+	// Determine if we need to re-prepare the statement
+	bool need_reprepare = false;
+
+	// 1. If query changed (pushdown)
+	if (bind.query != bind.base_query) {
+		need_reprepare = true;
+	}
+
+	// 2. If stmt handle is missing
+	if (!bind.stmt) {
+		need_reprepare = true;
+	}
+
+	// 3. If stmt handle matches column count (if available)
+	// Note: We can't easily check param count without valid handle and describe.
+	// We'll rely on binding logic.
+
+	if (need_reprepare) {
+		if (bind.settings.debug_show_queries || getenv("ORACLE_DEBUG")) {
+			fprintf(stderr, "[oracle] InitGlobal: re-preparing query: %s\n", bind.query.c_str());
+		}
+
+		OCIStmt *stmt_raw = nullptr;
+		CheckOCIError(OCIHandleAlloc(ctx->envhp, (dvoid **)&stmt_raw, OCI_HTYPE_STMT, 0, nullptr), ctx->errhp,
+		              "Failed to allocate OCI statement handle");
+
+		state->stmt = std::shared_ptr<OCIStmt>(stmt_raw, [](OCIStmt *stmt) {
+			if (stmt) {
+				OCIHandleFree(stmt, OCI_HTYPE_STMT);
+			}
+		});
+
+		// Apply settings
+		ub4 call_timeout_ms = 30000;
+		OCIAttrSet(state->stmt.get(), OCI_HTYPE_STMT, &call_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp);
+
+		ub4 prefetch_rows = bind.settings.prefetch_rows;
+		OCIAttrSet(state->stmt.get(), OCI_HTYPE_STMT, &prefetch_rows, 0, OCI_ATTR_PREFETCH_ROWS, ctx->errhp);
+		if (bind.settings.prefetch_memory > 0) {
+			ub4 prefetch_mem = bind.settings.prefetch_memory;
+			OCIAttrSet(state->stmt.get(), OCI_HTYPE_STMT, &prefetch_mem, 0, OCI_ATTR_PREFETCH_MEMORY, ctx->errhp);
+		}
+
+		CheckOCIError(OCIStmtPrepare(state->stmt.get(), ctx->errhp, (OraText *)bind.query.c_str(), bind.query.size(),
+		                             OCI_NTV_SYNTAX, OCI_DEFAULT),
+		              ctx->errhp, "Failed to prepare OCI statement");
+	} else {
+		// Reuse bind statement
+		state->stmt = bind.stmt;
+	}
+
+	// Debug logging for columns
+	if (bind.settings.debug_show_queries || getenv("ORACLE_DEBUG")) {
+		ub4 param_count = 0;
+		// Try to get param count (might fail if not described, which is fine/expected if we just prepared)
+		OCIAttrGet(state->stmt.get(), OCI_HTYPE_STMT, &param_count, 0, OCI_ATTR_PARAM_COUNT, ctx->errhp);
+
+		fprintf(stderr, "[oracle] InitGlobal: columns=%lu, OCI_ATTR_PARAM_COUNT=%u\n",
+		        (unsigned long)bind.column_names.size(), (unsigned)param_count);
+		for (idx_t i = 0; i < bind.column_names.size(); i++) {
+			fprintf(stderr, "[oracle]   col[%lu]: %s\n", (unsigned long)i, bind.column_names[i].c_str());
+		}
+	}
 
 	// Bind defines to persistent buffers
 	for (idx_t col_idx = 0; col_idx < bind.column_names.size(); col_idx++) {
@@ -455,20 +515,23 @@ static unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &cont
 		state->return_lens[col_idx].resize(STANDARD_VECTOR_SIZE);
 
 		ub2 type = SQLT_STR;
-		switch (bind.original_types[col_idx].id()) {
-		case LogicalTypeId::BIGINT:
-			type = SQLT_INT;
-			size = sizeof(int64_t);
-			state->buffers[col_idx].resize(size * STANDARD_VECTOR_SIZE);
-			break;
-		case LogicalTypeId::DOUBLE:
-			type = SQLT_FLT;
-			size = sizeof(double);
-			state->buffers[col_idx].resize(size * STANDARD_VECTOR_SIZE);
-			break;
-		default:
-			type = SQLT_STR;
-			break;
+		// Ensure bounds check for original_types
+		if (col_idx < bind.original_types.size()) {
+			switch (bind.original_types[col_idx].id()) {
+			case LogicalTypeId::BIGINT:
+				type = SQLT_INT;
+				size = sizeof(int64_t);
+				state->buffers[col_idx].resize(size * STANDARD_VECTOR_SIZE);
+				break;
+			case LogicalTypeId::DOUBLE:
+				type = SQLT_FLT;
+				size = sizeof(double);
+				state->buffers[col_idx].resize(size * STANDARD_VECTOR_SIZE);
+				break;
+			default:
+				type = SQLT_STR;
+				break;
+			}
 		}
 
 		CheckOCIError(OCIDefineByPos(state->stmt.get(), &state->defines[col_idx], state->err, col_idx + 1,

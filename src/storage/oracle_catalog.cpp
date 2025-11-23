@@ -297,4 +297,18 @@ string OracleCatalogState::GetObjectName(const string &schema, const string &obj
 	return "";
 }
 
+string OracleCatalogState::GetRealSchemaName(const string &name) {
+	lock_guard<std::mutex> guard(lock);
+	EnsureConnectionInternal();
+
+	auto query = StringUtil::Format("SELECT username FROM all_users WHERE UPPER(username) = UPPER(%s)",
+	                                Value(name).ToSQLString().c_str());
+
+	auto result = connection->Query(query);
+	if (!result.rows.empty()) {
+		return result.rows[0][0];
+	}
+	return "";
+}
+
 } // namespace duckdb

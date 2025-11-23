@@ -47,20 +47,29 @@ The storage extension allows attaching Oracle databases directly using `ATTACH '
 
 ### OCI Resource Management
 
-`OracleBindData` owns a shared `OracleContext` with `OCIEnv`, `OCISvcCtx`, `OCIStmt`, and `OCIError` handles. `OracleContext`'s destructor frees each handle (`OCIHandleFree` and `OCILogoff`), matching Oracle's guidance on handle cleanup.
+**OracleConnectionManager** (`src/oracle_connection_manager.cpp`) is a singleton that manages:
+- The global `OCIEnv` handle (created with `OCI_THREADED`).
+- A pool of `OracleContext` objects, keyed by connection string.
+- Explicit `OCIServerAttach` and `OCISessionBegin` for robust connection handling.
+- Connection timeouts (default 30s) to prevent hangs.
+
+`OracleBindData` holds a `std::shared_ptr<OracleConnectionHandle>`, which keeps a reference to an `OracleContext`. When the handle is destroyed, the context is returned to the pool (if caching is enabled).
 
 ### Bind & Execute Model
 
 - **Bind (`OracleBindInternal`)**
-  - Creates OCI environment/error/service/statement handles.
-  - Calls `OCILogon` with the provided connection string (credentials embedded).
-  - Prepares and describes the SQL to infer column metadata.
-  - Maps `SQLT_*` types to DuckDB `LogicalType` values and records buffer sizes.
+  - Acquires a connection from the manager.
+  - Allocates and prepares an `OCIStmt` handle.
+  - Executes with `OCI_DESCRIBE_ONLY` to infer metadata.
+- **Init (`OracleInitGlobal`)**
+  - Re-prepares the statement if the query changed (e.g., due to pushdown).
+  - Allocates persistent buffers for **Array Fetch** (`OCIDefineArrayOfStruct`).
+  - Defines columns using `OCIDefineByPos`.
 - **Execute (`OracleQueryFunction`)**
-  - Uses `OCIDefineByPos` per column with buffers sized from metadata (default 4000 bytes, multiplied by 4 for UTF-8 safety).
-- Sets `OCI_ATTR_PREFETCH_ROWS` (default 200, configurable via `oracle_prefetch_rows`) and optionally `OCI_ATTR_PREFETCH_MEMORY` for tuning.
-  - Fetches rows via `OCIStmtFetch2` and writes into DuckDB vectors.
-  - VARCHAR/BLOB columns copy from buffers; BIGINT/DOUBLE map directly; TIMESTAMP strings are parsed into `timestamp_t`.
+  - Executes the statement (`OCIStmtExecute`) once.
+  - Fetches rows in batches (`OCIStmtFetch2` with `OCI_FETCH_NEXT`).
+  - Reads data using stride-based access from the array buffers.
+  - Converts OCI types -> DuckDB vectors.
 
 ### Error Handling
 

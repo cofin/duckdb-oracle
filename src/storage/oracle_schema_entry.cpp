@@ -29,12 +29,6 @@ public:
 	}
 
 	unique_ptr<CatalogEntry> CreateDefaultEntry(ClientContext &context, const string &entry_name) override {
-		// Try direct table/view lookup in enumerated list first
-		auto table = OracleTableEntry::Create(catalog, schema, schema.name, entry_name, state);
-		if (table) {
-			return table;
-		}
-
 		// Try on-demand loading if not in enumerated list (handles objects beyond limit)
 		string real_name = state->GetObjectName(schema.name, entry_name, "'TABLE','VIEW','MATERIALIZED VIEW'");
 		if (!real_name.empty()) {
@@ -77,7 +71,12 @@ public:
 
 	unique_ptr<CatalogEntry> CreateDefaultEntry(ClientContext &context, const string &entry_name) override {
 		CreateSchemaInfo info;
-		info.schema = entry_name;
+		string real_name = state->GetRealSchemaName(entry_name);
+		if (!real_name.empty()) {
+			info.schema = real_name;
+		} else {
+			info.schema = entry_name;
+		}
 		info.internal = true;
 		info.on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
 

@@ -69,4 +69,6 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 void OraclePushdownComplexFilter(ClientContext &context, LogicalGet &get, FunctionData *bind_data_p,
                                  vector<unique_ptr<Expression>> &expressions);
 
+unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &context, TableFunctionInitInput &input);
+
 } // namespace duckdb
