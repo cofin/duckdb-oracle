@@ -6,38 +6,15 @@
 
 require oracle
 
-# Build connection parameters from environment with sensible defaults.
-statement ok
-SET oracle_host = COALESCE(getenv('ORACLE_HOST'), 'localhost');
-
-statement ok
-SET oracle_port = COALESCE(getenv('ORACLE_PORT'), '1521');
-
-statement ok
-SET oracle_service = COALESCE(getenv('ORACLE_SERVICE'), 'FREEPDB1');
-
-statement ok
-SET oracle_user = COALESCE(getenv('ORACLE_USER'), 'duckdb_test');
-
-statement ok
-SET oracle_password = COALESCE(getenv('ORACLE_PASSWORD'), 'duckdb_test');
-
-statement ok
-SET oracle_dsn = COALESCE(
-    getenv('ORACLE_CONNECTION_STRING'),
-    current_setting('oracle_user') || '/' || current_setting('oracle_password') || '@//' ||
-    current_setting('oracle_host') || ':' || current_setting('oracle_port') || '/' || current_setting('oracle_service')
-);
-
 # Setup: Create test secret and test data
 statement ok
 CREATE SECRET oracle_schema_test (
     TYPE oracle,
-    HOST current_setting('oracle_host'),
-    PORT CAST(current_setting('oracle_port') AS INTEGER),
-    SERVICE current_setting('oracle_service'),
-    USER current_setting('oracle_user'),
-    PASSWORD current_setting('oracle_password')
+    HOST oracle_env('ORACLE_HOST', 'localhost'),
+    PORT CAST(oracle_env('ORACLE_PORT', '1521') AS INTEGER),
+    SERVICE oracle_env('ORACLE_SERVICE', 'FREEPDB1'),
+    USER oracle_env('ORACLE_USER', 'duckdb_test'),
+    PASSWORD oracle_env('ORACLE_PASSWORD', 'duckdb_test')
 );
 
 # Setup: Create test tables in current schema for resolution tests
