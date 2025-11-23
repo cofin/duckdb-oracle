@@ -215,19 +215,49 @@ static OracleSettings GetOracleSettings(ClientContext &context, OracleCatalogSta
 
 //! Oracle Execute Function - Execute arbitrary SQL without expecting result set
 static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	// We only expect a single row input (scalar function); operate on the first tuple.
 	auto connection_string = args.data[0].GetValue(0).ToString();
 	auto sql_statement = args.data[1].GetValue(0).ToString();
+
+	if (connection_string.empty()) {
+		result.SetValue(0, Value());
+		return;
+	}
 
 	if (getenv("ORACLE_DEBUG")) {
 		fprintf(stderr, "[oracle] execute start: %s\n", sql_statement.c_str());
 	}
 
-	// Create OCI environment and connection
+	// OCI handles
 	OCIEnv *envhp = nullptr;
 	OCIError *errhp = nullptr;
 	OCISvcCtx *svchp = nullptr;
 	OCIStmt *stmthp = nullptr;
 	bool connected = false;
+
+	// Ensure handles are released in the correct order (children before parents)
+	auto cleanup = [&]() {
+		if (stmthp) {
+			OCIHandleFree(stmthp, OCI_HTYPE_STMT);
+			stmthp = nullptr;
+		}
+		if (svchp) {
+			if (errhp && connected) {
+				OCILogoff(svchp, errhp);
+			} else {
+				OCIHandleFree(svchp, OCI_HTYPE_SVCCTX);
+			}
+			svchp = nullptr;
+		}
+		if (errhp) {
+			OCIHandleFree(errhp, OCI_HTYPE_ERROR);
+			errhp = nullptr;
+		}
+		if (envhp) {
+			OCIHandleFree(envhp, OCI_HTYPE_ENV);
+			envhp = nullptr;
+		}
+	};
 
 	try {
 		string user, password, db;
@@ -286,15 +316,16 @@ static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vecto
 			              "Failed to get OCI row count");
 
 			if (getenv("ORACLE_DEBUG")) {
-				fprintf(stderr, "[oracle] execute stmt_type: %d, row_count: %llu\n", stmt_type, (uint64_t)row_count);
+				fprintf(stderr, "[oracle] execute stmt_type: %d, row_count: %llu\n", stmt_type,
+				        static_cast<unsigned long long>(row_count));
 			}
 
 			bool is_dml = (stmt_type == OCI_STMT_UPDATE || stmt_type == OCI_STMT_DELETE ||
 			               stmt_type == OCI_STMT_INSERT || stmt_type == OCI_STMT_MERGE);
 
 			if (row_count > 0 || is_dml) {
-				result_msg =
-				    StringUtil::Format("Statement executed successfully (%llu rows affected)", (uint64_t)row_count);
+				result_msg = StringUtil::Format("Statement executed successfully (%llu rows affected)",
+				                                static_cast<unsigned long long>(row_count));
 			} else {
 				result_msg = "Statement executed successfully";
 			}
@@ -306,36 +337,11 @@ static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vecto
 			fprintf(stderr, "[oracle] execute success: %s\n", result_msg.c_str());
 		}
 
-		// Cleanup
-		if (stmthp)
-			OCIHandleFree(stmthp, OCI_HTYPE_STMT);
-		if (svchp) {
-			if (errhp && connected)
-				OCILogoff(svchp, errhp);
-			else
-				OCIHandleFree(svchp, OCI_HTYPE_SVCCTX);
-		}
-		if (envhp)
-			OCIHandleFree(envhp, OCI_HTYPE_ENV);
-		if (errhp)
-			OCIHandleFree(errhp, OCI_HTYPE_ERROR);
-
+		cleanup();
 		result.SetValue(0, Value(result_msg));
 
 	} catch (...) {
-		// Cleanup on exception
-		if (stmthp)
-			OCIHandleFree(stmthp, OCI_HTYPE_STMT);
-		if (svchp) {
-			if (errhp && connected)
-				OCILogoff(svchp, errhp);
-			else
-				OCIHandleFree(svchp, OCI_HTYPE_SVCCTX);
-		}
-		if (envhp)
-			OCIHandleFree(envhp, OCI_HTYPE_ENV);
-		if (errhp)
-			OCIHandleFree(errhp, OCI_HTYPE_ERROR);
+		cleanup();
 		throw;
 	}
 }

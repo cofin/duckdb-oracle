@@ -29,6 +29,20 @@ readonly SETUP_DIR="$(pwd)/test/integration/init_sql"
 
 # Flags
 CLEANUP_ENABLED=1
+# Per-test timeout (seconds) to avoid indefinite hangs when something goes wrong
+: "${INTEGRATION_TEST_TIMEOUT:=600}"
+
+#######################################
+# Remove any stale test container using the same name to avoid conflicts.
+# Runs before starting a new container. Cleans both running and exited states.
+#######################################
+remove_stale_container() {
+  if ${RUNTIME} ps -a --format '{{.Names}}' | grep -Fxq "${CONTAINER_NAME}"; then
+    echo "Found existing container '${CONTAINER_NAME}', removing to avoid name conflict..."
+    ${RUNTIME} stop "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+    ${RUNTIME} rm "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+  fi
+}
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -143,15 +157,16 @@ wait_for_db() {
   local container="$1"
   echo "Waiting for Oracle Database to be ready..."
   
-  # Loop until the logs show the database is ready
-  # gvenzl images print "DATABASE IS READY TO USE!"
-  local retries=300
+  # Loop until the logs show the database is ready. We intentionally wait for the
+  # explicit "DATABASE IS READY TO USE!" marker that is printed *after* init scripts run
+  # to avoid racing before APP_USER is created.
+  local retries=200   # 200 * 2s = 400s max wait
   local count=0
   
   set +o pipefail
   while [[ "${count}" -lt "${retries}" ]]; do
-    if ${RUNTIME} logs "${container}" 2>&1 | grep -q "DATABASE IS READY TO USE!"; then
-      echo "Oracle Database is ready."
+    if ${RUNTIME} logs "${container}" 2>&1 | grep -Eq "DATABASE IS READY TO USE!"; then
+      echo "Oracle Database signalled ready."
       set -o pipefail
       return 0
     fi
@@ -170,7 +185,7 @@ wait_for_db() {
   set -o pipefail
   
   echo "" # Newline
-  err "Timeout waiting for database to start."
+  err "Timeout waiting for database to start. Check container logs above."
   return 1
 }
 
@@ -190,6 +205,9 @@ main() {
 
   echo "Starting Oracle container using ${RUNTIME}..."
   echo "Image: ${oracle_image}"
+
+  # Ensure no name conflicts from previous runs
+  remove_stale_container
   
   # Start container
   # We map the setup scripts to /container-entrypoint-initdb.d which gvenzl images run on startup
@@ -203,6 +221,8 @@ main() {
     "${oracle_image}"
 
   wait_for_db "${CONTAINER_NAME}"
+  # Small grace period to ensure init scripts (user creation) are fully committed
+  sleep 5
 
   echo "Running DuckDB integration tests..."
 
@@ -240,7 +260,11 @@ main() {
     # This is slower but safer than letting unittest run them in parallel
     find test/integration -name "*.test" -print0 | while IFS= read -r -d '' test_file; do
       echo "Running test: ${test_file}"
-      ./build/release/test/unittest "${test_file}"
+      if command -v timeout >/dev/null 2>&1; then
+        timeout "${INTEGRATION_TEST_TIMEOUT}" ./build/release/test/unittest "${test_file}"
+      else
+        ./build/release/test/unittest "${test_file}"
+      fi
     done
     echo "Integration tests completed successfully."
   else

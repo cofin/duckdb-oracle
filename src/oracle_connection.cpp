@@ -33,11 +33,11 @@ void OracleConnection::Reset() {
 			OCIHandleFree(svchp, OCI_HTYPE_SVCCTX);
 		}
 	}
-	if (envhp) {
-		OCIHandleFree(envhp, OCI_HTYPE_ENV);
-	}
 	if (errhp) {
 		OCIHandleFree(errhp, OCI_HTYPE_ERROR);
+	}
+	if (envhp) {
+		OCIHandleFree(envhp, OCI_HTYPE_ENV);
 	}
 	envhp = nullptr;
 	errhp = nullptr;
