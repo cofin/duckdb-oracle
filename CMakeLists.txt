@@ -54,6 +54,7 @@ include_directories(src/include)
 set(EXTENSION_SOURCES
     src/oracle_extension.cpp
     src/oracle_connection.cpp
+    src/oracle_connection_manager.cpp
     src/oracle_secret.cpp
     src/storage/oracle_catalog.cpp
     src/storage/oracle_schema_entry.cpp

@@ -5,23 +5,14 @@
 #include "duckdb/planner/operator/logical_get.hpp"
 #include <oci.h>
 #include "oracle_settings.hpp"
+#include "oracle_connection_manager.hpp"
 
 namespace duckdb {
 
 class OracleCatalogState;
 
-struct OracleContext {
-	OCIEnv *envhp = nullptr;
-	OCISvcCtx *svchp = nullptr;
-	OCIStmt *stmthp = nullptr;
-	OCIError *errhp = nullptr;
-	bool connected = false;
-
-	~OracleContext();
-};
-
 struct OracleBindData : public FunctionData {
-	std::shared_ptr<OracleContext> ctx;
+	string connection_string;
 	string base_query;
 	string query;
 	vector<ub2> oci_types;
@@ -30,11 +21,42 @@ struct OracleBindData : public FunctionData {
 	vector<LogicalType> original_types;
 	vector<string> original_names;
 	OracleSettings settings;
+	std::shared_ptr<OracleConnectionHandle> conn_handle;
+
+	// Statement prepared in bind; executed in global scan state
+	OCIStmt *stmt = nullptr;
+	// Metadata kept in bind data
+	bool finished = false;
 
 	OracleBindData();
 
 	unique_ptr<FunctionData> Copy() const override;
 	bool Equals(const FunctionData &other) const override;
+};
+
+struct OracleScanState : public GlobalTableFunctionState {
+	std::shared_ptr<OracleConnectionHandle> conn_handle;
+	OCISvcCtx *svc = nullptr;
+	OCIStmt *stmt = nullptr;
+	OCIError *err = nullptr;
+	vector<vector<char>> buffers;
+	vector<OCIDefine *> defines;
+	vector<sb2> indicators;
+	vector<ub2> return_lens;
+	bool executed = false;
+	bool defines_bound = false;
+	bool finished = false;
+
+	explicit OracleScanState(idx_t column_count) {
+		buffers.resize(column_count);
+		defines.assign(column_count, nullptr);
+		indicators.assign(column_count, 0);
+		return_lens.assign(column_count, 0);
+	}
+
+	idx_t MaxThreads() const override {
+		return 1; // streaming cursor per scan
+	}
 };
 
 unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string connection_string, string query,

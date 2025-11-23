@@ -18,9 +18,14 @@
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "oracle_storage_extension.hpp"
+#include <chrono>
+#include <mutex>
+#include <unordered_map>
+#include <condition_variable>
 #include "oracle_table_function.hpp"
 #include "oracle_catalog_state.hpp"
 #include "oracle_secret.hpp"
+#include "oracle_connection_manager.hpp"
 #include <oci.h>
 #include <iostream>
 #include <sys/stat.h>
@@ -60,51 +65,12 @@ static void OracleEnvFunction(DataChunk &args, ExpressionState &state, Vector &r
 	                                                      });
 }
 
-static void OracleDefaultConnectionFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto conn = OracleGetEnv("ORACLE_CONNECTION_STRING", "");
-	if (!conn.empty()) {
-		result.SetValue(0, Value(conn));
-		return;
-	}
-	// Build from per-field env vars but require they are all present; otherwise, fail fast
-	auto host = OracleGetEnv("ORACLE_HOST", "");
-	auto port = OracleGetEnv("ORACLE_PORT", "");
-	auto service = OracleGetEnv("ORACLE_SERVICE", "");
-	auto user = OracleGetEnv("ORACLE_USER", "");
-	auto pwd = OracleGetEnv("ORACLE_PASSWORD", "");
-
-	if (host.empty() || port.empty() || service.empty() || user.empty() || pwd.empty()) {
-		throw IOException(
-		    "oracle_default_connection: ORACLE_CONNECTION_STRING not set and required ORACLE_* variables are missing. "
-		    "Set ORACLE_CONNECTION_STRING or ORACLE_HOST/PORT/SERVICE/USER/PASSWORD.");
-	}
-
-	auto dsn =
-	    StringUtil::Format("%s/%s@//%s:%s/%s", user.c_str(), pwd.c_str(), host.c_str(), port.c_str(), service.c_str());
-	result.SetValue(0, Value(dsn));
-}
-
-OracleContext::~OracleContext() {
-	if (stmthp)
-		OCIHandleFree(stmthp, OCI_HTYPE_STMT);
-	if (svchp) {
-		if (errhp && connected)
-			OCILogoff(svchp, errhp);
-		else
-			OCIHandleFree(svchp, OCI_HTYPE_SVCCTX); // Fallback
-	}
-	if (envhp)
-		OCIHandleFree(envhp, OCI_HTYPE_ENV);
-	if (errhp)
-		OCIHandleFree(errhp, OCI_HTYPE_ERROR);
-}
-
-OracleBindData::OracleBindData() : ctx(std::make_shared<OracleContext>()) {
+OracleBindData::OracleBindData() {
 }
 
 unique_ptr<FunctionData> OracleBindData::Copy() const {
 	auto copy = make_uniq<OracleBindData>();
-	copy->ctx = ctx;
+	copy->connection_string = connection_string;
 	copy->base_query = base_query;
 	copy->query = query;
 	copy->oci_types = oci_types;
@@ -113,12 +79,13 @@ unique_ptr<FunctionData> OracleBindData::Copy() const {
 	copy->original_types = original_types;
 	copy->original_names = original_names;
 	copy->settings = settings;
+	// Do not copy live OCI handles; new execution path will create its own
 	return std::move(copy);
 }
 
 bool OracleBindData::Equals(const FunctionData &other) const {
 	auto &other_bind_data = (const OracleBindData &)other;
-	return query == other_bind_data.query;
+	return query == other_bind_data.query && connection_string == other_bind_data.connection_string;
 }
 
 static void CheckOCIError(sword status, OCIError *errhp, const string &msg) {
@@ -156,21 +123,6 @@ static timestamp_t ParseOciTimestamp(const char *data, ub2 len) {
 static bool PathIsDirectory(const string &path) {
 	struct stat st {};
 	return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
-}
-
-static void ParseOracleConnectionString(const string &connection_string, string &user, string &password, string &db) {
-	auto slash_pos = connection_string.find('/');
-	auto at_pos = connection_string.find('@', slash_pos == string::npos ? 0 : slash_pos);
-	if (slash_pos == string::npos || at_pos == string::npos || slash_pos == 0 || at_pos <= slash_pos + 1 ||
-	    at_pos == connection_string.size() - 1) {
-		throw IOException("Invalid Oracle connection string. Expected user/password@connect_identifier");
-	}
-	user = connection_string.substr(0, slash_pos);
-	password = connection_string.substr(slash_pos + 1, at_pos - slash_pos - 1);
-	db = connection_string.substr(at_pos + 1);
-	if (getenv("ORACLE_DEBUG")) {
-		fprintf(stderr, "[oracle] Parsed connection: user=%s db=%s\n", user.c_str(), db.c_str());
-	}
 }
 
 static OracleSettings GetOracleSettings(ClientContext &context, OracleCatalogState *state) {
@@ -236,92 +188,39 @@ static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vecto
 		fprintf(stderr, "[oracle] execute start: %s\n", sql_statement.c_str());
 	}
 
-	// OCI handles
-	OCIEnv *envhp = nullptr;
-	OCIError *errhp = nullptr;
-	OCISvcCtx *svchp = nullptr;
-	OCIStmt *stmthp = nullptr;
-	bool connected = false;
-
-	// Ensure handles are released in the correct order (children before parents)
-	auto cleanup = [&]() {
-		if (stmthp) {
-			OCIHandleFree(stmthp, OCI_HTYPE_STMT);
-			stmthp = nullptr;
-		}
-		if (svchp) {
-			if (errhp && connected) {
-				OCILogoff(svchp, errhp);
-			} else {
-				OCIHandleFree(svchp, OCI_HTYPE_SVCCTX);
-			}
-			svchp = nullptr;
-		}
-		if (errhp) {
-			OCIHandleFree(errhp, OCI_HTYPE_ERROR);
-			errhp = nullptr;
-		}
-		if (envhp) {
-			OCIHandleFree(envhp, OCI_HTYPE_ENV);
-			envhp = nullptr;
-		}
-	};
-
 	try {
-		string user, password, db;
-		ParseOracleConnectionString(connection_string, user, password, db);
-
-		// Create OCI environment
-		CheckOCIError(OCIEnvCreate(&envhp, OCI_DEFAULT, nullptr, nullptr, nullptr, nullptr, 0, nullptr), nullptr,
-		              "Failed to create OCI environment");
-
-		// Allocate error handle
-		CheckOCIError(OCIHandleAlloc(envhp, (dvoid **)&errhp, OCI_HTYPE_ERROR, 0, nullptr), nullptr,
-		              "Failed to allocate OCI error handle");
-
-		// Allocate service context handle
-		CheckOCIError(OCIHandleAlloc(envhp, (dvoid **)&svchp, OCI_HTYPE_SVCCTX, 0, nullptr), errhp,
-		              "Failed to allocate OCI service context handle");
-
-		// Connect to Oracle
-		sword status = OCILogon(envhp, errhp, &svchp, (OraText *)user.c_str(), user.size(), (OraText *)password.c_str(),
-		                        password.size(), (OraText *)db.c_str(), db.size());
-		CheckOCIError(status, errhp, "Failed to connect to Oracle");
-		connected = true;
-
-		// Set timeouts to prevent infinite hangs
-		ub4 timeout = 30000; // 30 seconds
-		OCIServer *server_handle = nullptr;
-		CheckOCIError(OCIAttrGet(svchp, OCI_HTYPE_SVCCTX, &server_handle, 0, OCI_ATTR_SERVER, errhp), errhp,
-		              "Failed to get OCI server handle");
-		// Set call timeout (if supported by client/server)
-		OCIAttrSet(server_handle, OCI_HTYPE_SERVER, &timeout, 0, OCI_ATTR_CALL_TIMEOUT, errhp);
+		OracleSettings settings; // defaults; execute does not depend on session options
+		auto conn_handle = OracleConnectionManager::Instance().Acquire(connection_string, settings);
+		auto ctx = conn_handle->Get();
 
 		// Allocate statement handle
-		CheckOCIError(OCIHandleAlloc(envhp, (dvoid **)&stmthp, OCI_HTYPE_STMT, 0, nullptr), errhp,
+		OCIStmt *stmthp_raw = nullptr;
+		CheckOCIError(OCIHandleAlloc(ctx->envhp, (dvoid **)&stmthp_raw, OCI_HTYPE_STMT, 0, nullptr), ctx->errhp,
 		              "Failed to allocate OCI statement handle");
+		auto stmthp = std::unique_ptr<OCIStmt, std::function<void(OCIStmt *)>>(
+		    stmthp_raw, [](OCIStmt *p) { OCIHandleFree(p, OCI_HTYPE_STMT); });
 
 		// Prepare statement
-		status = OCIStmtPrepare(stmthp, errhp, (OraText *)sql_statement.c_str(), sql_statement.size(), OCI_NTV_SYNTAX,
-		                        OCI_DEFAULT);
-		CheckOCIError(status, errhp, "Failed to prepare OCI statement");
+		sword status = OCIStmtPrepare(stmthp.get(), ctx->errhp, (OraText *)sql_statement.c_str(), sql_statement.size(),
+		                              OCI_NTV_SYNTAX, OCI_DEFAULT);
+		CheckOCIError(status, ctx->errhp, "Failed to prepare OCI statement");
 
 		// Execute statement with auto-commit
-		status = OCIStmtExecute(svchp, stmthp, errhp, 1, 0, nullptr, nullptr, OCI_COMMIT_ON_SUCCESS);
-		CheckOCIError(status, errhp, "Failed to execute OCI statement");
+		status = OCIStmtExecute(ctx->svchp, stmthp.get(), ctx->errhp, 1, 0, nullptr, nullptr, OCI_COMMIT_ON_SUCCESS);
+		CheckOCIError(status, ctx->errhp, "Failed to execute OCI statement");
 
 		// Format result message
 		string result_msg;
 		if (stmthp) {
 			// Get statement type
 			ub2 stmt_type = 0;
-			CheckOCIError(OCIAttrGet(stmthp, OCI_HTYPE_STMT, &stmt_type, 0, OCI_ATTR_STMT_TYPE, errhp), errhp,
-			              "Failed to get OCI statement type");
+			CheckOCIError(OCIAttrGet(stmthp.get(), OCI_HTYPE_STMT, &stmt_type, 0, OCI_ATTR_STMT_TYPE, ctx->errhp),
+			              ctx->errhp, "Failed to get OCI statement type");
 
 			// Extract row count (for DML statements)
 			ub4 row_count = 0;
-			CheckOCIError(OCIAttrGet(stmthp, OCI_HTYPE_STMT, &row_count, 0, OCI_ATTR_ROW_COUNT, errhp), errhp,
-			              "Failed to get OCI row count");
+			CheckOCIError(OCIAttrGet(stmthp.get(), OCI_HTYPE_STMT, &row_count, 0, OCI_ATTR_ROW_COUNT, ctx->errhp),
+			              ctx->errhp, "Failed to get OCI row count");
 
 			if (getenv("ORACLE_DEBUG")) {
 				fprintf(stderr, "[oracle] execute stmt_type: %d, row_count: %llu\n", stmt_type,
@@ -345,11 +244,9 @@ static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vecto
 			fprintf(stderr, "[oracle] execute success: %s\n", result_msg.c_str());
 		}
 
-		cleanup();
 		result.SetValue(0, Value(result_msg));
 
 	} catch (...) {
-		cleanup();
 		throw;
 	}
 }
@@ -359,177 +256,143 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
                                             OracleBindData *bind_data_ptr /* = nullptr */,
                                             OracleCatalogState *state /* = nullptr */) {
 	auto result = bind_data_ptr ? unique_ptr<OracleBindData>(bind_data_ptr) : make_uniq<OracleBindData>();
+	result->connection_string = connection_string;
 	result->base_query = query;
 	result->query = query;
 	result->settings = GetOracleSettings(context, state);
-	auto &ctx = result->ctx;
-	string user, password, db;
 	if (getenv("ORACLE_DEBUG")) {
 		fprintf(stderr, "[oracle] raw connection: %s\n", connection_string.c_str());
 	}
-	ParseOracleConnectionString(connection_string, user, password, db);
+	result->conn_handle = OracleConnectionManager::Instance().Acquire(connection_string, result->settings);
+	auto ctx = result->conn_handle->Get();
 
-	CheckOCIError(OCIEnvCreate(&ctx->envhp, OCI_DEFAULT, nullptr, nullptr, nullptr, nullptr, 0, nullptr), nullptr,
-	              "Failed to create OCI environment");
-
-	CheckOCIError(OCIHandleAlloc(ctx->envhp, (dvoid **)&ctx->errhp, OCI_HTYPE_ERROR, 0, nullptr), nullptr,
-	              "Failed to allocate OCI error handle");
-
-	CheckOCIError(OCIHandleAlloc(ctx->envhp, (dvoid **)&ctx->svchp, OCI_HTYPE_SVCCTX, 0, nullptr), ctx->errhp,
-	              "Failed to allocate OCI service context handle");
-
-	// Apply a login timeout to avoid hanging forever on unreachable hosts
-	ub4 login_timeout_ms = 30000; // 30s
-	OCIServer *server_handle = nullptr;
-	OCIAttrSet(ctx->svchp, OCI_HTYPE_SVCCTX, &login_timeout_ms, 0, OCI_ATTR_LOGIN_TIMEOUT, ctx->errhp);
-
-	sword status = OCILogon(ctx->envhp, ctx->errhp, &ctx->svchp, (OraText *)user.c_str(), user.size(),
-	                        (OraText *)password.c_str(), password.size(), (OraText *)db.c_str(), db.size());
-	CheckOCIError(status, ctx->errhp, "Failed to connect to Oracle");
-	ctx->connected = true;
-
-	// Set call timeout to bound any long-running operations (supported in 19c+)
-	CheckOCIError(OCIAttrGet(ctx->svchp, OCI_HTYPE_SVCCTX, &server_handle, 0, OCI_ATTR_SERVER, ctx->errhp), ctx->errhp,
-	              "Failed to get OCI server handle");
-	OCIAttrSet(server_handle, OCI_HTYPE_SERVER, &login_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp);
-
-	CheckOCIError(OCIHandleAlloc(ctx->envhp, (dvoid **)&ctx->stmthp, OCI_HTYPE_STMT, 0, nullptr), ctx->errhp,
+	// Allocate statement handle on the shared environment and keep it for fetch phase
+	CheckOCIError(OCIHandleAlloc(ctx->envhp, (dvoid **)&result->stmt, OCI_HTYPE_STMT, 0, nullptr), ctx->errhp,
 	              "Failed to allocate OCI statement handle");
 
-	// Bound call timeout for describe/execute to avoid hangs
-	ub4 call_timeout_ms = 30000; // 30s
-	OCIAttrSet(ctx->stmthp, OCI_HTYPE_STMT, &call_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp);
+	try {
+		// Bound call timeout for describe/execute to avoid hangs
+		ub4 call_timeout_ms = 30000; // 30s (per-call upper bound)
+		OCIAttrSet(result->stmt, OCI_HTYPE_STMT, &call_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp);
 
-	// Set prefetch/array tuning from settings
-	ub4 prefetch_rows = result->settings.prefetch_rows;
-	CheckOCIError(OCIAttrSet(ctx->stmthp, OCI_HTYPE_STMT, &prefetch_rows, 0, OCI_ATTR_PREFETCH_ROWS, ctx->errhp),
-	              ctx->errhp, "Failed to set OCI prefetch rows");
-	if (result->settings.prefetch_memory > 0) {
-		ub4 prefetch_mem = result->settings.prefetch_memory;
-		CheckOCIError(OCIAttrSet(ctx->stmthp, OCI_HTYPE_STMT, &prefetch_mem, 0, OCI_ATTR_PREFETCH_MEMORY, ctx->errhp),
-		              ctx->errhp, "Failed to set OCI prefetch memory");
-	}
-
-	if (result->settings.debug_show_queries) {
-		fprintf(stderr, "[oracle] preparing SQL: %s\n", result->query.c_str());
-	}
-	if (getenv("ORACLE_DEBUG")) {
-		fprintf(stderr, "[oracle] describe prepare: %s\n", result->query.c_str());
-	}
-	status = OCIStmtPrepare(ctx->stmthp, ctx->errhp, (OraText *)result->query.c_str(), result->query.size(),
-	                        OCI_NTV_SYNTAX, OCI_DEFAULT);
-	CheckOCIError(status, ctx->errhp, "Failed to prepare OCI statement");
-	if (getenv("ORACLE_DEBUG")) {
-		fprintf(stderr, "[oracle] describe execute begin\n");
-	}
-
-	status = OCIStmtExecute(ctx->svchp, ctx->stmthp, ctx->errhp, 0, 0, nullptr, nullptr, OCI_DESCRIBE_ONLY);
-	CheckOCIError(status, ctx->errhp, "Failed to execute OCI statement (Describe)");
-	if (getenv("ORACLE_DEBUG")) {
-		fprintf(stderr, "[oracle] describe done\n");
-	}
-
-	ub4 param_count;
-	CheckOCIError(OCIAttrGet(ctx->stmthp, OCI_HTYPE_STMT, &param_count, 0, OCI_ATTR_PARAM_COUNT, ctx->errhp),
-	              ctx->errhp, "Failed to get OCI parameter count");
-
-	for (ub4 i = 1; i <= param_count; i++) {
-		OCIParam *param;
-		CheckOCIError(OCIParamGet(ctx->stmthp, OCI_HTYPE_STMT, ctx->errhp, (dvoid **)&param, i), ctx->errhp,
-		              "Failed to get OCI parameter");
-
-		ub2 data_type;
-		CheckOCIError(OCIAttrGet(param, OCI_DTYPE_PARAM, &data_type, 0, OCI_ATTR_DATA_TYPE, ctx->errhp), ctx->errhp,
-		              "Failed to get OCI data type");
-
-		OraText *col_name;
-		ub4 col_name_len;
-		CheckOCIError(OCIAttrGet(param, OCI_DTYPE_PARAM, &col_name, &col_name_len, OCI_ATTR_NAME, ctx->errhp),
-		              ctx->errhp, "Failed to get OCI column name");
-
-		names.emplace_back((char *)col_name, col_name_len);
-		result->column_names.emplace_back((char *)col_name, col_name_len);
-		result->oci_types.push_back(data_type);
-
-		ub2 precision = 0;
-		sb1 scale = 0;
-		CheckOCIError(OCIAttrGet(param, OCI_DTYPE_PARAM, &precision, 0, OCI_ATTR_PRECISION, ctx->errhp), ctx->errhp,
-		              "Failed to get OCI precision");
-		CheckOCIError(OCIAttrGet(param, OCI_DTYPE_PARAM, &scale, 0, OCI_ATTR_SCALE, ctx->errhp), ctx->errhp,
-		              "Failed to get OCI scale");
-
-		ub4 char_len = 0;
-		CheckOCIError(OCIAttrGet(param, OCI_DTYPE_PARAM, &char_len, 0, OCI_ATTR_CHAR_SIZE, ctx->errhp), ctx->errhp,
-		              "Failed to get OCI char size");
-		result->oci_sizes.push_back(char_len > 0 ? char_len : 4000); // Default buffer size
-
-		switch (data_type) {
-		case SQLT_CHR:
-		case SQLT_AFC:
-		case SQLT_VCS:
-		case SQLT_AVC:
-			return_types.push_back(LogicalType::VARCHAR);
-			break;
-		case SQLT_NUM:
-		case SQLT_VNU:
-			if (scale == 0) {
-				if (precision > 18) {
-					return_types.push_back(LogicalType::DOUBLE);
-				} else {
-					return_types.push_back(LogicalType::BIGINT);
-				}
-			} else {
-				return_types.push_back(LogicalType::DOUBLE);
-			}
-			break;
-		case SQLT_INT:
-		case SQLT_UIN:
-			return_types.push_back(LogicalType::BIGINT);
-			break;
-		case SQLT_FLT:
-		case SQLT_BFLOAT:
-		case SQLT_BDOUBLE:
-		case SQLT_IBFLOAT:
-		case SQLT_IBDOUBLE:
-			return_types.push_back(LogicalType::DOUBLE);
-			break;
-		case SQLT_DAT:
-		case SQLT_ODT:
-		case SQLT_TIMESTAMP:
-		case SQLT_TIMESTAMP_TZ:
-		case SQLT_TIMESTAMP_LTZ:
-			return_types.push_back(LogicalType::TIMESTAMP);
-			break;
-		case SQLT_CLOB:
-		case SQLT_BLOB:
-		case SQLT_BIN:
-		case SQLT_LBI:
-		case SQLT_LNG:
-		case SQLT_LVC:
-			return_types.push_back(LogicalType::BLOB);
-			break;
-		case SQLT_JSON:
-			return_types.push_back(LogicalType::VARCHAR); // Fetch JSON as string
-			break;
-		case SQLT_VEC:
-			return_types.push_back(LogicalType::VARCHAR);
-			break;
-		default:
-			return_types.push_back(LogicalType::VARCHAR);
-			break;
+		// Set prefetch/array tuning from settings
+		ub4 prefetch_rows = result->settings.prefetch_rows;
+		OCIAttrSet(result->stmt, OCI_HTYPE_STMT, &prefetch_rows, 0, OCI_ATTR_PREFETCH_ROWS, ctx->errhp);
+		if (result->settings.prefetch_memory > 0) {
+			ub4 prefetch_mem = result->settings.prefetch_memory;
+			OCIAttrSet(result->stmt, OCI_HTYPE_STMT, &prefetch_mem, 0, OCI_ATTR_PREFETCH_MEMORY, ctx->errhp);
 		}
+
+		sword status;
+
+		if (result->settings.debug_show_queries || getenv("ORACLE_DEBUG")) {
+			fprintf(stderr, "[oracle] prepare (bind): %s\n", result->query.c_str());
+		}
+		status = OCIStmtPrepare(result->stmt, ctx->errhp, (OraText *)result->query.c_str(), result->query.size(),
+		                        OCI_NTV_SYNTAX, OCI_DEFAULT);
+		CheckOCIError(status, ctx->errhp, "Failed to prepare OCI statement");
+
+		status = OCIStmtExecute(ctx->svchp, result->stmt, ctx->errhp, 0, 0, nullptr, nullptr, OCI_DESCRIBE_ONLY);
+		CheckOCIError(status, ctx->errhp, "Failed to execute OCI statement (Describe)");
+
+		ub4 param_count;
+		CheckOCIError(OCIAttrGet(result->stmt, OCI_HTYPE_STMT, &param_count, 0, OCI_ATTR_PARAM_COUNT, ctx->errhp),
+		              ctx->errhp, "Failed to get OCI parameter count");
+
+		for (ub4 i = 1; i <= param_count; i++) {
+			OCIParam *param;
+			CheckOCIError(OCIParamGet(result->stmt, OCI_HTYPE_STMT, ctx->errhp, (dvoid **)&param, i), ctx->errhp,
+			              "Failed to get OCI parameter");
+
+			ub2 data_type;
+			CheckOCIError(OCIAttrGet(param, OCI_DTYPE_PARAM, &data_type, 0, OCI_ATTR_DATA_TYPE, ctx->errhp), ctx->errhp,
+			              "Failed to get OCI data type");
+
+			OraText *col_name;
+			ub4 col_name_len;
+			CheckOCIError(OCIAttrGet(param, OCI_DTYPE_PARAM, &col_name, &col_name_len, OCI_ATTR_NAME, ctx->errhp),
+			              ctx->errhp, "Failed to get OCI column name");
+
+			names.emplace_back((char *)col_name, col_name_len);
+			result->column_names.emplace_back((char *)col_name, col_name_len);
+			result->oci_types.push_back(data_type);
+
+			ub2 precision = 0;
+			sb1 scale = 0;
+			CheckOCIError(OCIAttrGet(param, OCI_DTYPE_PARAM, &precision, 0, OCI_ATTR_PRECISION, ctx->errhp), ctx->errhp,
+			              "Failed to get OCI precision");
+			CheckOCIError(OCIAttrGet(param, OCI_DTYPE_PARAM, &scale, 0, OCI_ATTR_SCALE, ctx->errhp), ctx->errhp,
+			              "Failed to get OCI scale");
+
+			ub4 char_len = 0;
+			CheckOCIError(OCIAttrGet(param, OCI_DTYPE_PARAM, &char_len, 0, OCI_ATTR_CHAR_SIZE, ctx->errhp), ctx->errhp,
+			              "Failed to get OCI char size");
+			result->oci_sizes.push_back(char_len > 0 ? char_len : 4000); // Default buffer size
+
+			switch (data_type) {
+			case SQLT_CHR:
+			case SQLT_AFC:
+			case SQLT_VCS:
+			case SQLT_AVC:
+				return_types.push_back(LogicalType::VARCHAR);
+				break;
+			case SQLT_NUM:
+			case SQLT_VNU:
+				if (scale == 0) {
+					if (precision > 18) {
+						return_types.push_back(LogicalType::DOUBLE);
+					} else {
+						return_types.push_back(LogicalType::BIGINT);
+					}
+				} else {
+					return_types.push_back(LogicalType::DOUBLE);
+				}
+				break;
+			case SQLT_INT:
+			case SQLT_UIN:
+				return_types.push_back(LogicalType::BIGINT);
+				break;
+			case SQLT_FLT:
+			case SQLT_BFLOAT:
+			case SQLT_BDOUBLE:
+			case SQLT_IBFLOAT:
+			case SQLT_IBDOUBLE:
+				return_types.push_back(LogicalType::DOUBLE);
+				break;
+			case SQLT_DAT:
+			case SQLT_ODT:
+			case SQLT_TIMESTAMP:
+			case SQLT_TIMESTAMP_TZ:
+			case SQLT_TIMESTAMP_LTZ:
+				return_types.push_back(LogicalType::TIMESTAMP);
+				break;
+			case SQLT_CLOB:
+			case SQLT_BLOB:
+			case SQLT_BIN:
+			case SQLT_LBI:
+			case SQLT_LNG:
+			case SQLT_LVC:
+				return_types.push_back(LogicalType::BLOB);
+				break;
+			case SQLT_JSON:
+				return_types.push_back(LogicalType::VARCHAR); // Fetch JSON as string
+				break;
+			case SQLT_VEC:
+				return_types.push_back(LogicalType::VARCHAR);
+				break;
+			default:
+				return_types.push_back(LogicalType::VARCHAR);
+				break;
+			}
+		}
+
+		result->original_types = return_types;
+		result->original_names = names;
+		result->finished = false;
+		return std::move(result);
+	} catch (...) {
+		throw;
 	}
-
-	result->original_types = return_types;
-	result->original_names = names;
-
-	// Re-execute for fetching
-	status = OCIStmtExecute(ctx->svchp, ctx->stmthp, ctx->errhp, 0, 0, nullptr, nullptr, OCI_DEFAULT);
-	if (status != OCI_SUCCESS && status != OCI_SUCCESS_WITH_INFO) {
-		CheckOCIError(status, ctx->errhp, "Failed to execute OCI statement");
-	}
-
-	return std::move(result);
 }
 
 static unique_ptr<FunctionData> OracleScanBind(ClientContext &context, TableFunctionBindInput &input,
@@ -559,107 +422,132 @@ static unique_ptr<FunctionData> OracleQueryBind(ClientContext &context, TableFun
 	return OracleBindInternal(context, connection_string, query, return_types, names);
 }
 
-void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
-	auto &bind_data = (OracleBindData &)*data.bind_data;
-	auto &ctx = bind_data.ctx;
-	OCIDefine *defnp = nullptr;
-	sword status;
-	idx_t row_count = 0;
-
-	if (bind_data.settings.debug_show_queries) {
-		fprintf(stderr, "[oracle] executing SQL: %s\n", bind_data.query.c_str());
-	}
-
-	// Re-prepare statement in case filter pushdown modified SQL.
+static unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &context, TableFunctionInitInput &input) {
+	auto &bind = input.bind_data->Cast<OracleBindData>();
+	auto state = make_uniq<OracleScanState>(bind.column_names.size());
 	if (getenv("ORACLE_DEBUG")) {
-		fprintf(stderr, "[oracle] query prepare: %s\n", bind_data.query.c_str());
-	}
-	status = OCIStmtPrepare(ctx->stmthp, ctx->errhp, (OraText *)bind_data.query.c_str(), bind_data.query.size(),
-	                        OCI_NTV_SYNTAX, OCI_DEFAULT);
-	CheckOCIError(status, ctx->errhp, "Failed to prepare OCI statement (execute)");
-	if (getenv("ORACLE_DEBUG")) {
-		fprintf(stderr, "[oracle] query execute begin\n");
-	}
-	status = OCIStmtExecute(ctx->svchp, ctx->stmthp, ctx->errhp, 0, 0, nullptr, nullptr, OCI_DEFAULT);
-	CheckOCIError(status, ctx->errhp, "Failed to execute OCI statement (fetch)");
-	if (getenv("ORACLE_DEBUG")) {
-		fprintf(stderr, "[oracle] query execute done\n");
+		fprintf(stderr, "[oracle] init_global start\n");
 	}
 
-	vector<vector<char>> buffers(output.ColumnCount());
-	vector<OCIDefine *> defines(output.ColumnCount(), nullptr);
-	vector<sb2> indicators(output.ColumnCount());
-	vector<ub2> return_lens(output.ColumnCount());
+	state->conn_handle = bind.conn_handle;
+	auto ctx = state->conn_handle->Get();
+	state->svc = ctx->svchp;
+	state->stmt = bind.stmt; // prepared during bind
+	state->err = ctx->errhp;
 
-	for (idx_t col_idx = 0; col_idx < output.ColumnCount(); col_idx++) {
+	// Bind defines to persistent buffers
+	for (idx_t col_idx = 0; col_idx < bind.column_names.size(); col_idx++) {
 		ub4 size = 4000; // Default max
-		if (col_idx < bind_data.oci_sizes.size() && bind_data.oci_sizes[col_idx] > 0) {
-			size = bind_data.oci_sizes[col_idx] * 4; // UTF8 safety
+		if (col_idx < bind.oci_sizes.size() && bind.oci_sizes[col_idx] > 0) {
+			size = bind.oci_sizes[col_idx] * 4; // UTF8 safety
 		}
-
-		buffers[col_idx].resize(size);
+		state->buffers[col_idx].resize(size);
 
 		ub2 type = SQLT_STR;
-
-		switch (output.GetTypes()[col_idx].id()) {
+		switch (bind.original_types[col_idx].id()) {
 		case LogicalTypeId::BIGINT:
 			type = SQLT_INT;
 			size = sizeof(int64_t);
-			buffers[col_idx].resize(size);
+			state->buffers[col_idx].resize(size);
 			break;
 		case LogicalTypeId::DOUBLE:
 			type = SQLT_FLT;
 			size = sizeof(double);
-			buffers[col_idx].resize(size);
+			state->buffers[col_idx].resize(size);
 			break;
 		default:
 			type = SQLT_STR;
 			break;
 		}
 
-		CheckOCIError(OCIDefineByPos(ctx->stmthp, &defines[col_idx], ctx->errhp, col_idx + 1, buffers[col_idx].data(),
-		                             size, type, &indicators[col_idx], &return_lens[col_idx], nullptr, OCI_DEFAULT),
-		              ctx->errhp, "Failed to define OCI column");
+		CheckOCIError(OCIDefineByPos(state->stmt, &state->defines[col_idx], state->err, col_idx + 1,
+		                             state->buffers[col_idx].data(), size, type, &state->indicators[col_idx],
+		                             &state->return_lens[col_idx], nullptr, OCI_DEFAULT),
+		              state->err, "Failed to define OCI column");
+	}
+	state->defines_bound = true;
+	return std::move(state);
+}
+
+// OracleQueryFunction is defined once (see earlier) and reused; duplicate removed.
+
+void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
+	auto &bind_data = (OracleBindData &)*data.bind_data;
+	auto &gstate = data.global_state->Cast<OracleScanState>();
+
+	if (gstate.finished) {
+		output.SetCardinality(0);
+		return;
 	}
 
-	while (row_count < STANDARD_VECTOR_SIZE) {
+	auto ctx = gstate.conn_handle->Get();
+	sword status;
+	idx_t row_count = 0;
+
+	try {
+		// Execute cursor once
+		if (!gstate.executed) {
+			if (bind_data.settings.debug_show_queries || getenv("ORACLE_DEBUG")) {
+				fprintf(stderr, "[oracle] executing SQL (once): %s\n", bind_data.query.c_str());
+			}
+			status = OCIStmtExecute(ctx->svchp, gstate.stmt, ctx->errhp, 0, 0, nullptr, nullptr, OCI_DEFAULT);
+			CheckOCIError(status, ctx->errhp, "Failed to execute OCI statement (open cursor)");
+			gstate.executed = true;
+		}
+
+		ub4 rows_fetched = 0;
+		status = OCIStmtFetch2(gstate.stmt, ctx->errhp, STANDARD_VECTOR_SIZE, OCI_FETCH_NEXT, 0, OCI_DEFAULT);
+		if (status != OCI_SUCCESS && status != OCI_SUCCESS_WITH_INFO && status != OCI_NO_DATA) {
+			CheckOCIError(status, ctx->errhp, "Failed to fetch OCI data");
+		}
+		OCIAttrGet(gstate.stmt, OCI_HTYPE_STMT, &rows_fetched, 0, OCI_ATTR_ROWS_FETCHED, ctx->errhp);
 		if (getenv("ORACLE_DEBUG")) {
-			fprintf(stderr, "[oracle] fetch row %llu\n", (unsigned long long)row_count);
+			fprintf(stderr, "[oracle] fetch status=%d rows=%u\n", status, (unsigned)rows_fetched);
 		}
-		status = OCIStmtFetch2(ctx->stmthp, ctx->errhp, 1, OCI_FETCH_NEXT, 0, OCI_DEFAULT);
-		if (status == OCI_NO_DATA)
-			break;
-		CheckOCIError(status, ctx->errhp, "Failed to fetch OCI data");
 
-		for (idx_t col_idx = 0; col_idx < output.ColumnCount(); col_idx++) {
-			if (indicators[col_idx] == -1) {
-				FlatVector::SetNull(output.data[col_idx], row_count, true);
-				continue;
-			}
+		if (status == OCI_NO_DATA && rows_fetched == 0) {
+			gstate.finished = true;
+			output.SetCardinality(0);
+			return;
+		}
 
-			switch (output.GetTypes()[col_idx].id()) {
-			case LogicalTypeId::VARCHAR:
-			case LogicalTypeId::BLOB: {
-				string_t val((char *)buffers[col_idx].data(), return_lens[col_idx]);
-				FlatVector::GetData<string_t>(output.data[col_idx])[row_count] =
-				    StringVector::AddString(output.data[col_idx], val);
-				break;
-			}
-			case LogicalTypeId::BIGINT:
-				FlatVector::GetData<int64_t>(output.data[col_idx])[row_count] = *(int64_t *)buffers[col_idx].data();
-				break;
-			case LogicalTypeId::DOUBLE:
-				FlatVector::GetData<double>(output.data[col_idx])[row_count] = *(double *)buffers[col_idx].data();
-				break;
-			case LogicalTypeId::TIMESTAMP:
-				FlatVector::GetData<timestamp_t>(output.data[col_idx])[row_count] =
-				    ParseOciTimestamp((char *)buffers[col_idx].data(), return_lens[col_idx]);
-				break;
+		for (row_count = 0; row_count < rows_fetched; row_count++) {
+			for (idx_t col_idx = 0; col_idx < output.ColumnCount(); col_idx++) {
+				if (gstate.indicators[col_idx] == -1) {
+					FlatVector::SetNull(output.data[col_idx], row_count, true);
+					continue;
+				}
+
+				switch (output.GetTypes()[col_idx].id()) {
+				case LogicalTypeId::VARCHAR:
+				case LogicalTypeId::BLOB: {
+					string_t val((char *)gstate.buffers[col_idx].data(), gstate.return_lens[col_idx]);
+					FlatVector::GetData<string_t>(output.data[col_idx])[row_count] =
+					    StringVector::AddString(output.data[col_idx], val);
+					break;
+				}
+				case LogicalTypeId::BIGINT:
+					FlatVector::GetData<int64_t>(output.data[col_idx])[row_count] =
+					    *(int64_t *)gstate.buffers[col_idx].data();
+					break;
+				case LogicalTypeId::DOUBLE:
+					FlatVector::GetData<double>(output.data[col_idx])[row_count] =
+					    *(double *)gstate.buffers[col_idx].data();
+					break;
+				case LogicalTypeId::TIMESTAMP:
+					FlatVector::GetData<timestamp_t>(output.data[col_idx])[row_count] =
+					    ParseOciTimestamp((char *)gstate.buffers[col_idx].data(), gstate.return_lens[col_idx]);
+					break;
+				}
 			}
 		}
-		row_count++;
+		output.SetCardinality(row_count);
+		if (status == OCI_NO_DATA) {
+			gstate.finished = true;
+		}
+	} catch (...) {
+		throw;
 	}
-	output.SetCardinality(row_count);
 }
 
 static string ColumnRefSQL(const string &col_name) {
@@ -841,6 +729,7 @@ static void OracleAttachWallet(DataChunk &args, ExpressionState &state, Vector &
 
 static void OracleClearCache(DataChunk &, ExpressionState &, Vector &result) {
 	OracleCatalogState::ClearAllCaches();
+	OracleConnectionManager::Instance().Clear();
 	result.SetValue(0, Value("oracle caches cleared"));
 }
 
@@ -865,14 +754,14 @@ static void LoadInternal(ExtensionLoader &loader) {
 
 	auto oracle_scan_func =
 	    TableFunction("oracle_scan", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
-	                  OracleQueryFunction, OracleScanBind);
+	                  OracleQueryFunction, OracleScanBind, OracleInitGlobal, nullptr);
 	oracle_scan_func.filter_pushdown = true;
 	oracle_scan_func.pushdown_complex_filter = OraclePushdownComplexFilter;
 	oracle_scan_func.projection_pushdown = true;
 	loader.RegisterFunction(oracle_scan_func);
 
 	auto oracle_query_func = TableFunction("oracle_query", {LogicalType::VARCHAR, LogicalType::VARCHAR},
-	                                       OracleQueryFunction, OracleQueryBind);
+	                                       OracleQueryFunction, OracleQueryBind, OracleInitGlobal, nullptr);
 	oracle_query_func.filter_pushdown = true;
 	oracle_query_func.pushdown_complex_filter = OraclePushdownComplexFilter;
 	oracle_query_func.projection_pushdown = true;
@@ -893,10 +782,6 @@ static void LoadInternal(ExtensionLoader &loader) {
 	auto oracle_env_func = ScalarFunction("oracle_env", {LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                                      LogicalType::VARCHAR, OracleEnvFunction);
 	loader.RegisterFunction(oracle_env_func);
-
-	auto oracle_default_conn_func =
-	    ScalarFunction("oracle_default_connection", {}, LogicalType::VARCHAR, OracleDefaultConnectionFunction);
-	loader.RegisterFunction(oracle_default_conn_func);
 }
 
 void OracleExtension::Load(ExtensionLoader &loader) {
@@ -906,7 +791,7 @@ void OracleExtension::Load(ExtensionLoader &loader) {
 	config.AddExtensionOption("oracle_enable_pushdown", "Enable Oracle filter/projection pushdown",
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(false));
 	config.AddExtensionOption("oracle_prefetch_rows", "OCI prefetch row count", LogicalType::UBIGINT,
-	                          Value::UBIGINT(200));
+	                          Value::UBIGINT(1024));
 	config.AddExtensionOption("oracle_prefetch_memory", "OCI prefetch memory (bytes, 0=auto)", LogicalType::UBIGINT,
 	                          Value::UBIGINT(0));
 	config.AddExtensionOption("oracle_array_size", "Rows fetched per OCI iteration (used for tuning)",

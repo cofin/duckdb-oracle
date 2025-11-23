@@ -6,6 +6,27 @@
 
 require oracle
 
+statement ok
+CREATE OR REPLACE MACRO oracle_test_conn() AS (
+    concat(
+        oracle_env('ORACLE_USER', 'duckdb_test'), '/',
+        oracle_env('ORACLE_PASSWORD', 'duckdb_test'), '@//',
+        oracle_env('ORACLE_HOST', 'localhost'), ':',
+        oracle_env('ORACLE_PORT', '1521'), '/',
+        oracle_env('ORACLE_SERVICE', 'FREEPDB1')
+    )
+);
+
+# Test 1: Metadata result limit
+statement ok
+SET oracle_metadata_result_limit = 5;
+
+query I
+SELECT COUNT(*) FROM oracle_query(oracle_test_conn(),
+    'SELECT * FROM all_objects WHERE rownum <= 10');
+----
+10
+
 # Derive connection params from environment with defaults (uses oracle_env helper).
 
 # Setup: Create test secret
@@ -37,7 +58,7 @@ true
 # Test 3: Query table in current schema (should work)
 # Assumes duckdb_test schema has at least DUAL or a test table
 query I
-SELECT COUNT(*) FROM oracle_query(oracle_default_connection(),
+SELECT COUNT(*) FROM oracle_query(oracle_test_conn(),
     'SELECT 1 FROM DUAL');
 ----
 1
@@ -124,7 +145,7 @@ ATTACH '' AS ora_ondemand (TYPE oracle, SECRET oracle_meta_test);
 # This tests on-demand loading fallback
 # The query should work even if table not in enumerated list
 query I
-SELECT COUNT(*) FROM oracle_query(oracle_default_connection(),
+SELECT COUNT(*) FROM oracle_query(oracle_test_conn(),
     'SELECT 1 FROM DUAL');
 ----
 1

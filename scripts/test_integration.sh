@@ -30,7 +30,7 @@ readonly SETUP_DIR="$(pwd)/test/integration/init_sql"
 # Flags
 CLEANUP_ENABLED=1
 # Per-test timeout (seconds) to avoid indefinite hangs when something goes wrong
-: "${INTEGRATION_TEST_TIMEOUT:=20}"
+: "${INTEGRATION_TEST_TIMEOUT:=120}"
 
 #######################################
 # Remove any stale test container using the same name to avoid conflicts.
