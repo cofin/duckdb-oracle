@@ -102,11 +102,11 @@ public:
 	}
 
 	void Initialize(bool load_builtin) override {
-		// Detect current schema before connection to support schema resolution
-		state->DetectCurrentSchema();
-
 		// Attempt connection early to fail fast
 		state->EnsureConnection();
+
+		// Detect current schema after successful connection
+		state->DetectCurrentSchema();
 
 		DuckCatalog::Initialize(false);
 		GetSchemaCatalogSet().SetDefaultGenerator(make_uniq<OracleSchemaGenerator>(*this, state));
