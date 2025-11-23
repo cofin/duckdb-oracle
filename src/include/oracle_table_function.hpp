@@ -24,7 +24,7 @@ struct OracleBindData : public FunctionData {
 	std::shared_ptr<OracleConnectionHandle> conn_handle;
 
 	// Statement prepared in bind; executed in global scan state
-	OCIStmt *stmt = nullptr;
+	std::shared_ptr<OCIStmt> stmt;
 	// Metadata kept in bind data
 	bool finished = false;
 
@@ -37,12 +37,12 @@ struct OracleBindData : public FunctionData {
 struct OracleScanState : public GlobalTableFunctionState {
 	std::shared_ptr<OracleConnectionHandle> conn_handle;
 	OCISvcCtx *svc = nullptr;
-	OCIStmt *stmt = nullptr;
+	std::shared_ptr<OCIStmt> stmt;
 	OCIError *err = nullptr;
 	vector<vector<char>> buffers;
 	vector<OCIDefine *> defines;
-	vector<sb2> indicators;
-	vector<ub2> return_lens;
+	vector<vector<sb2>> indicators;
+	vector<vector<ub2>> return_lens;
 	bool executed = false;
 	bool defines_bound = false;
 	bool finished = false;
@@ -50,8 +50,8 @@ struct OracleScanState : public GlobalTableFunctionState {
 	explicit OracleScanState(idx_t column_count) {
 		buffers.resize(column_count);
 		defines.assign(column_count, nullptr);
-		indicators.assign(column_count, 0);
-		return_lens.assign(column_count, 0);
+		indicators.resize(column_count);
+		return_lens.resize(column_count);
 	}
 
 	idx_t MaxThreads() const override {

@@ -79,7 +79,7 @@ unique_ptr<FunctionData> OracleBindData::Copy() const {
 	copy->original_types = original_types;
 	copy->original_names = original_names;
 	copy->settings = settings;
-	// Do not copy live OCI handles; new execution path will create its own
+	copy->stmt = stmt; // Copy shared pointer
 	return std::move(copy);
 }
 
@@ -267,20 +267,27 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
 	auto ctx = result->conn_handle->Get();
 
 	// Allocate statement handle on the shared environment and keep it for fetch phase
-	CheckOCIError(OCIHandleAlloc(ctx->envhp, (dvoid **)&result->stmt, OCI_HTYPE_STMT, 0, nullptr), ctx->errhp,
+	OCIStmt *stmt_raw = nullptr;
+	CheckOCIError(OCIHandleAlloc(ctx->envhp, (dvoid **)&stmt_raw, OCI_HTYPE_STMT, 0, nullptr), ctx->errhp,
 	              "Failed to allocate OCI statement handle");
+
+	result->stmt = std::shared_ptr<OCIStmt>(stmt_raw, [](OCIStmt *stmt) {
+		if (stmt) {
+			OCIHandleFree(stmt, OCI_HTYPE_STMT);
+		}
+	});
 
 	try {
 		// Bound call timeout for describe/execute to avoid hangs
 		ub4 call_timeout_ms = 30000; // 30s (per-call upper bound)
-		OCIAttrSet(result->stmt, OCI_HTYPE_STMT, &call_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp);
+		OCIAttrSet(result->stmt.get(), OCI_HTYPE_STMT, &call_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp);
 
 		// Set prefetch/array tuning from settings
 		ub4 prefetch_rows = result->settings.prefetch_rows;
-		OCIAttrSet(result->stmt, OCI_HTYPE_STMT, &prefetch_rows, 0, OCI_ATTR_PREFETCH_ROWS, ctx->errhp);
+		OCIAttrSet(result->stmt.get(), OCI_HTYPE_STMT, &prefetch_rows, 0, OCI_ATTR_PREFETCH_ROWS, ctx->errhp);
 		if (result->settings.prefetch_memory > 0) {
 			ub4 prefetch_mem = result->settings.prefetch_memory;
-			OCIAttrSet(result->stmt, OCI_HTYPE_STMT, &prefetch_mem, 0, OCI_ATTR_PREFETCH_MEMORY, ctx->errhp);
+			OCIAttrSet(result->stmt.get(), OCI_HTYPE_STMT, &prefetch_mem, 0, OCI_ATTR_PREFETCH_MEMORY, ctx->errhp);
 		}
 
 		sword status;
@@ -288,20 +295,20 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
 		if (result->settings.debug_show_queries || getenv("ORACLE_DEBUG")) {
 			fprintf(stderr, "[oracle] prepare (bind): %s\n", result->query.c_str());
 		}
-		status = OCIStmtPrepare(result->stmt, ctx->errhp, (OraText *)result->query.c_str(), result->query.size(),
+		status = OCIStmtPrepare(result->stmt.get(), ctx->errhp, (OraText *)result->query.c_str(), result->query.size(),
 		                        OCI_NTV_SYNTAX, OCI_DEFAULT);
 		CheckOCIError(status, ctx->errhp, "Failed to prepare OCI statement");
 
-		status = OCIStmtExecute(ctx->svchp, result->stmt, ctx->errhp, 0, 0, nullptr, nullptr, OCI_DESCRIBE_ONLY);
+		status = OCIStmtExecute(ctx->svchp, result->stmt.get(), ctx->errhp, 0, 0, nullptr, nullptr, OCI_DESCRIBE_ONLY);
 		CheckOCIError(status, ctx->errhp, "Failed to execute OCI statement (Describe)");
 
 		ub4 param_count;
-		CheckOCIError(OCIAttrGet(result->stmt, OCI_HTYPE_STMT, &param_count, 0, OCI_ATTR_PARAM_COUNT, ctx->errhp),
+		CheckOCIError(OCIAttrGet(result->stmt.get(), OCI_HTYPE_STMT, &param_count, 0, OCI_ATTR_PARAM_COUNT, ctx->errhp),
 		              ctx->errhp, "Failed to get OCI parameter count");
 
 		for (ub4 i = 1; i <= param_count; i++) {
 			OCIParam *param;
-			CheckOCIError(OCIParamGet(result->stmt, OCI_HTYPE_STMT, ctx->errhp, (dvoid **)&param, i), ctx->errhp,
+			CheckOCIError(OCIParamGet(result->stmt.get(), OCI_HTYPE_STMT, ctx->errhp, (dvoid **)&param, i), ctx->errhp,
 			              "Failed to get OCI parameter");
 
 			ub2 data_type;
@@ -441,29 +448,36 @@ static unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &cont
 		if (col_idx < bind.oci_sizes.size() && bind.oci_sizes[col_idx] > 0) {
 			size = bind.oci_sizes[col_idx] * 4; // UTF8 safety
 		}
-		state->buffers[col_idx].resize(size);
+
+		// Resize for array fetch
+		state->buffers[col_idx].resize(size * STANDARD_VECTOR_SIZE);
+		state->indicators[col_idx].resize(STANDARD_VECTOR_SIZE);
+		state->return_lens[col_idx].resize(STANDARD_VECTOR_SIZE);
 
 		ub2 type = SQLT_STR;
 		switch (bind.original_types[col_idx].id()) {
 		case LogicalTypeId::BIGINT:
 			type = SQLT_INT;
 			size = sizeof(int64_t);
-			state->buffers[col_idx].resize(size);
+			state->buffers[col_idx].resize(size * STANDARD_VECTOR_SIZE);
 			break;
 		case LogicalTypeId::DOUBLE:
 			type = SQLT_FLT;
 			size = sizeof(double);
-			state->buffers[col_idx].resize(size);
+			state->buffers[col_idx].resize(size * STANDARD_VECTOR_SIZE);
 			break;
 		default:
 			type = SQLT_STR;
 			break;
 		}
 
-		CheckOCIError(OCIDefineByPos(state->stmt, &state->defines[col_idx], state->err, col_idx + 1,
-		                             state->buffers[col_idx].data(), size, type, &state->indicators[col_idx],
-		                             &state->return_lens[col_idx], nullptr, OCI_DEFAULT),
+		CheckOCIError(OCIDefineByPos(state->stmt.get(), &state->defines[col_idx], state->err, col_idx + 1,
+		                             state->buffers[col_idx].data(), size, type, state->indicators[col_idx].data(),
+		                             state->return_lens[col_idx].data(), nullptr, OCI_DEFAULT),
 		              state->err, "Failed to define OCI column");
+
+		CheckOCIError(OCIDefineArrayOfStruct(state->defines[col_idx], state->err, size, sizeof(sb2), sizeof(ub2), 0),
+		              state->err, "Failed to set OCI array of struct");
 	}
 	state->defines_bound = true;
 	return std::move(state);
@@ -490,17 +504,17 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 			if (bind_data.settings.debug_show_queries || getenv("ORACLE_DEBUG")) {
 				fprintf(stderr, "[oracle] executing SQL (once): %s\n", bind_data.query.c_str());
 			}
-			status = OCIStmtExecute(ctx->svchp, gstate.stmt, ctx->errhp, 0, 0, nullptr, nullptr, OCI_DEFAULT);
+			status = OCIStmtExecute(ctx->svchp, gstate.stmt.get(), ctx->errhp, 0, 0, nullptr, nullptr, OCI_DEFAULT);
 			CheckOCIError(status, ctx->errhp, "Failed to execute OCI statement (open cursor)");
 			gstate.executed = true;
 		}
 
 		ub4 rows_fetched = 0;
-		status = OCIStmtFetch2(gstate.stmt, ctx->errhp, STANDARD_VECTOR_SIZE, OCI_FETCH_NEXT, 0, OCI_DEFAULT);
+		status = OCIStmtFetch2(gstate.stmt.get(), ctx->errhp, STANDARD_VECTOR_SIZE, OCI_FETCH_NEXT, 0, OCI_DEFAULT);
 		if (status != OCI_SUCCESS && status != OCI_SUCCESS_WITH_INFO && status != OCI_NO_DATA) {
 			CheckOCIError(status, ctx->errhp, "Failed to fetch OCI data");
 		}
-		OCIAttrGet(gstate.stmt, OCI_HTYPE_STMT, &rows_fetched, 0, OCI_ATTR_ROWS_FETCHED, ctx->errhp);
+		OCIAttrGet(gstate.stmt.get(), OCI_HTYPE_STMT, &rows_fetched, 0, OCI_ATTR_ROWS_FETCHED, ctx->errhp);
 		if (getenv("ORACLE_DEBUG")) {
 			fprintf(stderr, "[oracle] fetch status=%d rows=%u\n", status, (unsigned)rows_fetched);
 		}
@@ -513,30 +527,31 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 
 		for (row_count = 0; row_count < rows_fetched; row_count++) {
 			for (idx_t col_idx = 0; col_idx < output.ColumnCount(); col_idx++) {
-				if (gstate.indicators[col_idx] == -1) {
+				if (gstate.indicators[col_idx][row_count] == -1) {
 					FlatVector::SetNull(output.data[col_idx], row_count, true);
 					continue;
 				}
 
+				ub4 element_size = gstate.buffers[col_idx].size() / STANDARD_VECTOR_SIZE;
+				char *ptr = (char *)gstate.buffers[col_idx].data() + (row_count * element_size);
+
 				switch (output.GetTypes()[col_idx].id()) {
 				case LogicalTypeId::VARCHAR:
 				case LogicalTypeId::BLOB: {
-					string_t val((char *)gstate.buffers[col_idx].data(), gstate.return_lens[col_idx]);
+					string_t val(ptr, gstate.return_lens[col_idx][row_count]);
 					FlatVector::GetData<string_t>(output.data[col_idx])[row_count] =
 					    StringVector::AddString(output.data[col_idx], val);
 					break;
 				}
 				case LogicalTypeId::BIGINT:
-					FlatVector::GetData<int64_t>(output.data[col_idx])[row_count] =
-					    *(int64_t *)gstate.buffers[col_idx].data();
+					FlatVector::GetData<int64_t>(output.data[col_idx])[row_count] = *(int64_t *)ptr;
 					break;
 				case LogicalTypeId::DOUBLE:
-					FlatVector::GetData<double>(output.data[col_idx])[row_count] =
-					    *(double *)gstate.buffers[col_idx].data();
+					FlatVector::GetData<double>(output.data[col_idx])[row_count] = *(double *)ptr;
 					break;
 				case LogicalTypeId::TIMESTAMP:
 					FlatVector::GetData<timestamp_t>(output.data[col_idx])[row_count] =
-					    ParseOciTimestamp((char *)gstate.buffers[col_idx].data(), gstate.return_lens[col_idx]);
+					    ParseOciTimestamp(ptr, gstate.return_lens[col_idx][row_count]);
 					break;
 				}
 			}

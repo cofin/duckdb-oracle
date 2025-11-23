@@ -280,4 +280,21 @@ bool OracleCatalogState::ObjectExists(const string &schema, const string &object
 	return !result.rows.empty();
 }
 
+string OracleCatalogState::GetObjectName(const string &schema, const string &object_name, const string &object_types) {
+	lock_guard<std::mutex> guard(lock);
+	EnsureConnectionInternal();
+
+	auto query = StringUtil::Format("SELECT object_name FROM all_objects "
+	                                "WHERE owner = UPPER(%s) AND UPPER(object_name) = UPPER(%s) "
+	                                "AND object_type IN (%s)",
+	                                Value(schema).ToSQLString().c_str(), Value(object_name).ToSQLString().c_str(),
+	                                object_types.c_str());
+
+	auto result = connection->Query(query);
+	if (!result.rows.empty()) {
+		return result.rows[0][0];
+	}
+	return "";
+}
+
 } // namespace duckdb

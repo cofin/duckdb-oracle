@@ -36,8 +36,9 @@ public:
 		}
 
 		// Try on-demand loading if not in enumerated list (handles objects beyond limit)
-		if (state->ObjectExists(schema.name, entry_name, "'TABLE','VIEW','MATERIALIZED VIEW'")) {
-			return OracleTableEntry::Create(catalog, schema, schema.name, entry_name, state);
+		string real_name = state->GetObjectName(schema.name, entry_name, "'TABLE','VIEW','MATERIALIZED VIEW'");
+		if (!real_name.empty()) {
+			return OracleTableEntry::Create(catalog, schema, schema.name, real_name, state);
 		}
 
 		// Try synonym resolution as fallback
@@ -99,6 +100,10 @@ public:
 
 	bool IsDuckCatalog() override {
 		return false;
+	}
+
+	optional_idx GetCatalogVersion(ClientContext &context) override {
+		return optional_idx();
 	}
 
 	void Initialize(bool load_builtin) override {
