@@ -260,24 +260,30 @@ static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vecto
 		                        OCI_DEFAULT);
 		CheckOCIError(status, errhp, "Failed to prepare OCI statement");
 
-		// Get statement type
-		ub2 stmt_type = 0;
-		CheckOCIError(OCIAttrGet(stmthp, OCI_HTYPE_STMT, &stmt_type, 0, OCI_ATTR_STMT_TYPE, errhp), errhp,
-		              "Failed to get OCI statement type");
+		// Execute statement with auto-commit
+		status = OCIStmtExecute(svchp, stmthp, errhp, 1, 0, nullptr, nullptr, OCI_COMMIT_ON_SUCCESS);
+		CheckOCIError(status, errhp, "Failed to execute OCI statement");
 
-		// Extract row count (for DML statements)
-		ub4 row_count = 0;
-		CheckOCIError(OCIAttrGet(stmthp, OCI_HTYPE_STMT, &row_count, 0, OCI_ATTR_ROW_COUNT, errhp), errhp,
-		              "Failed to get OCI row count");
+		if (stmthp) {
+			// Get statement type
+			ub2 stmt_type = 0;
+			CheckOCIError(OCIAttrGet(stmthp, OCI_HTYPE_STMT, &stmt_type, 0, OCI_ATTR_STMT_TYPE, errhp), errhp,
+			              "Failed to get OCI statement type");
 
-		// Format result message
-		string result_msg;
-		bool is_dml = (stmt_type == OCI_STMT_UPDATE || stmt_type == OCI_STMT_DELETE || stmt_type == OCI_STMT_INSERT ||
-		               stmt_type == OCI_STMT_MERGE);
+			// Extract row count (for DML statements)
+			ub4 row_count = 0;
+			CheckOCIError(OCIAttrGet(stmthp, OCI_HTYPE_STMT, &row_count, 0, OCI_ATTR_ROW_COUNT, errhp), errhp,
+			              "Failed to get OCI row count");
 
-		if (row_count > 0 || is_dml) {
-			result_msg =
-			    StringUtil::Format("Statement executed successfully (%llu rows affected)", (uint64_t)row_count);
+			bool is_dml = (stmt_type == OCI_STMT_UPDATE || stmt_type == OCI_STMT_DELETE || stmt_type == OCI_STMT_INSERT ||
+			               stmt_type == OCI_STMT_MERGE);
+
+			if (row_count > 0 || is_dml) {
+				result_msg =
+				    StringUtil::Format("Statement executed successfully (%llu rows affected)", (uint64_t)row_count);
+			} else {
+				result_msg = "Statement executed successfully";
+			}
 		} else {
 			result_msg = "Statement executed successfully";
 		}
