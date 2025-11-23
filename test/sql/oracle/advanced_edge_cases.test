@@ -1,6 +1,7 @@
 # name: test/sql/oracle/advanced_edge_cases.test
 # description: Edge case tests for advanced Oracle features
 # group: [oracle]
+
 # require: oracle_available
 
 require oracle

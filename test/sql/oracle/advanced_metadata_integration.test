@@ -1,6 +1,7 @@
 # name: test/sql/oracle/advanced_metadata_integration.test
 # description: Integration tests for lazy schema loading and metadata scalability
 # group: [oracle]
+
 # require: oracle_available
 
 require oracle

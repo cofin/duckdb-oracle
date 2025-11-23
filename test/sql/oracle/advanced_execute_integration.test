@@ -1,6 +1,7 @@
 # name: test/sql/oracle/advanced_execute_integration.test
 # description: Integration tests for oracle_execute function with real Oracle database
 # group: [oracle]
+
 # require: oracle_available
 
 require oracle

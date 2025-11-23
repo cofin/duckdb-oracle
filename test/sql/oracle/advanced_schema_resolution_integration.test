@@ -1,6 +1,7 @@
 # name: test/sql/oracle/advanced_schema_resolution_integration.test
 # description: Integration tests for schema resolution and current schema context
 # group: [oracle]
+
 # require: oracle_available
 
 require oracle

@@ -203,8 +203,8 @@ static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vecto
 		              "Failed to allocate OCI service context handle");
 
 		// Connect to Oracle
-		sword status = OCILogon(envhp, errhp, &svchp, (OraText *)user.c_str(), user.size(),
-		                        (OraText *)password.c_str(), password.size(), (OraText *)db.c_str(), db.size());
+		sword status = OCILogon(envhp, errhp, &svchp, (OraText *)user.c_str(), user.size(), (OraText *)password.c_str(),
+		                        password.size(), (OraText *)db.c_str(), db.size());
 		CheckOCIError(status, errhp, "Failed to connect to Oracle");
 
 		// Allocate statement handle
@@ -228,7 +228,8 @@ static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vecto
 		// Format result message
 		string result_msg;
 		if (row_count > 0) {
-			result_msg = StringUtil::Format("Statement executed successfully (%llu rows affected)", (uint64_t)row_count);
+			result_msg =
+			    StringUtil::Format("Statement executed successfully (%llu rows affected)", (uint64_t)row_count);
 		} else {
 			result_msg = "Statement executed successfully";
 		}
@@ -747,9 +748,8 @@ static void LoadInternal(ExtensionLoader &loader) {
 	auto clear_cache_func = ScalarFunction("oracle_clear_cache", {}, LogicalType::VARCHAR, OracleClearCache);
 	loader.RegisterFunction(clear_cache_func);
 
-	auto oracle_execute_func =
-	    ScalarFunction("oracle_execute", {LogicalType::VARCHAR, LogicalType::VARCHAR}, LogicalType::VARCHAR,
-	                   OracleExecuteFunction);
+	auto oracle_execute_func = ScalarFunction("oracle_execute", {LogicalType::VARCHAR, LogicalType::VARCHAR},
+	                                          LogicalType::VARCHAR, OracleExecuteFunction);
 	loader.RegisterFunction(oracle_execute_func);
 }
 
@@ -773,17 +773,16 @@ void OracleExtension::Load(ExtensionLoader &loader) {
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(false));
 
 	// Advanced features settings
-	config.AddExtensionOption("oracle_lazy_schema_loading", "Load only current schema by default",
-	                          LogicalType::BOOLEAN, Value::BOOLEAN(true));
+	config.AddExtensionOption("oracle_lazy_schema_loading", "Load only current schema by default", LogicalType::BOOLEAN,
+	                          Value::BOOLEAN(true));
 	config.AddExtensionOption("oracle_metadata_object_types",
 	                          "Object types to enumerate (TABLE,VIEW,SYNONYM,MATERIALIZED VIEW)", LogicalType::VARCHAR,
 	                          Value("TABLE,VIEW,SYNONYM,MATERIALIZED VIEW"));
 	config.AddExtensionOption("oracle_metadata_result_limit",
 	                          "Maximum rows returned from metadata queries (0=unlimited)", LogicalType::UBIGINT,
 	                          Value::UBIGINT(10000));
-	config.AddExtensionOption("oracle_use_current_schema",
-	                          "Resolve unqualified table names to current schema first", LogicalType::BOOLEAN,
-	                          Value::BOOLEAN(true));
+	config.AddExtensionOption("oracle_use_current_schema", "Resolve unqualified table names to current schema first",
+	                          LogicalType::BOOLEAN, Value::BOOLEAN(true));
 
 	config.storage_extensions["oracle"] = CreateOracleStorageExtension();
 }

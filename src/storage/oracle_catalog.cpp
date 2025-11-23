@@ -172,11 +172,10 @@ vector<string> OracleCatalogState::ListObjects(const string &schema, const strin
 	}
 	string types_sql = StringUtil::Join(quoted_types, ",");
 
-	string query = StringUtil::Format(
-	    "SELECT object_name FROM all_objects "
-	    "WHERE owner = UPPER(%s) AND object_type IN (%s) "
-	    "ORDER BY object_name",
-	    Value(schema).ToSQLString().c_str(), types_sql.c_str());
+	string query = StringUtil::Format("SELECT object_name FROM all_objects "
+	                                  "WHERE owner = UPPER(%s) AND object_type IN (%s) "
+	                                  "ORDER BY object_name",
+	                                  Value(schema).ToSQLString().c_str(), types_sql.c_str());
 
 	// Apply metadata result limit
 	if (settings.metadata_result_limit > 0) {
