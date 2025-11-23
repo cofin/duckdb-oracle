@@ -83,6 +83,14 @@ void OracleConnection::Connect(const std::string &connection_string) {
 	                       password.size(), (OraText *)db.c_str(), db.size());
 	CheckError(status, "OCILogon");
 	connected = true;
+
+	// Set timeouts to prevent infinite hangs
+	ub4 timeout = 30000; // 30 seconds
+	OCIServer *server_handle = nullptr;
+	CheckError(OCIAttrGet(svchp, OCI_HTYPE_SVCCTX, &server_handle, 0, OCI_ATTR_SERVER, errhp), "OCIAttrGet SERVER");
+	// Set call timeout (if supported by client/server)
+	OCIAttrSet(server_handle, OCI_HTYPE_SERVER, &timeout, 0, OCI_ATTR_CALL_TIMEOUT, errhp);
+	// We ignore errors here as some older clients/servers might not support it
 }
 
 bool OracleConnection::IsConnected() const {
