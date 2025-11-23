@@ -58,13 +58,17 @@ endef
 configure_ci:
 	@echo "Running Oracle Instant Client setup..."
 	$(OCI_SETUP_SCRIPT)
+ifeq ($(UNAME_S),Linux)
 	$(call ensure_libaio)
+endif
 	@echo "configure_ci complete"
 
 # Override test_release_internal to ensure libaio is available before running tests
 # Excludes integration tests (test/integration/*) which require Oracle container
 test_release_internal:
+ifeq ($(UNAME_S),Linux)
 	$(call ensure_libaio)
+endif
 	./build/release/$(TEST_PATH) "test/sql/*"
 
 tidy-check:
