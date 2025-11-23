@@ -98,10 +98,7 @@ void OracleCatalogState::DetectCurrentSchema() {
 	if (!current_schema.empty()) {
 		return;
 	}
-	// Assumes connection has already been established by caller
-	if (!connection || !connection->IsConnected()) {
-		return; // Gracefully skip if not connected
-	}
+	EnsureConnection();
 	auto result = connection->Query("SELECT SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') FROM DUAL");
 	if (!result.rows.empty() && !result.rows[0].empty()) {
 		current_schema = result.rows[0][0];

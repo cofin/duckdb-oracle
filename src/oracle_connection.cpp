@@ -25,9 +25,11 @@ OracleConnection::~OracleConnection() {
 
 void OracleConnection::Reset() {
 	if (svchp) {
-		if (errhp) {
+		if (connected && errhp) {
+			// Only log off when a session was successfully established.
 			OCILogoff(svchp, errhp);
 		} else {
+			// Service context was allocated but no session was created; free the handle directly.
 			OCIHandleFree(svchp, OCI_HTYPE_SVCCTX);
 		}
 	}
