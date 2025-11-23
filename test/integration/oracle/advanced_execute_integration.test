@@ -4,6 +4,15 @@
 
 require oracle
 
+# Ensure a clean slate if the test is rerun against an existing container
+statement ok
+SELECT oracle_execute(oracle_default_connection(),
+    'BEGIN
+       EXECUTE IMMEDIATE ''DROP TABLE test_execute_ddl'';
+     EXCEPTION WHEN OTHERS THEN
+       IF SQLCODE != -942 THEN RAISE; END IF;
+     END;');
+
 # Derive connection params from environment with defaults (uses oracle_env helper).
 statement ok
 CREATE SECRET oracle_test_secret (

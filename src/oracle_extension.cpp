@@ -66,11 +66,19 @@ static void OracleDefaultConnectionFunction(DataChunk &args, ExpressionState &st
 		result.SetValue(0, Value(conn));
 		return;
 	}
-	auto host = OracleGetEnv("ORACLE_HOST", "localhost");
-	auto port = OracleGetEnv("ORACLE_PORT", "1521");
-	auto service = OracleGetEnv("ORACLE_SERVICE", "FREEPDB1");
-	auto user = OracleGetEnv("ORACLE_USER", "duckdb_test");
-	auto pwd = OracleGetEnv("ORACLE_PASSWORD", "duckdb_test");
+	// Build from per-field env vars but require they are all present; otherwise, fail fast
+	auto host = OracleGetEnv("ORACLE_HOST", "");
+	auto port = OracleGetEnv("ORACLE_PORT", "");
+	auto service = OracleGetEnv("ORACLE_SERVICE", "");
+	auto user = OracleGetEnv("ORACLE_USER", "");
+	auto pwd = OracleGetEnv("ORACLE_PASSWORD", "");
+
+	if (host.empty() || port.empty() || service.empty() || user.empty() || pwd.empty()) {
+		throw IOException(
+		    "oracle_default_connection: ORACLE_CONNECTION_STRING not set and required ORACLE_* variables are missing. "
+		    "Set ORACLE_CONNECTION_STRING or ORACLE_HOST/PORT/SERVICE/USER/PASSWORD.");
+	}
+
 	auto dsn =
 	    StringUtil::Format("%s/%s@//%s:%s/%s", user.c_str(), pwd.c_str(), host.c_str(), port.c_str(), service.c_str());
 	result.SetValue(0, Value(dsn));
@@ -370,13 +378,27 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
 	CheckOCIError(OCIHandleAlloc(ctx->envhp, (dvoid **)&ctx->svchp, OCI_HTYPE_SVCCTX, 0, nullptr), ctx->errhp,
 	              "Failed to allocate OCI service context handle");
 
+	// Apply a login timeout to avoid hanging forever on unreachable hosts
+	ub4 login_timeout_ms = 30000; // 30s
+	OCIServer *server_handle = nullptr;
+	OCIAttrSet(ctx->svchp, OCI_HTYPE_SVCCTX, &login_timeout_ms, 0, OCI_ATTR_LOGIN_TIMEOUT, ctx->errhp);
+
 	sword status = OCILogon(ctx->envhp, ctx->errhp, &ctx->svchp, (OraText *)user.c_str(), user.size(),
 	                        (OraText *)password.c_str(), password.size(), (OraText *)db.c_str(), db.size());
 	CheckOCIError(status, ctx->errhp, "Failed to connect to Oracle");
 	ctx->connected = true;
 
+	// Set call timeout to bound any long-running operations (supported in 19c+)
+	CheckOCIError(OCIAttrGet(ctx->svchp, OCI_HTYPE_SVCCTX, &server_handle, 0, OCI_ATTR_SERVER, ctx->errhp), ctx->errhp,
+	              "Failed to get OCI server handle");
+	OCIAttrSet(server_handle, OCI_HTYPE_SERVER, &login_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp);
+
 	CheckOCIError(OCIHandleAlloc(ctx->envhp, (dvoid **)&ctx->stmthp, OCI_HTYPE_STMT, 0, nullptr), ctx->errhp,
 	              "Failed to allocate OCI statement handle");
+
+	// Bound call timeout for describe/execute to avoid hangs
+	ub4 call_timeout_ms = 30000; // 30s
+	OCIAttrSet(ctx->stmthp, OCI_HTYPE_STMT, &call_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp);
 
 	// Set prefetch/array tuning from settings
 	ub4 prefetch_rows = result->settings.prefetch_rows;
@@ -391,12 +413,21 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
 	if (result->settings.debug_show_queries) {
 		fprintf(stderr, "[oracle] preparing SQL: %s\n", result->query.c_str());
 	}
+	if (getenv("ORACLE_DEBUG")) {
+		fprintf(stderr, "[oracle] describe prepare: %s\n", result->query.c_str());
+	}
 	status = OCIStmtPrepare(ctx->stmthp, ctx->errhp, (OraText *)result->query.c_str(), result->query.size(),
 	                        OCI_NTV_SYNTAX, OCI_DEFAULT);
 	CheckOCIError(status, ctx->errhp, "Failed to prepare OCI statement");
+	if (getenv("ORACLE_DEBUG")) {
+		fprintf(stderr, "[oracle] describe execute begin\n");
+	}
 
 	status = OCIStmtExecute(ctx->svchp, ctx->stmthp, ctx->errhp, 0, 0, nullptr, nullptr, OCI_DESCRIBE_ONLY);
 	CheckOCIError(status, ctx->errhp, "Failed to execute OCI statement (Describe)");
+	if (getenv("ORACLE_DEBUG")) {
+		fprintf(stderr, "[oracle] describe done\n");
+	}
 
 	ub4 param_count;
 	CheckOCIError(OCIAttrGet(ctx->stmthp, OCI_HTYPE_STMT, &param_count, 0, OCI_ATTR_PARAM_COUNT, ctx->errhp),
@@ -540,11 +571,20 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 	}
 
 	// Re-prepare statement in case filter pushdown modified SQL.
+	if (getenv("ORACLE_DEBUG")) {
+		fprintf(stderr, "[oracle] query prepare: %s\n", bind_data.query.c_str());
+	}
 	status = OCIStmtPrepare(ctx->stmthp, ctx->errhp, (OraText *)bind_data.query.c_str(), bind_data.query.size(),
 	                        OCI_NTV_SYNTAX, OCI_DEFAULT);
 	CheckOCIError(status, ctx->errhp, "Failed to prepare OCI statement (execute)");
+	if (getenv("ORACLE_DEBUG")) {
+		fprintf(stderr, "[oracle] query execute begin\n");
+	}
 	status = OCIStmtExecute(ctx->svchp, ctx->stmthp, ctx->errhp, 0, 0, nullptr, nullptr, OCI_DEFAULT);
 	CheckOCIError(status, ctx->errhp, "Failed to execute OCI statement (fetch)");
+	if (getenv("ORACLE_DEBUG")) {
+		fprintf(stderr, "[oracle] query execute done\n");
+	}
 
 	vector<vector<char>> buffers(output.ColumnCount());
 	vector<OCIDefine *> defines(output.ColumnCount(), nullptr);
@@ -583,6 +623,9 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 	}
 
 	while (row_count < STANDARD_VECTOR_SIZE) {
+		if (getenv("ORACLE_DEBUG")) {
+			fprintf(stderr, "[oracle] fetch row %llu\n", (unsigned long long)row_count);
+		}
 		status = OCIStmtFetch2(ctx->stmthp, ctx->errhp, 1, OCI_FETCH_NEXT, 0, OCI_DEFAULT);
 		if (status == OCI_NO_DATA)
 			break;
