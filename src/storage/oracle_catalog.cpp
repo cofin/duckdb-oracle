@@ -24,7 +24,17 @@ static unordered_map<string, weak_ptr<OracleCatalogState>> &AliasRegistry() {
 }
 } // namespace
 
-OracleConnection &OracleCatalogState::EnsureConnection() {
+void OracleCatalogState::Connect() {
+	lock_guard<std::mutex> guard(lock);
+	EnsureConnectionInternal();
+}
+
+OracleResult OracleCatalogState::Query(const std::string &query) {
+	lock_guard<std::mutex> guard(lock);
+	return EnsureConnectionInternal().Query(query);
+}
+
+OracleConnection &OracleCatalogState::EnsureConnectionInternal() {
 	if (!settings.connection_cache) {
 		connection = make_uniq<OracleConnection>();
 	}
@@ -128,7 +138,7 @@ void OracleCatalogState::DetectCurrentSchema() {
 	if (!current_schema.empty()) {
 		return;
 	}
-	EnsureConnection();
+	EnsureConnectionInternal();
 	auto result = connection->Query("SELECT SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') FROM DUAL");
 	if (!result.rows.empty() && !result.rows[0].empty()) {
 		current_schema = result.rows[0][0];
@@ -141,7 +151,7 @@ vector<string> OracleCatalogState::ListSchemas() {
 		return schema_cache;
 	}
 
-	EnsureConnection();
+	EnsureConnectionInternal();
 
 	// Lazy loading: return only current schema by default
 	if (settings.lazy_schema_loading) {
@@ -167,7 +177,7 @@ vector<string> OracleCatalogState::ListTables(const string &schema) {
 	if (entry != table_cache.end()) {
 		return entry->second;
 	}
-	EnsureConnection();
+	EnsureConnectionInternal();
 	auto query = StringUtil::Format("SELECT table_name FROM all_tables WHERE owner = UPPER(%s) ORDER BY table_name",
 	                                Value(schema).ToSQLString().c_str());
 	auto result = connection->Query(query);
@@ -190,7 +200,7 @@ vector<string> OracleCatalogState::ListObjects(const string &schema, const strin
 		return entry->second;
 	}
 
-	EnsureConnection();
+	EnsureConnectionInternal();
 
 	// Build IN clause from comma-separated object_types
 	auto types = StringUtil::Split(object_types, ',');
@@ -237,7 +247,7 @@ vector<string> OracleCatalogState::ListObjects(const string &schema, const strin
 
 pair<string, string> OracleCatalogState::ResolveSynonym(const string &schema, const string &synonym_name, bool &found) {
 	lock_guard<std::mutex> guard(lock);
-	EnsureConnection();
+	EnsureConnectionInternal();
 
 	auto query = StringUtil::Format("SELECT table_owner, table_name FROM all_synonyms "
 	                                "WHERE synonym_name = UPPER(%s) "
@@ -258,7 +268,7 @@ pair<string, string> OracleCatalogState::ResolveSynonym(const string &schema, co
 
 bool OracleCatalogState::ObjectExists(const string &schema, const string &object_name, const string &object_types) {
 	lock_guard<std::mutex> guard(lock);
-	EnsureConnection();
+	EnsureConnectionInternal();
 
 	auto query = StringUtil::Format("SELECT 1 FROM all_objects "
 	                                "WHERE owner = UPPER(%s) AND object_name = UPPER(%s) "

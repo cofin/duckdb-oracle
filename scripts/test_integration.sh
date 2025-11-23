@@ -4,6 +4,18 @@
 #
 # Script to run integration tests against an Oracle Database container.
 # Follows Google Shell Style Guide.
+#
+# Usage:
+#   ./scripts/test_integration.sh [--keep-container] [--no-cleanup]
+#
+# Options:
+#   --keep-container  Keep container running after tests (for debugging)
+#   --no-cleanup      Alias for --keep-container
+#
+# Environment Variables:
+#   ORACLE_IMAGE      Oracle container image (default: gvenzl/oracle-free:23-slim)
+#   SKIP_BUILD        Skip build step if set to 1
+#   CI                Set to true in CI environments (auto-cleanup disabled)
 
 set -euo pipefail
 
@@ -14,6 +26,42 @@ readonly DB_PASSWORD="password"
 readonly DB_USER="duckdb_test"
 readonly DB_USER_PWD="duckdb_test"
 readonly SETUP_DIR="$(pwd)/test/integration/init_sql"
+
+# Flags
+CLEANUP_ENABLED=1
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --keep-container|--no-cleanup)
+      CLEANUP_ENABLED=0
+      shift
+      ;;
+    --help|-h)
+      echo "Usage: $0 [--keep-container] [--no-cleanup]"
+      echo ""
+      echo "Options:"
+      echo "  --keep-container  Keep container running after tests"
+      echo "  --no-cleanup      Alias for --keep-container"
+      echo ""
+      echo "Environment Variables:"
+      echo "  ORACLE_IMAGE      Oracle container image"
+      echo "  SKIP_BUILD        Skip build if set to 1"
+      echo "  CI                Set to true in CI environments"
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      echo "Use --help for usage information" >&2
+      exit 1
+      ;;
+  esac
+done
+
+# In CI, default to cleanup unless explicitly disabled
+if [[ "${CI:-false}" == "true" && "$CLEANUP_ENABLED" -eq 1 ]]; then
+  echo "Running in CI mode with cleanup enabled"
+fi
 
 # Detect container runtime
 if command -v podman >/dev/null 2>&1; then
@@ -62,10 +110,24 @@ get_free_port() {
 #######################################
 cleanup() {
   local exit_code=$?
-  if [[ $exit_code -ne 0 ]]; then
-    echo "Test failed. Container logs:"
-    ${RUNTIME} logs "${CONTAINER_NAME}" || true
+
+  if [[ "$CLEANUP_ENABLED" -eq 0 ]]; then
+    echo ""
+    echo "Container cleanup disabled (--keep-container flag)"
+    echo "Container '${CONTAINER_NAME}' is still running on port ${db_port:-unknown}"
+    echo "Connection string: ${DB_USER}/${DB_USER_PWD}@//localhost:${db_port:-11521}/FREEPDB1"
+    echo ""
+    echo "To stop and remove manually:"
+    echo "  ${RUNTIME} stop ${CONTAINER_NAME}"
+    echo "  ${RUNTIME} rm ${CONTAINER_NAME}"
+    return 0
   fi
+
+  if [[ $exit_code -ne 0 ]]; then
+    echo "Test failed (exit code: $exit_code). Container logs:"
+    ${RUNTIME} logs "${CONTAINER_NAME}" 2>&1 | tail -n 100 || true
+  fi
+
   echo "Cleaning up container ${CONTAINER_NAME}..."
   ${RUNTIME} stop "${CONTAINER_NAME}" >/dev/null 2>&1 || true
   ${RUNTIME} rm "${CONTAINER_NAME}" >/dev/null 2>&1 || true
@@ -143,8 +205,16 @@ main() {
   wait_for_db "${CONTAINER_NAME}"
 
   echo "Running DuckDB integration tests..."
-  
-  # Set environment variables for the test
+
+  # Set environment variables for integration tests
+  # Tests use oracle_env() helper to read these
+  export ORACLE_HOST="localhost"
+  export ORACLE_PORT="${db_port}"
+  export ORACLE_SERVICE="FREEPDB1"
+  export ORACLE_USER="${DB_USER}"
+  export ORACLE_PASSWORD="${DB_USER_PWD}"
+
+  # Legacy connection string format (for simple smoke tests)
   export ORACLE_CONNECTION_STRING="${DB_USER}/${DB_USER_PWD}@//localhost:${db_port}/FREEPDB1"
   
   # Run the tests (assuming 'make test' or specific test runner)
@@ -163,43 +233,33 @@ main() {
     echo "SKIP_BUILD=1 set; assuming build artifacts already present."
   fi
   
-  # Create a temporary test script (SQLLogicTest format) inside test directory
-  # unittest runner expects files in test/ directory usually
-  cat <<EOF > test/sql/test_integration_temp.test
-# name: test_connection
-# description: Integration test
+  # Run integration tests from test/integration directory
+  if [[ -d "test/integration" && $(find test/integration -name "*.test" | wc -l) -gt 0 ]]; then
+    echo "Running integration test suite from test/integration/..."
+    ./build/release/test/unittest "test/integration/*"
+    echo "Integration tests completed successfully."
+  else
+    echo "No integration tests found in test/integration/"
+    echo "Creating basic smoke test to verify Oracle connection..."
+
+    # Create a minimal smoke test to verify the integration script works
+    cat <<EOF > test/sql/test_integration_temp.test
+# name: test_oracle_integration_smoke
+# description: Basic Oracle integration smoke test
 # group: [oracle_integration]
 
-statement ok
-LOAD 'build/release/extension/oracle/oracle.duckdb_extension';
-
-statement ok
-SELECT oracle_attach_wallet('/container-entrypoint-initdb.d');
-
-# Verify connection and basic query
+# Verify basic connection and query
 query I
 SELECT * FROM oracle_query('${ORACLE_CONNECTION_STRING}', 'SELECT 1 FROM DUAL');
 ----
 1
 
-# Verify Scan
-query IIII
-SELECT id, val_varchar, val_number, val_date FROM oracle_scan('${ORACLE_CONNECTION_STRING}', 'DUCKDB_TEST', 'TEST_TYPES');
-----
-1	test	123.45	2025-11-22 00:00:00	2025-11-22 00:00:00
-
-# Verify Vector (as string)
-query I
-SELECT val_vector FROM oracle_scan('${ORACLE_CONNECTION_STRING}', 'DUCKDB_TEST', 'TEST_TYPES');
-----
-[1.1,2.2,3.3]
-
 EOF
 
-  echo "Executing test query using unittest..."
-  ./build/release/test/unittest "test/sql/test_integration_temp.test"
-  
-  echo "Integration tests completed successfully."
+    echo "Executing smoke test..."
+    ./build/release/test/unittest "test/sql/test_integration_temp.test"
+    echo "Smoke test completed successfully."
+  fi
 }
 
 main "$@"

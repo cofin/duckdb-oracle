@@ -49,8 +49,13 @@ jobs:
         # We set ORACLE_HOME in env, CMake should pick it up
         make release
 
-    - name: Run Tests
+    - name: Run Unit Tests
       run: |
-        # Tests expecting failure (smoke tests) will pass.
-        # Real connection tests require a running DB (not present), but we verifying linking.
+        # Run smoke tests that don't require Oracle connection
         make test
+
+    - name: Run Integration Tests
+      run: |
+        # Run full integration test suite with Oracle container
+        # CI environment variable is automatically set by GitHub Actions
+        make integration

@@ -413,6 +413,48 @@ FROM parcels;
 SELECT * FROM ora.spatial_schema.simplified_parcels;
 ```
 
+## Testing
+
+The extension has two test suites:
+
+### Unit Tests (No Oracle Required)
+
+Smoke tests that verify extension loading, error handling, and basic functionality without requiring a live Oracle database:
+
+```sh
+make test
+```
+
+These tests run in CI on every commit and should complete in seconds.
+
+### Integration Tests (Requires Oracle Container)
+
+Full integration test suite that runs against a containerized Oracle database. Automatically starts an Oracle container, runs tests, and cleans up:
+
+```sh
+# Run full integration suite (Docker/Podman required)
+make integration
+
+# Keep container running for debugging
+./scripts/test_integration.sh --keep-container
+
+# Use different Oracle image
+ORACLE_IMAGE=gvenzl/oracle-xe:21-slim make integration
+```
+
+**Requirements:**
+
+- Docker or Podman installed
+- ~3GB disk space for Oracle container image
+- 5-10 minutes for first run (image download + database initialization)
+
+The integration script (`scripts/test_integration.sh`):
+
+- Auto-detects Docker or Podman
+- Finds available port automatically
+- Cleans up container by default (disable with `--keep-container`)
+- Works identically in local and CI environments
+
 ## Build from source
 
 Requirements: CMake ≥3.10, C++17 compiler, vcpkg (for OpenSSL), Oracle Instant Client (Basic + SDK).
@@ -429,8 +471,11 @@ export VCPKG_TOOLCHAIN_PATH="$PWD/vcpkg/scripts/buildsystems/vcpkg.cmake"
 # build
 make
 
-# run tests (SQL suite)
+# run unit tests (fast, no Oracle required)
 make test
+
+# run integration tests (with Oracle container)
+make integration
 ```
 
 Outputs (release):

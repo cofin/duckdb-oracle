@@ -55,7 +55,7 @@ static void LoadColumns(OracleCatalogState &state, const string &schema, const s
 	                                "FROM all_tab_columns WHERE owner = UPPER(%s) AND table_name = UPPER(%s) "
 	                                "ORDER BY column_id",
 	                                Value(schema).ToSQLString().c_str(), Value(table).ToSQLString().c_str());
-	auto result = state.EnsureConnection().Query(query);
+	auto result = state.Query(query);
 	for (auto &row : result.rows) {
 		if (row.size() < 6) {
 			continue;

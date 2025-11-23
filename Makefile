@@ -62,9 +62,10 @@ configure_ci:
 	@echo "configure_ci complete"
 
 # Override test_release_internal to ensure libaio is available before running tests
+# Excludes integration tests (test/integration/*) which require Oracle container
 test_release_internal:
 	$(call ensure_libaio)
-	./build/release/$(TEST_PATH) "test/*"
+	./build/release/$(TEST_PATH) "test/sql/*"
 
 tidy-check:
 	$(OCI_SETUP_SCRIPT)
@@ -77,6 +78,7 @@ tidy-check:
 
 
 # Build (release) then run integration tests against containerized Oracle.
+# Runs both unit tests (test/sql/) and integration tests (test/integration/)
 integration: release
 	SKIP_BUILD=1 ORACLE_IMAGE=$(ORACLE_IMAGE) ./scripts/test_integration.sh
 
@@ -84,8 +86,8 @@ help:
 	@printf "Available targets:\n"
 	@printf "  release          Build the extension in release mode (from ci tools)\n"
 	@printf "  debug            Build the extension in debug mode (from ci tools)\n"
-	@printf "  test             Run SQL tests (from ci tools)\n"
-	@printf "  integration      Run containerized Oracle integration tests (uses ORACLE_IMAGE=%s)\n" "$(ORACLE_IMAGE)"
+	@printf "  test             Run unit tests only (smoke tests, no Oracle container required)\n"
+	@printf "  integration      Run full test suite with Oracle container (uses ORACLE_IMAGE=%s)\n" "$(ORACLE_IMAGE)"
 	@printf "  configure_ci     Install OCI prerequisites for CI/local env\n"
 	@printf "  clean-all        Remove all build directories to allow switching generators (e.g., Ninja)\n"
 

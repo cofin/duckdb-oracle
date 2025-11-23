@@ -1,4 +1,4 @@
-# name: test/sql/oracle/advanced_edge_cases.test
+# name: test/integration/oracle/advanced_edge_cases.test
 # description: Edge case tests for advanced Oracle features
 # group: [oracle]
 

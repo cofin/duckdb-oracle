@@ -19,7 +19,8 @@ public:
 	    : connection_string(std::move(connection_string_p)), connection(make_uniq<OracleConnection>()) {
 	}
 
-	OracleConnection &EnsureConnection();
+	void Connect();
+	OracleResult Query(const std::string &query);
 	void ApplyOptions(const unordered_map<string, Value> &options);
 	void ClearCaches();
 
@@ -50,6 +51,7 @@ public:
 	const string connection_string;
 
 private:
+	OracleConnection &EnsureConnectionInternal();
 	std::mutex lock;
 	unique_ptr<OracleConnection> connection;
 	string current_schema;

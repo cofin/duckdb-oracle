@@ -103,7 +103,7 @@ public:
 
 	void Initialize(bool load_builtin) override {
 		// Attempt connection early to fail fast
-		state->EnsureConnection();
+		state->Connect();
 
 		// Detect current schema after successful connection
 		state->DetectCurrentSchema();
