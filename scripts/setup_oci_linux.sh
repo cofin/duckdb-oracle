@@ -28,53 +28,91 @@ esac
 echo "Detected architecture: $ARCH (using $OCI_ARCH)"
 
 INSTALL_DIR=$PWD/oracle_sdk
-# Ensure a clean install location to avoid unzip prompts on CI reruns
-rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 
-echo "Downloading Oracle Instant Client ${OCI_VER_FULL} for ${OCI_ARCH}..."
-wget -q -O basic.zip "${BASE_URL}/instantclient-basic-${OCI_ARCH}-${OCI_VER_FULL}.zip" || \
-  wget -q -O basic.zip "${LATEST_BASE_URL}/instantclient-basic-${OCI_ARCH}.zip"
-wget -q -O sdk.zip "${BASE_URL}/instantclient-sdk-${OCI_ARCH}-${OCI_VER_FULL}.zip" || \
-  wget -q -O sdk.zip "${LATEST_BASE_URL}/instantclient-sdk-${OCI_ARCH}.zip"
+SKIP_DOWNLOAD=0
+OCI_HOME=""
 
-echo "Extracting..."
-unzip -oq basic.zip -d "$INSTALL_DIR"
-unzip -oq sdk.zip -d "$INSTALL_DIR"
+# 1. Check if ORACLE_HOME is set and valid
+if [ -n "${ORACLE_HOME:-}" ] && [ -f "$ORACLE_HOME/libclntsh.so" ] && [ -f "$ORACLE_HOME/sdk/include/oci.h" ]; then
+    echo "Using existing system ORACLE_HOME: $ORACLE_HOME"
+    OCI_HOME="$ORACLE_HOME"
+    SKIP_DOWNLOAD=1
+else
+    # 2. Check if we have a valid local install
+    # We look for instantclient_* directory inside INSTALL_DIR
+    EXISTING_HOME=$(find "$INSTALL_DIR" -maxdepth 1 -name "instantclient_*" | head -n 1)
+    if [ -n "$EXISTING_HOME" ] && [ -f "$EXISTING_HOME/libclntsh.so" ] && [ -f "$EXISTING_HOME/sdk/include/oci.h" ]; then
+         echo "Found valid cached Oracle SDK at: $EXISTING_HOME"
+         OCI_HOME="$EXISTING_HOME"
+         SKIP_DOWNLOAD=1
+    fi
+fi
 
-# The zip extracts to a folder like 'instantclient_23_6'
-# We need to find it and normalize or export path
-OCI_HOME=$(find $INSTALL_DIR -maxdepth 1 -name "instantclient_*" | head -n 1)
+if [ "$SKIP_DOWNLOAD" -eq 0 ]; then
+    echo "No valid Oracle SDK found. Downloading..."
+    
+    # Ensure a clean install location to avoid unzip prompts on CI reruns
+    # But only clean subdirs, don't remove INSTALL_DIR itself
+    rm -rf "$INSTALL_DIR/instantclient_*" "$INSTALL_DIR"/*.zip
 
-echo "Oracle Home found at: $OCI_HOME"
+    echo "Downloading Oracle Instant Client ${OCI_VER_FULL} for ${OCI_ARCH}..."
+    wget -q -O "$INSTALL_DIR/basic.zip" "${BASE_URL}/instantclient-basic-${OCI_ARCH}-${OCI_VER_FULL}.zip" || \
+      wget -q -O "$INSTALL_DIR/basic.zip" "${LATEST_BASE_URL}/instantclient-basic-${OCI_ARCH}.zip"
+    wget -q -O "$INSTALL_DIR/sdk.zip" "${BASE_URL}/instantclient-sdk-${OCI_ARCH}-${OCI_VER_FULL}.zip" || \
+      wget -q -O "$INSTALL_DIR/sdk.zip" "${LATEST_BASE_URL}/instantclient-sdk-${OCI_ARCH}.zip"
+
+    echo "Extracting..."
+    unzip -oq "$INSTALL_DIR/basic.zip" -d "$INSTALL_DIR"
+    unzip -oq "$INSTALL_DIR/sdk.zip" -d "$INSTALL_DIR"
+
+    # The zip extracts to a folder like 'instantclient_23_6'
+    OCI_HOME=$(find "$INSTALL_DIR" -maxdepth 1 -name "instantclient_*" | head -n 1)
+    echo "Oracle Home installed at: $OCI_HOME"
+    
+    # Cleanup zips
+    rm -f "$INSTALL_DIR/basic.zip" "$INSTALL_DIR/sdk.zip"
+fi
+
+echo "Oracle Home: $OCI_HOME"
 
 # Ensure libaio is available on Ubuntu 24.04 (libaio1 -> libaio1t64) and other runners.
 # Avoid sudo; CI containers typically run as root.
 if ! [ -f /usr/lib/${LIBAIO_ARCH}/libaio.so.1 ] && ! [ -f /lib/${LIBAIO_ARCH}/libaio.so.1 ] && ! [ -f /usr/lib64/libaio.so.1 ]; then
-  echo "Installing libaio runtime dependency..."
+  echo "Checking for libaio runtime dependency..."
 
   SUDO=""
-  if [ "$EUID" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
+  CAN_INSTALL=0
+  
+  if [ "$EUID" -eq 0 ]; then
+    CAN_INSTALL=1
+  elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
     SUDO="sudo"
-  fi
-
-  # Try various package managers
-  if command -v apt-get >/dev/null 2>&1; then
-    $SUDO apt-get update -y >/dev/null
-    $SUDO apt-get install -y --no-install-recommends libaio1t64 || $SUDO apt-get install -y --no-install-recommends libaio-dev || true
-  elif command -v yum >/dev/null 2>&1; then
-    $SUDO yum install -y libaio || true
-  elif command -v dnf >/dev/null 2>&1; then
-    $SUDO dnf install -y libaio || true
-  elif command -v apk >/dev/null 2>&1; then
-    apk add --no-cache libaio || true
+    CAN_INSTALL=1
   else
-    echo "Warning: no supported package manager found; continuing without installing libaio."
+    echo "Warning: Running as non-root and sudo unavailable/requires password. Skipping system dependency installation (libaio)."
   fi
 
-  # Handle Ubuntu 24.04 libaio1t64 -> libaio.so.1 symlink
-  if [ -f /usr/lib/${LIBAIO_ARCH}/libaio.so.1t64 ] && [ ! -f /usr/lib/${LIBAIO_ARCH}/libaio.so.1 ]; then
-    $SUDO ln -sf /usr/lib/${LIBAIO_ARCH}/libaio.so.1t64 /usr/lib/${LIBAIO_ARCH}/libaio.so.1
+  if [ "$CAN_INSTALL" -eq 1 ]; then
+    echo "Installing libaio..."
+    # Try various package managers
+    if command -v apt-get >/dev/null 2>&1; then
+        $SUDO apt-get update -y >/dev/null
+        $SUDO apt-get install -y --no-install-recommends libaio1t64 || $SUDO apt-get install -y --no-install-recommends libaio-dev || true
+    elif command -v yum >/dev/null 2>&1; then
+        $SUDO yum install -y libaio || true
+    elif command -v dnf >/dev/null 2>&1; then
+        $SUDO dnf install -y libaio || true
+    elif command -v apk >/dev/null 2>&1; then
+        apk add --no-cache libaio || true
+    else
+        echo "Warning: no supported package manager found; continuing without installing libaio."
+    fi
+
+    # Handle Ubuntu 24.04 libaio1t64 -> libaio.so.1 symlink
+    if [ -f /usr/lib/${LIBAIO_ARCH}/libaio.so.1t64 ] && [ ! -f /usr/lib/${LIBAIO_ARCH}/libaio.so.1 ]; then
+        $SUDO ln -sf /usr/lib/${LIBAIO_ARCH}/libaio.so.1t64 /usr/lib/${LIBAIO_ARCH}/libaio.so.1
+    fi
   fi
 fi
 
@@ -102,17 +140,23 @@ echo "export LD_LIBRARY_PATH=\"$LD_LIBRARY_PATH\"" >> "$INSTALL_DIR/env.sh"
 # Try to register with ldconfig when permitted (helps local builds and Docker)
 if command -v ldconfig >/dev/null 2>&1; then
   SUDO=""
-  if [ "$EUID" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
+  CAN_CONFIG=0
+  if [ "$EUID" -eq 0 ]; then
+    CAN_CONFIG=1
+  elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
     SUDO="sudo"
+    CAN_CONFIG=1
   fi
 
-  if [ -d "/etc/ld.so.conf.d" ]; then
-      if [ -n "$SUDO" ]; then
-         echo "$OCI_HOME" | $SUDO tee /etc/ld.so.conf.d/oracle-instantclient.conf > /dev/null || true
-      else
-         echo "$OCI_HOME" > /etc/ld.so.conf.d/oracle-instantclient.conf || true
+  if [ "$CAN_CONFIG" -eq 1 ]; then
+      if [ -d "/etc/ld.so.conf.d" ]; then
+          if [ -n "$SUDO" ]; then
+             echo "$OCI_HOME" | $SUDO tee /etc/ld.so.conf.d/oracle-instantclient.conf > /dev/null || true
+          else
+             echo "$OCI_HOME" > /etc/ld.so.conf.d/oracle-instantclient.conf || true
+          fi
+          $SUDO ldconfig || true
       fi
-      $SUDO ldconfig || true
   fi
 fi
 

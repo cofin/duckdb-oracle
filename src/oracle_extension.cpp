@@ -415,6 +415,11 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
 		result->original_types = return_types;
 		result->original_names = names;
 		result->finished = false;
+
+		// Reset handles to avoid holding connections in plan cache
+		result->stmt.reset();
+		result->conn_handle.reset();
+
 		return std::move(result);
 	} catch (...) {
 		throw;
@@ -453,6 +458,10 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &context, Ta
 	auto state = make_uniq<OracleScanState>(bind.column_names.size());
 
 	state->conn_handle = bind.conn_handle;
+	if (!state->conn_handle) {
+		state->conn_handle = OracleConnectionManager::Instance().Acquire(bind.connection_string, bind.settings);
+	}
+
 	auto ctx = state->conn_handle->Get();
 	state->svc = ctx->svchp;
 	state->err = ctx->errhp;

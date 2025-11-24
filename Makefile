@@ -73,8 +73,7 @@ endif
 
 tidy-check:
 	$(OCI_SETUP_SCRIPT)
-	export ORACLE_HOME=$$(find $$(pwd)/oracle_sdk -maxdepth 1 -name "instantclient_*" | head -n1) && \
-	export LD_LIBRARY_PATH=$$ORACLE_HOME:$$LD_LIBRARY_PATH && \
+	. ./oracle_sdk/env.sh && \
 	mkdir -p ./build/tidy && \
 	cmake $(GENERATOR) $(BUILD_FLAGS) $(EXT_DEBUG_FLAGS) -DDISABLE_UNITY=1 -DCLANG_TIDY=1 -S $(DUCKDB_SRCDIR) -B build/tidy && \
 	cp duckdb/.clang-tidy build/tidy/.clang-tidy && \

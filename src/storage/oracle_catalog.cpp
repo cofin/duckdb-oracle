@@ -225,7 +225,7 @@ vector<string> OracleCatalogState::ListObjects(const string &schema, const strin
 	// Apply metadata result limit
 	if (settings.metadata_result_limit > 0) {
 		query = StringUtil::Format("SELECT * FROM (%s) WHERE ROWNUM <= %llu", query.c_str(),
-		                           static_cast<unsigned long long>(settings.metadata_result_limit));
+		                           static_cast<uint64_t>(settings.metadata_result_limit));
 	}
 
 	auto result = connection->Query(query);
