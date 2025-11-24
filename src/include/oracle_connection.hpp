@@ -29,6 +29,15 @@ public:
 	//! Execute a query and return all rows as strings (used for metadata discovery).
 	OracleResult Query(const std::string &query);
 
+	//! Commit the current transaction
+	void Commit();
+
+	//! Rollback the current transaction
+	void Rollback();
+
+	//! Get the underlying connection handle
+	std::shared_ptr<OracleConnectionHandle> GetHandle() const;
+
 private:
 	std::shared_ptr<OracleConnectionHandle> conn_handle;
 };

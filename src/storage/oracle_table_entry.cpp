@@ -1,5 +1,6 @@
 #include "oracle_table_entry.hpp"
 #include "oracle_table_function.hpp"
+#include "oracle_transaction.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/value.hpp"

@@ -119,6 +119,26 @@ OracleResult OracleConnection::Query(const std::string &query) {
 	return result;
 }
 
+void OracleConnection::Commit() {
+	if (!conn_handle) {
+		throw IOException("OracleConnection::Commit called before Connect");
+	}
+	auto ctx = conn_handle->Get();
+	CheckOCIError(OCITransCommit(ctx->svchp, ctx->errhp, OCI_DEFAULT), ctx->errhp, "OCITransCommit");
+}
+
+void OracleConnection::Rollback() {
+	if (!conn_handle) {
+		throw IOException("OracleConnection::Rollback called before Connect");
+	}
+	auto ctx = conn_handle->Get();
+	CheckOCIError(OCITransRollback(ctx->svchp, ctx->errhp, OCI_DEFAULT), ctx->errhp, "OCITransRollback");
+}
+
+std::shared_ptr<OracleConnectionHandle> OracleConnection::GetHandle() const {
+	return conn_handle;
+}
+
 std::string OracleResult::GetString(idx_t row, idx_t col) const {
 	if (row >= rows.size() || col >= rows[row].size()) {
 		throw InternalException("OracleResult index out of range");
