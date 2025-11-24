@@ -14,7 +14,7 @@ case "$ARCH" in
     arm64)
         OCI_ARCH="arm64"
         BASIC_FILE="instantclient-basic-macos.${OCI_ARCH}-${OCI_VER_FULL}-2.dmg"
-        SDK_FILE="instantclient-sdk-macos.${OCI_ARCH}-${OCI_VER_FULL}-2.dmg"
+        SDK_FILE="instantclient-sdk-macos.${OCI_ARCH}-${OCI_VER_FULL}.dmg"
         ;;
     x86_64)
         echo "Error: Intel macOS (x86_64) is no longer supported"
