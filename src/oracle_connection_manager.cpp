@@ -107,23 +107,45 @@ std::shared_ptr<OracleConnectionHandle> OracleConnectionManager::Acquire(const s
 	}
 
 	auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(wait_timeout_ms);
+	std::shared_ptr<PoolEntry> pool;
+
+	{
+		std::unique_lock<std::mutex> lock(pool_mutex);
+		auto &p = pools[connection_string];
+		if (!p) {
+			p = std::make_shared<PoolEntry>();
+		}
+		pool = p;
+	}
+
+	// We now hold a shared_ptr to the pool, so it's safe to unlock the global mutex
+	// Use a pool-specific lock if we wanted fine-grained concurrency, but for now
+	// we need to protect the pool's internal structures (idle, total).
+	// Since we don't have a pool-specific mutex in PoolEntry, we must keep holding pool_mutex
+	// OR add a mutex to PoolEntry.
+	//
+	// Current architecture uses global pool_mutex. To avoid holding it during CreateConnection,
+	// we need to be careful.
+	//
+	// Let's stick to the global mutex for protecting the pool structures, but unlock for creation.
+
 	std::unique_lock<std::mutex> lock(pool_mutex);
-	auto &pool = pools[connection_string];
+
 	// Update pool limit from settings (largest requested value wins)
-	if (settings.connection_limit > pool.limit) {
-		pool.limit = settings.connection_limit;
+	if (settings.connection_limit > pool->limit) {
+		pool->limit = settings.connection_limit;
 	}
 
 	while (true) {
-		if (!pool.idle.empty()) {
-			auto ctx = pool.idle.back();
-			pool.idle.pop_back();
+		if (!pool->idle.empty()) {
+			auto ctx = pool->idle.back();
+			pool->idle.pop_back();
 			return std::make_shared<OracleConnectionHandle>(connection_string, std::move(ctx), true);
 		}
 
-		if (pool.total < pool.limit) {
+		if (pool->total < pool->limit) {
 			// Reserve a slot, create outside lock
-			pool.total++;
+			pool->total++;
 			lock.unlock();
 			try {
 				auto ctx = CreateConnection(connection_string, settings);
@@ -131,13 +153,13 @@ std::shared_ptr<OracleConnectionHandle> OracleConnectionManager::Acquire(const s
 			} catch (...) {
 				// Rollback reservation
 				lock.lock();
-				pool.total--;
-				pool.cv.notify_one();
+				pool->total--;
+				pool->cv.notify_one();
 				throw;
 			}
 		}
 
-		if (pool.cv.wait_until(lock, deadline) == std::cv_status::timeout) {
+		if (pool->cv.wait_until(lock, deadline) == std::cv_status::timeout) {
 			throw IOException("Oracle connection pool timeout waiting for available session");
 		}
 	}
@@ -149,8 +171,11 @@ void OracleConnectionManager::Release(const std::string &connection_string, std:
 	if (it == pools.end()) {
 		return; // pool cleared
 	}
-	it->second.idle.push_back(std::move(ctx));
-	it->second.cv.notify_one();
+	// it->second is shared_ptr<PoolEntry>
+	if (it->second) {
+		it->second->idle.push_back(std::move(ctx));
+		it->second->cv.notify_one();
+	}
 }
 
 std::shared_ptr<OracleContext> OracleConnectionManager::CreateConnection(const std::string &connection_string,

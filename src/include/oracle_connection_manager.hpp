@@ -65,7 +65,7 @@ private:
 	};
 
 	std::mutex pool_mutex;
-	std::unordered_map<std::string, PoolEntry> pools;
+	std::unordered_map<std::string, std::shared_ptr<PoolEntry>> pools;
 	OCIEnv *envhp = nullptr;
 
 	OracleConnectionManager();
