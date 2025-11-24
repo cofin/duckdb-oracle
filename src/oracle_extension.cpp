@@ -33,6 +33,17 @@
 // OpenSSL linked through vcpkg
 #include <openssl/opensslv.h>
 
+#ifdef _WIN32
+#include <direct.h>
+#define S_ISDIR(mode) (((mode)&_S_IFDIR) == _S_IFDIR)
+static int setenv(const char *name, const char *value, int overwrite) {
+	if (!overwrite && getenv(name) != nullptr) {
+		return 0;
+	}
+	return _putenv_s(name, value);
+}
+#endif
+
 #ifndef SQLT_JSON
 #define SQLT_JSON 119
 #endif
