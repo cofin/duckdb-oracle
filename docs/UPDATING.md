@@ -1,34 +1,41 @@
-# Extension updating
+# DuckDB Update Automation
 
-When cloning this template, the target version of DuckDB should be the latest stable release of DuckDB. However, there
-will inevitably come a time when a new DuckDB is released and the extension repository needs updating. This process goes
-as follows:
+This repository uses an automated workflow to detect new DuckDB releases and initiate compatibility testing.
 
-- Bump submodules
-  - `./duckdb` should be set to latest tagged release
-  - `./extension-ci-tools` should be set to updated branch corresponding to latest DuckDB release. So if you're building for DuckDB `v1.1.0` there will be a branch in `extension-ci-tools` named `v1.1.0` to which you should check out.
-- Bump versions in `./github/workflows`
-  - `duckdb_version` input in `duckdb-stable-build` job in `main-distribution-pipeline.yml` should be set to latest tagged release
-  - `duckdb_version` input in `duckdb-stable-deploy` job in `main-distribution-pipeline.yml` should be set to latest tagged release
-  - the reusable workflow `duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml` for the `duckdb-stable-build` job should be set to latest tagged release
+## Workflow Overview
 
-# API changes
+The `.github/workflows/duckdb-update-check.yml` workflow runs daily at 6:00 UTC. It performs the following steps:
 
-DuckDB extensions built with this extension template are built against the internal C++ API of DuckDB. This API is not guaranteed to be stable.
-What this means for extension development is that when updating your extensions DuckDB target version using the above steps, you may run into the fact that your extension no longer builds properly.
+1.  **Check**: Queries the GitHub API for the latest stable DuckDB release.
+2.  **Compare**: Compares the latest version with the current version used in `main-distribution-pipeline.yml`.
+3.  **Branch**: If a new version is found, it creates a new branch `feat/duckdb-v{version}`.
+4.  **Update**: Updates the `duckdb` submodule and the version in `main-distribution-pipeline.yml`.
+5.  **PR**: Creates a Pull Request to `main`.
 
-Currently, DuckDB does not (yet) provide a specific change log for these API changes, but it is generally not too hard to figure out what has changed.
+## Handling Updates
 
-For figuring out how and why the C++ API changed, we recommend using the following resources:
+When a new Pull Request is created by the automation:
 
-- DuckDB's [Release Notes](https://github.com/duckdb/duckdb/releases)
-- DuckDB's history of [Core extension patches](https://github.com/duckdb/duckdb/commits/main/.github/patches/extensions)
-- The git history of the relevant C++ Header file of the API that has changed
+1.  **Review CI**: Check the checks on the Pull Request. The `main-distribution-pipeline.yml` will run automatically.
+2.  **If CI Passes**:
+    *   Review the changes (usually just submodule and workflow file).
+    *   Merge the PR.
+    *   Tag a new release (e.g., `v0.1.1`) to trigger the `release-unsigned.yml` workflow.
+3.  **If CI Fails**:
+    *   Check out the branch locally.
+    *   Investigate build or test failures.
+    *   Apply fixes.
+    *   Push fixes to the branch.
+    *   Once CI passes, merge and release.
 
-# Platform Compatibility
+## Manual Trigger
 
-- **Supported**: Linux (glibc), macOS (Intel/Apple Silicon), Windows.
-- **Unsupported**:
-  - Alpine Linux (musl libc) - Oracle Instant Client requires glibc.
-  - WebAssembly (WASM) - Native OCI libraries cannot be sandboxed.
-  - Linux 32-bit / Windows 32-bit (no OCI available).
+You can manually trigger the update check workflow from the GitHub Actions tab:
+
+1.  Go to **Actions** > **DuckDB Update Check**.
+2.  Click **Run workflow**.
+3.  Optionally check "Check for pre-release versions".
+
+## Configuration
+
+The workflow behavior is defined in `.github/workflows/duckdb-update-check.yml`. Currently, it defaults to checking only stable releases.

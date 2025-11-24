@@ -1,4 +1,4 @@
-# name: test/integration/oracle/metadata.test
+# name: test/integration_tests/oracle/metadata.test
 # description: Integration tests for lazy schema loading and metadata scalability
 # group: [oracle]
 

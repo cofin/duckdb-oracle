@@ -1,4 +1,4 @@
-# name: test/sql/spatial/test_oracle_spatial_basic.test
+# name: test/unit_tests/spatial/test_spatial_basic.test
 # description: Basic tests for Oracle Spatial Geometry support (smoke tests without real Oracle connection)
 # group: [spatial]
 

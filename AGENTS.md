@@ -94,10 +94,10 @@ gh workflow view release-unsigned.yml
 
 ```bash
 # Run specific test file
-build/release/test/unittest test/sql/test_oracle_attach.test
+build/release/test/unittest test/unit_tests/test_attach_and_scan.test
 
 # Run with debug output
-build/release/duckdb -unsigned < test/sql/test_oracle_attach.test
+build/release/duckdb -unsigned < test/unit_tests/test_attach_and_scan.test
 ```
 
 ### Build Outputs

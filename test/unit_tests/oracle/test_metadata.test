@@ -1,4 +1,4 @@
-# name: test/sql/oracle/advanced_metadata.test
+# name: test/unit_tests/oracle/test_metadata.test
 # description: Test lazy schema loading and multi-object-type support (smoke tests)
 # group: [oracle]
 

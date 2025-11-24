@@ -1,0 +1,155 @@
+name: DuckDB Update Check
+
+on:
+  schedule:
+    - cron: '0 6 * * *' # Run daily at 6:00 UTC
+  workflow_dispatch:
+    inputs:
+      check_prerelease:
+        description: 'Check for pre-release versions'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  check-update:
+    name: Check for Updates
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: pip install requests semantic_version pyyaml
+
+      - name: Check for Updates
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Create a python script to check versions
+          cat <<EOF > check_version.py
+          import os
+          import re
+          import sys
+          import requests
+          import yaml
+          import semantic_version
+
+          def get_current_version():
+              # Read from main-distribution-pipeline.yml
+              with open('.github/workflows/main-distribution-pipeline.yml', 'r') as f:
+                  content = f.read()
+                  match = re.search(r'duckdb_version:\s*v?([0-9.]+)', content)
+                  if match:
+                      return match.group(1)
+              return None
+
+          def get_latest_duckdb_version(include_prerelease=False):
+              url = "https://api.github.com/repos/duckdb/duckdb/releases"
+              headers = {"Authorization": f"token {os.environ.get('GITHUB_TOKEN')}"}
+              response = requests.get(url, headers=headers)
+              response.raise_for_status()
+              
+              releases = response.json()
+              latest_ver = None
+              
+              for release in releases:
+                  tag = release['tag_name'].lstrip('v')
+                  if not include_prerelease and release['prerelease']:
+                      continue
+                  
+                  try:
+                      ver = semantic_version.Version(tag)
+                      if latest_ver is None or ver > latest_ver:
+                          latest_ver = ver
+                  except ValueError:
+                      continue
+                      
+              return latest_ver
+
+          current = get_current_version()
+          if not current:
+              print("Could not determine current version")
+              sys.exit(1)
+              
+          latest = get_latest_duckdb_version(os.environ.get('INPUT_CHECK_PRERELEASE') == 'true')
+          
+          print(f"Current version: {current}")
+          print(f"Latest version: {latest}")
+          
+          if latest > semantic_version.Version(current):
+              print(f"::set-output name=new_version::{latest}")
+              print(f"::set-output name=update_available::true")
+          else:
+              print(f"::set-output name=update_available::false")
+          EOF
+          
+          python check_version.py
+
+      - name: Create Branch and Update
+        if: steps.check.outputs.update_available == 'true'
+        id: update
+        env:
+          NEW_VERSION: ${{ steps.check.outputs.new_version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH_NAME="feat/duckdb-v${NEW_VERSION}"
+          
+          # Check if branch already exists
+          if git ls-remote --exit-code --heads origin "$BRANCH_NAME"; then
+            echo "Branch $BRANCH_NAME already exists. Skipping."
+            echo "branch_created=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          
+          git checkout -b "$BRANCH_NAME"
+          
+          # Update submodule
+          cd duckdb
+          git fetch --tags
+          git checkout "v${NEW_VERSION}"
+          cd ..
+          
+          # Update workflow file
+          sed -i "s/duckdb_version: v[0-9.]*/duckdb_version: v${NEW_VERSION}/g" .github/workflows/main-distribution-pipeline.yml
+          
+          # Update ci tools (if needed - usually good to check latest)
+          # For now we keep existing version to avoid breakage
+          
+          git add duckdb .github/workflows/main-distribution-pipeline.yml
+          git commit -m "feat: update DuckDB to v${NEW_VERSION}"
+          git push origin "$BRANCH_NAME"
+          
+          echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
+          echo "branch_created=true" >> $GITHUB_OUTPUT
+
+      - name: Create Pull Request
+        if: steps.update.outputs.branch_created == 'true'
+        env:
+          NEW_VERSION: ${{ steps.check.outputs.new_version }}
+          BRANCH_NAME: ${{ steps.update.outputs.branch_name }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create \
+            --title "feat: Upgrade DuckDB to v${NEW_VERSION}" \
+            --body "This PR updates the DuckDB submodule and CI configuration to version v${NEW_VERSION}. \n\n This triggered a compatibility build. Please review the CI results." \
+            --base main \
+            --head "$BRANCH_NAME" \
+            --label "duckdb-update" \
+            --label "automated"

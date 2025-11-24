@@ -1,6 +1,6 @@
-# name: test/sql/test_oracle_scan_and_wallet.test
+# name: test/unit_tests/test_wallet_and_settings.test
 # description: Negative scan connectivity and wallet path validation
-# group: [sql]
+# group: [unit_tests]
 
 # tags: [oracle]
 

@@ -1,4 +1,4 @@
-# name: test/integration/oracle/schema_resolution.test
+# name: test/integration_tests/oracle/schema_resolution.test
 # description: Integration tests for schema resolution and current schema context
 # group: [oracle]
 

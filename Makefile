@@ -69,7 +69,7 @@ test_release_internal:
 ifeq ($(UNAME_S),Linux)
 	$(call ensure_libaio)
 endif
-	./build/release/$(TEST_PATH) "test/sql/*"
+	./build/release/$(TEST_PATH) "test/unit_tests/*"
 
 tidy-check:
 	$(OCI_SETUP_SCRIPT)
@@ -82,7 +82,7 @@ tidy-check:
 
 
 # Build (release) then run integration tests against containerized Oracle.
-# Runs both unit tests (test/sql/) and integration tests (test/integration/)
+# Runs both unit tests (test/unit_tests/) and integration tests (test/integration_tests/)
 integration: release
 	SKIP_BUILD=1 ORACLE_IMAGE=$(ORACLE_IMAGE) ./scripts/test_integration.sh
 

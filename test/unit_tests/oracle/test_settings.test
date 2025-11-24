@@ -1,4 +1,4 @@
-# name: test/sql/oracle/advanced_settings.test
+# name: test/unit_tests/oracle/test_settings.test
 # description: Test advanced Oracle extension settings (smoke tests - no Oracle required)
 # group: [oracle]
 

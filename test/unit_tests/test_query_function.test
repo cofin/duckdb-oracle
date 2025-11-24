@@ -1,6 +1,6 @@
-# name: test/sql/test_oracle_query.test
+# name: test/unit_tests/test_query_function.test
 # description: Test a simple query (expecting connection failure in CI)
-# group: [sql]
+# group: [unit_tests]
 
 # tags: [oracle]
 

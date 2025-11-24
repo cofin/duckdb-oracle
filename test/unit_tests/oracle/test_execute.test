@@ -1,4 +1,4 @@
-# name: test/sql/oracle/advanced_execute.test
+# name: test/unit_tests/oracle/test_execute.test
 # description: Test oracle_execute function (smoke tests without Oracle connection)
 # group: [oracle]
 

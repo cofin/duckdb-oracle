@@ -1,0 +1,87 @@
+# name: test/integration_tests/test_json.test
+# description: Test Oracle JSON data types and functions
+# group: [integration_tests]
+
+require oracle
+
+statement ok
+CREATE SECRET (
+    TYPE ORACLE,
+    USER 'duckdb_test',
+    PASSWORD 'duckdb_test',
+    HOST 'localhost',
+    PORT ${ORACLE_PORT},
+    SERVICE 'FREEPDB1'
+);
+
+statement ok
+ATTACH '' AS ora (TYPE ORACLE, SECRET 'test_oracle');
+
+# --- JSON Data Type (Oracle 21c+) ---
+
+statement ok
+SELECT oracle_execute('ora', '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE json_docs'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+');
+
+# Create table with native JSON column
+statement ok
+SELECT oracle_execute('ora', '
+    CREATE TABLE json_docs (
+        id NUMBER,
+        data JSON
+    )
+');
+
+statement ok
+SELECT oracle_execute('ora', "INSERT INTO json_docs VALUES (1, JSON('{\"name\": \"Alice\", \"age\": 30}'))");
+
+statement ok
+SELECT oracle_execute('ora', "INSERT INTO json_docs VALUES (2, JSON('{\"name\": \"Bob\", \"details\": {\"city\": \"NY\"}}'))");
+
+# Verify we can read JSON columns (mapped to VARCHAR in DuckDB)
+query IT
+SELECT id, CAST(data AS VARCHAR) FROM ora.json_docs ORDER BY id
+----
+1	{"name":"Alice","age":30}
+2	{"name":"Bob","details":{"city":"NY"}}
+
+# --- JSON stored as CLOB (Pre-21c style) ---
+
+statement ok
+SELECT oracle_execute('ora', '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE json_clob'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+');
+
+statement ok
+SELECT oracle_execute('ora', '
+    CREATE TABLE json_clob (
+        id NUMBER,
+        data CLOB CHECK (data IS JSON)
+    )
+');
+
+statement ok
+SELECT oracle_execute('ora', "INSERT INTO json_clob VALUES (1, '{\"item\": \"Book\", \"price\": 19.99}')");
+
+query IT
+SELECT id, CAST(data AS VARCHAR) FROM ora.json_clob ORDER BY id
+----
+1	{"item": "Book", "price": 19.99}
+
+statement ok
+DETACH ora;

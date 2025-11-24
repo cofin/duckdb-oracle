@@ -1,4 +1,4 @@
-# name: test/sql/oracle/advanced_schema_resolution.test
+# name: test/unit_tests/oracle/test_schema_resolution.test
 # description: Test schema resolution with oracle_use_current_schema setting (smoke tests)
 # group: [oracle]
 

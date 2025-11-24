@@ -1,5 +1,5 @@
-# name: test/sql/oracle_pushdown.test
-# group: [sql]
+# name: test/unit_tests/test_filter_pushdown.test
+# group: [unit_tests]
 
 # Validate Oracle extension settings and cache utilities without requiring a live Oracle instance.
 

@@ -1,0 +1,83 @@
+# name: test/integration_tests/test_pipelined.test
+# description: Test querying Oracle Pipelined Functions (Table Functions)
+# group: [integration_tests]
+
+require oracle
+
+statement ok
+CREATE SECRET (
+    TYPE ORACLE,
+    USER 'duckdb_test',
+    PASSWORD 'duckdb_test',
+    HOST 'localhost',
+    PORT ${ORACLE_PORT},
+    SERVICE 'FREEPDB1'
+);
+
+statement ok
+ATTACH '' AS ora (TYPE ORACLE, SECRET 'test_oracle');
+
+# Setup Pipelined Function
+# Needs a Type and a Package/Function
+
+statement ok
+SELECT oracle_execute('ora', '
+    CREATE OR REPLACE TYPE t_row AS OBJECT (
+        id NUMBER,
+        description VARCHAR2(50)
+    )
+');
+
+statement ok
+SELECT oracle_execute('ora', '
+    CREATE OR REPLACE TYPE t_tab IS TABLE OF t_row
+');
+
+statement ok
+SELECT oracle_execute('ora', '
+    CREATE OR REPLACE FUNCTION get_rows(p_count NUMBER) RETURN t_tab PIPELINED AS
+    BEGIN
+        FOR i IN 1 .. p_count LOOP
+            PIPE ROW(t_row(i, ''Row '' || i));
+        END LOOP;
+        RETURN;
+    END;
+');
+
+# Querying Pipelined Function
+# DuckDB Oracle extension exposes tables. Pipelined functions appear in ALL_OBJECTS as FUNCTION.
+# They are NOT automatically exposed as tables in the catalog.
+# However, we can use `oracle_query` to query them.
+
+query IT
+SELECT * FROM oracle_query('ora', 'SELECT * FROM TABLE(get_rows(3))') ORDER BY id
+----
+1	Row 1
+2	Row 2
+3	Row 3
+
+# Verify we can join it with local data
+statement ok
+CREATE TABLE local_ids (id INT);
+statement ok
+INSERT INTO local_ids VALUES (1), (3);
+
+query IT
+SELECT l.id, r.description 
+FROM local_ids l 
+JOIN oracle_query('ora', 'SELECT * FROM TABLE(get_rows(5))') r ON l.id = r.id
+ORDER BY l.id
+----
+1	Row 1
+3	Row 3
+
+# Cleanup
+statement ok
+SELECT oracle_execute('ora', 'DROP FUNCTION get_rows');
+statement ok
+SELECT oracle_execute('ora', 'DROP TYPE t_tab');
+statement ok
+SELECT oracle_execute('ora', 'DROP TYPE t_row');
+
+statement ok
+DETACH ora;

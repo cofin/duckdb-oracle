@@ -1,6 +1,6 @@
-# name: test/sql/test_oracle_execute_negative.test
+# name: test/unit_tests/test_execute_failures.test
 # description: oracle_execute should fail gracefully on bad credentials without crashing
-# group: [sql]
+# group: [unit_tests]
 
 require oracle
 
