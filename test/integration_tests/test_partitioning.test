@@ -8,7 +8,7 @@ require oracle
 # to replace ${ORACLE_PORT} with the actual port.
 
 statement ok
-CREATE SECRET (
+CREATE OR REPLACE SECRET test_oracle (
     TYPE ORACLE,
     USER 'duckdb_test',
     PASSWORD 'duckdb_test',
@@ -49,13 +49,17 @@ SELECT oracle_execute('ora', '
 ');
 
 statement ok
-SELECT oracle_execute('ora', "INSERT INTO sales_range VALUES (1, TO_DATE('2024-01-15', 'YYYY-MM-DD'), 100)");
+SELECT oracle_execute('ora', 'INSERT INTO sales_range VALUES (1, TO_DATE(''2024-01-15'', ''YYYY-MM-DD''), 100)');
 
 statement ok
-SELECT oracle_execute('ora', "INSERT INTO sales_range VALUES (2, TO_DATE('2024-05-20', 'YYYY-MM-DD'), 200)");
+SELECT oracle_execute('ora', 'INSERT INTO sales_range VALUES (2, TO_DATE(''2024-05-20'', ''YYYY-MM-DD''), 200)');
 
 statement ok
-SELECT oracle_execute('ora', "INSERT INTO sales_range VALUES (3, TO_DATE('2024-11-10', 'YYYY-MM-DD'), 300)");
+SELECT oracle_execute('ora', 'INSERT INTO sales_range VALUES (3, TO_DATE(''2024-11-10'', ''YYYY-MM-DD''), 300)');
+
+# Clear cache
+statement ok
+SELECT oracle_clear_cache();
 
 # Verify we can read from the partitioned table transparently
 query III
@@ -99,10 +103,14 @@ SELECT oracle_execute('ora', '
 ');
 
 statement ok
-SELECT oracle_execute('ora', "INSERT INTO customers_list VALUES (1, 'NY')");
+SELECT oracle_execute('ora', 'INSERT INTO customers_list VALUES (1, ''NY'')');
 
 statement ok
-SELECT oracle_execute('ora', "INSERT INTO customers_list VALUES (2, 'CA')");
+SELECT oracle_execute('ora', 'INSERT INTO customers_list VALUES (2, ''CA'')');
+
+# Clear cache
+statement ok
+SELECT oracle_clear_cache();
 
 query IT
 SELECT * FROM ora.customers_list ORDER BY cust_id

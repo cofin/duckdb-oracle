@@ -195,6 +195,14 @@ static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vecto
 		return;
 	}
 
+	// Support attached DB alias: if no '@' present, treat as alias of an attached Oracle database.
+	if (connection_string.find('@') == string::npos) {
+		auto catalog_state = OracleCatalogState::LookupByAlias(connection_string);
+		if (catalog_state) {
+			connection_string = catalog_state->connection_string;
+		}
+	}
+
 	if (getenv("ORACLE_DEBUG")) {
 		fprintf(stderr, "[oracle] execute start: %s\n", sql_statement.c_str());
 	}

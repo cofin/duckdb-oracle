@@ -8,7 +8,7 @@ require oracle
 # The standard gvenzl/oracle-free:23-slim image supports this.
 
 statement ok
-CREATE SECRET (
+CREATE OR REPLACE SECRET test_oracle (
     TYPE ORACLE,
     USER 'duckdb_test',
     PASSWORD 'duckdb_test',
@@ -49,10 +49,14 @@ SELECT oracle_execute('ora', '
 ');
 
 statement ok
-SELECT oracle_execute('ora', "INSERT INTO embeddings VALUES (1, '[1.1, 2.2, 3.3]')");
+SELECT oracle_execute('ora', 'INSERT INTO embeddings VALUES (1, ''[1.1, 2.2, 3.3]'')');
 
 statement ok
-SELECT oracle_execute('ora', "INSERT INTO embeddings VALUES (2, '[4.0, 5.0, 6.0]')");
+SELECT oracle_execute('ora', 'INSERT INTO embeddings VALUES (2, ''[4.0, 5.0, 6.0]'')');
+
+# Clear cache
+statement ok
+SELECT oracle_clear_cache();
 
 # Read back. DuckDB doesn't have a native VECTOR type that matches exactly 1:1 for transport yet 
 # in the generic sense without array extension, but Oracle extension maps it to...

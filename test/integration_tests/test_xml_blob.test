@@ -5,7 +5,7 @@
 require oracle
 
 statement ok
-CREATE SECRET (
+CREATE OR REPLACE SECRET test_oracle (
     TYPE ORACLE,
     USER 'duckdb_test',
     PASSWORD 'duckdb_test',
@@ -40,7 +40,11 @@ SELECT oracle_execute('ora', '
 ');
 
 statement ok
-SELECT oracle_execute('ora', "INSERT INTO xml_test VALUES (1, XMLTYPE('<root><item>A</item></root>'))");
+SELECT oracle_execute('ora', 'INSERT INTO xml_test VALUES (1, XMLTYPE(''<root><item>A</item></root>''))');
+
+# Clear cache
+statement ok
+SELECT oracle_clear_cache();
 
 # DuckDB maps XMLTYPE to VARCHAR (usually)
 query IT
@@ -75,7 +79,11 @@ SELECT oracle_execute('ora', '
 # RAW: 'DEADBEEF'
 # BLOB: 'CAFEBABE'
 statement ok
-SELECT oracle_execute('ora', "INSERT INTO binary_test VALUES (1, 'DEADBEEF', HEXTORAW('CAFEBABE'))");
+SELECT oracle_execute('ora', 'INSERT INTO binary_test VALUES (1, ''DEADBEEF'', HEXTORAW(''CAFEBABE''))');
+
+# Clear cache
+statement ok
+SELECT oracle_clear_cache();
 
 # Verify reading as BLOB
 query I

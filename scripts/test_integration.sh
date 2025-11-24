@@ -228,7 +228,7 @@ main() {
 
   wait_for_db "${CONTAINER_NAME}"
   # Small grace period to ensure init scripts (user creation) are fully committed
-  sleep 5
+  sleep 15
 
   echo "Running DuckDB integration tests..."
 
@@ -267,9 +267,9 @@ main() {
     find test/integration_tests -name "*.test" -print0 | while IFS= read -r -d '' test_file; do
       echo "Running test: ${test_file}"
       
-      # Create a temporary test file with the port replaced
+      # Create a temporary test file with the port and connection string replaced
       TEMP_TEST_FILE="test/integration_tests/temp_running_test.test"
-      sed "s/\${ORACLE_PORT}/${db_port}/g" "${test_file}" > "${TEMP_TEST_FILE}"
+      sed -e "s/\${ORACLE_PORT}/${db_port}/g" -e "s|\${ORACLE_CONNECTION_STRING}|${ORACLE_CONNECTION_STRING}|g" "${test_file}" > "${TEMP_TEST_FILE}"
       
       if command -v timeout >/dev/null 2>&1; then
         timeout "${INTEGRATION_TEST_TIMEOUT}" ./build/release/test/unittest "${TEMP_TEST_FILE}"

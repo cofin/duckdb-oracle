@@ -5,7 +5,7 @@
 require oracle
 
 statement ok
-CREATE SECRET (
+CREATE OR REPLACE SECRET test_oracle (
     TYPE ORACLE,
     USER 'duckdb_test',
     PASSWORD 'duckdb_test',
@@ -34,9 +34,14 @@ statement ok
 SELECT oracle_execute('ora', 'CREATE TABLE base_table (id NUMBER, val VARCHAR2(20))');
 
 statement ok
-SELECT oracle_execute('ora', "INSERT INTO base_table VALUES (1, 'A')");
+SELECT oracle_execute('ora', 'INSERT INTO base_table VALUES (1, ''A'')');
+
 statement ok
-SELECT oracle_execute('ora', "INSERT INTO base_table VALUES (2, 'B')");
+SELECT oracle_execute('ora', 'INSERT INTO base_table VALUES (2, ''B'')');
+
+# Clear cache to ensure new tables are visible
+statement ok
+SELECT oracle_clear_cache();
 
 # --- Standard View ---
 
@@ -45,6 +50,10 @@ SELECT oracle_execute('ora', '
     CREATE OR REPLACE VIEW view_test AS 
     SELECT id, val FROM base_table WHERE id > 1
 ');
+
+# Clear cache to ensure new view is visible
+statement ok
+SELECT oracle_clear_cache();
 
 # Verify view visibility and content
 query IT
@@ -76,6 +85,10 @@ SELECT oracle_execute('ora', '
     AS SELECT id, val FROM base_table
 ');
 
+# Clear cache to ensure new MV is visible
+statement ok
+SELECT oracle_clear_cache();
+
 # Verify MV visibility and content
 query IT
 SELECT * FROM ora.mv_test ORDER BY id
@@ -87,6 +100,10 @@ SELECT * FROM ora.mv_test ORDER BY id
 
 statement ok
 SELECT oracle_execute('ora', 'CREATE OR REPLACE SYNONYM syn_test FOR base_table');
+
+# Clear cache to ensure new synonym is visible
+statement ok
+SELECT oracle_clear_cache();
 
 query IT
 SELECT * FROM ora.syn_test ORDER BY id

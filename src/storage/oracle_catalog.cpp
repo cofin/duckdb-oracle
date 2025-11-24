@@ -178,6 +178,11 @@ vector<string> OracleCatalogState::ListTables(const string &schema) {
 		return entry->second;
 	}
 	EnsureConnectionInternal();
+
+	if (schema.empty()) {
+		return {};
+	}
+
 	auto query = StringUtil::Format("SELECT table_name FROM all_tables WHERE owner = UPPER(%s) ORDER BY table_name",
 	                                Value(schema).ToSQLString().c_str());
 	auto result = connection->Query(query);
@@ -220,7 +225,7 @@ vector<string> OracleCatalogState::ListObjects(const string &schema, const strin
 	// Apply metadata result limit
 	if (settings.metadata_result_limit > 0) {
 		query = StringUtil::Format("SELECT * FROM (%s) WHERE ROWNUM <= %llu", query.c_str(),
-		                           settings.metadata_result_limit);
+		                           static_cast<unsigned long long>(settings.metadata_result_limit));
 	}
 
 	auto result = connection->Query(query);

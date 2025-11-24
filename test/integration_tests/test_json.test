@@ -5,7 +5,7 @@
 require oracle
 
 statement ok
-CREATE SECRET (
+CREATE OR REPLACE SECRET test_oracle (
     TYPE ORACLE,
     USER 'duckdb_test',
     PASSWORD 'duckdb_test',
@@ -41,10 +41,14 @@ SELECT oracle_execute('ora', '
 ');
 
 statement ok
-SELECT oracle_execute('ora', "INSERT INTO json_docs VALUES (1, JSON('{\"name\": \"Alice\", \"age\": 30}'))");
+SELECT oracle_execute('ora', 'INSERT INTO json_docs VALUES (1, JSON(''{"name": "Alice", "age": 30}''))');
 
 statement ok
-SELECT oracle_execute('ora', "INSERT INTO json_docs VALUES (2, JSON('{\"name\": \"Bob\", \"details\": {\"city\": \"NY\"}}'))");
+SELECT oracle_execute('ora', 'INSERT INTO json_docs VALUES (2, JSON(''{"name": "Bob", "details": {"city": "NY"}}''))');
+
+# Clear cache
+statement ok
+SELECT oracle_clear_cache();
 
 # Verify we can read JSON columns (mapped to VARCHAR in DuckDB)
 query IT
@@ -76,7 +80,11 @@ SELECT oracle_execute('ora', '
 ');
 
 statement ok
-SELECT oracle_execute('ora', "INSERT INTO json_clob VALUES (1, '{\"item\": \"Book\", \"price\": 19.99}')");
+SELECT oracle_execute('ora', 'INSERT INTO json_clob VALUES (1, ''{"item": "Book", "price": 19.99}'')');
+
+# Clear cache
+statement ok
+SELECT oracle_clear_cache();
 
 query IT
 SELECT id, CAST(data AS VARCHAR) FROM ora.json_clob ORDER BY id
