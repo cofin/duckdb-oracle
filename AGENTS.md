@@ -79,6 +79,17 @@ make tidy-check          # Run clang-tidy checks
 make configure_ci        # Install Oracle Instant Client for CI/local
 ```
 
+### Release
+
+```bash
+# Trigger unsigned release (requires tag)
+git tag v0.1.0
+git push origin v0.1.0
+
+# Check release status
+gh workflow view release-unsigned.yml
+```
+
 ### Running Single Tests
 
 ```bash

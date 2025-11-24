@@ -61,19 +61,20 @@ Currently, the DuckDB Oracle extension faces several distribution challenges:
 |----------|--------------|----------|----------------------|
 | Linux | x86_64 | ubuntu-24.04 | instantclient_23_6 |
 | Linux | aarch64 | ubuntu-24.04 (ARM) | instantclient_23_6 |
-| macOS | x86_64 | macos-13 | instantclient_19_8 |
 | macOS | arm64 | macos-14 | instantclient_19_8 |
 | Windows | x86_64 | windows-2022 | instantclient_21_15 |
 
 **Excluded Platforms** (per README.md):
+
 - wasm_mvp, wasm_eh, wasm_threads (Oracle Instant Client incompatible with browser sandbox)
-- osx_amd64 (excluded in MainDistributionPipeline.yml)
+- osx_amd64 (excluded in main-distribution-pipeline.yml)
 
 #### Workflow Design
 
 **File**: `.github/workflows/release-unsigned.yml`
 
 **Triggers**:
+
 - Manual workflow_dispatch with version input
 - Git tag push matching `v*` (e.g., v0.1.0, v0.2.0-beta1)
 - Optional: Commits to main with `[release]` tag
@@ -97,7 +98,6 @@ Currently, the DuckDB Oracle extension faces several distribution challenges:
 ```
 oracle-v0.1.0-linux-x86_64.duckdb_extension
 oracle-v0.1.0-linux-aarch64.duckdb_extension
-oracle-v0.1.0-macos-x86_64.duckdb_extension
 oracle-v0.1.0-macos-arm64.duckdb_extension
 oracle-v0.1.0-windows-x86_64.duckdb_extension
 ```
@@ -125,20 +125,21 @@ SELECT oracle_query('user/pass@host:1521/service', 'SELECT 1 FROM DUAL');
 **File**: `.github/workflows/duckdb-update-check.yml`
 
 **Triggers**:
+
 - Schedule: Daily cron at 6:00 UTC
 - Manual workflow_dispatch
 
 **Process**:
 
 1. **Fetch DuckDB Releases**: Query GitHub API for duckdb/duckdb releases
-2. **Compare Versions**: Check against current `duckdb_version` in MainDistributionPipeline.yml
+2. **Compare Versions**: Check against current `duckdb_version` in main-distribution-pipeline.yml
 3. **Filter Releases**:
    - Only stable releases (no pre-release unless opted in)
    - Only minor/patch updates (v1.4.x → v1.5.0, v1.5.0 → v1.5.1)
    - Skip major version updates (v1.x → v2.x) - requires manual review
 4. **Trigger Compatibility Check**:
    - Create new branch: `feat/duckdb-v{new_version}`
-   - Update MainDistributionPipeline.yml with new version
+   - Update main-distribution-pipeline.yml with new version
    - Update duckdb submodule to new tag
    - Trigger build workflow
 5. **Notification**:
@@ -189,6 +190,7 @@ maintainers:
 #### Pre-Submission Checklist
 
 **Documentation Requirements**:
+
 - [x] README.md with installation and usage examples
 - [x] LICENSE file (Apache-2.0)
 - [ ] CONTRIBUTING.md with contribution guidelines
@@ -196,6 +198,7 @@ maintainers:
 - [ ] Code quality checks (clang-tidy, formatting)
 
 **Build Requirements**:
+
 - [x] Based on DuckDB extension-template structure
 - [x] Uses extension-ci-tools for builds
 - [x] CMake build system
@@ -203,6 +206,7 @@ maintainers:
 - [ ] Oracle Instant Client setup documented and automated
 
 **Repository Requirements**:
+
 - [x] Public GitHub repository
 - [x] Open source license (Apache-2.0)
 - [x] Active maintenance (responsive to issues/PRs)
@@ -337,7 +341,7 @@ build:
 1. **Prepare Repository**:
    - Ensure all checklist items complete
    - Tag stable release (v1.0.0)
-   - Verify builds pass on all platforms via MainDistributionPipeline.yml
+   - Verify builds pass on all platforms via main-distribution-pipeline.yml
    - Run local integration tests with containerized Oracle
 
 2. **Create description.yml**:
@@ -378,6 +382,7 @@ build:
 **Version Updates**:
 
 When releasing a new version (e.g., v1.1.0):
+
 - Update `version` and `repo.ref` in description.yml
 - Submit PR to duckdb/community-extensions
 - Community CI rebuilds and re-signs binaries
@@ -416,6 +421,7 @@ When releasing a new version (e.g., v1.1.0):
 ### Phase 1: Unsigned Release Workflow (Est. 3-5 days)
 
 **Tasks**:
+
 1. Design release-unsigned.yml workflow
 2. Implement matrix builds for 5 platforms
 3. Integrate Oracle Instant Client setup scripts
@@ -428,6 +434,7 @@ When releasing a new version (e.g., v1.1.0):
 ### Phase 2: DuckDB Update Automation (Est. 2-3 days)
 
 **Tasks**:
+
 1. Design duckdb-update-check.yml workflow
 2. Implement GitHub API integration for version checking
 3. Create auto-branch and compatibility test logic
@@ -440,19 +447,21 @@ When releasing a new version (e.g., v1.1.0):
 ### Phase 3: Community Extension Preparation (Est. 1 week)
 
 **Tasks**:
+
 1. Complete pre-submission checklist
 2. Create CONTRIBUTING.md
 3. Create SECURITY.md
 4. Add CODEOWNERS file
 5. Write comprehensive description.yml
 6. Test description.yml format locally
-7. Verify builds on all platforms via MainDistributionPipeline.yml
+7. Verify builds on all platforms via main-distribution-pipeline.yml
 
 **Deliverable**: Repository ready for community submission
 
 ### Phase 4: Community Extension Submission (Est. 1-2 weeks)
 
 **Tasks**:
+
 1. Tag v1.0.0 release
 2. Submit PR to duckdb/community-extensions
 3. Address CI feedback
@@ -465,6 +474,7 @@ When releasing a new version (e.g., v1.1.0):
 ### Phase 5: Testing & Documentation (Ongoing)
 
 **Tasks**:
+
 1. Test unsigned release workflow with real users
 2. Monitor compatibility check automation
 3. Document lessons learned
@@ -479,7 +489,7 @@ When releasing a new version (e.g., v1.1.0):
 
 1. **Oracle Instant Client Setup Scripts**: scripts/setup_oci_{linux,macos,windows}
 2. **Build System**: CMake, Makefile, vcpkg.json
-3. **CI Infrastructure**: MainDistributionPipeline.yml, OracleCI.yml
+3. **CI Infrastructure**: main-distribution-pipeline.yml, oracle-ci.yml
 4. **Test Suite**: test/sql/*.test, scripts/test_integration.sh
 5. **Documentation**: README.md, docs/
 
@@ -505,6 +515,7 @@ When releasing a new version (e.g., v1.1.0):
 **Probability**: Medium - Oracle occasionally changes download URLs
 
 **Mitigation**:
+
 - Scripts have fallback URLs (latest vs versioned)
 - Cache OCI libraries in GitHub Actions cache
 - Document manual download process
@@ -516,9 +527,10 @@ When releasing a new version (e.g., v1.1.0):
 **Probability**: Medium - DuckDB evolves rapidly
 
 **Mitigation**:
+
 - Automated compatibility testing catches issues early
 - Maintain compatibility matrix
-- Version pinning in MainDistributionPipeline.yml
+- Version pinning in main-distribution-pipeline.yml
 - Active monitoring of DuckDB release notes and changelogs
 
 ### Risk 3: Community Extension Rejection
@@ -527,6 +539,7 @@ When releasing a new version (e.g., v1.1.0):
 **Probability**: Low - Extension follows template and standards
 
 **Mitigation**:
+
 - Pre-submission checklist ensures readiness
 - Engage with DuckDB community early for feedback
 - Unsigned releases provide alternative distribution
@@ -538,6 +551,7 @@ When releasing a new version (e.g., v1.1.0):
 **Probability**: Medium - Oracle Instant Client platform quirks
 
 **Mitigation**:
+
 - Platform-specific setup scripts already tested
 - Matrix builds fail fast, isolate platform issues
 - Test on actual platform runners before release
@@ -549,6 +563,7 @@ When releasing a new version (e.g., v1.1.0):
 **Probability**: Low - DuckDB CI handles signing
 
 **Mitigation**:
+
 - Unsigned releases available for testing
 - Community CI manages signing automatically
 - No manual key management required
@@ -609,6 +624,7 @@ When releasing a new version (e.g., v1.1.0):
 ### Versioning Policy
 
 Follow semantic versioning (semver):
+
 - **MAJOR**: Incompatible API changes or DuckDB major version updates
 - **MINOR**: Backward-compatible functionality additions
 - **PATCH**: Backward-compatible bug fixes
@@ -618,6 +634,7 @@ Example: v1.2.3 where 1=major, 2=minor, 3=patch
 ### Deprecation Policy
 
 When deprecating features:
+
 1. Announce deprecation in release notes
 2. Maintain deprecated feature for at least 2 minor versions
 3. Emit warnings when deprecated features are used
@@ -653,7 +670,7 @@ When deprecating features:
 
 - `CLAUDE.md` - Agent system overview
 - `README.md` - Current installation instructions
-- `MainDistributionPipeline.yml` - Existing CI workflow
+- `main-distribution-pipeline.yml` - Existing CI workflow
 - `scripts/setup_oci_*.sh` - Oracle Instant Client setup
 
 ---

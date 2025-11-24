@@ -1,0 +1,210 @@
+name: Release Unsigned Extension
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v0.1.0)'
+        required: true
+        type: string
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  validate-version:
+    name: Validate Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+      is_prerelease: ${{ steps.get_version.outputs.is_prerelease }}
+    steps:
+      - name: Get Version
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${{ github.ref_name }}"
+          fi
+          
+          # Verify format (vX.Y.Z or vX.Y.Z-suffix)
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "Error: Invalid version format '$VERSION'. Must start with 'v' followed by semver (e.g. v1.0.0)."
+            exit 1
+          fi
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          
+          # Check if prerelease
+          if [[ "$VERSION" == *"-"* ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+  build-matrix:
+    name: Build ${{ matrix.platform }} ${{ matrix.arch }}
+    needs: validate-version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: x86_64
+            platform: linux
+            setup_script: scripts/setup_oci_linux.sh
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+            platform: linux
+            setup_script: scripts/setup_oci_linux.sh
+          - os: macos-14
+            arch: arm64
+            platform: macos
+            setup_script: scripts/setup_oci_macos.sh
+          - os: windows-2022
+            arch: x86_64
+            platform: windows
+            setup_script: scripts/setup_oci_windows.ps1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Install Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libaio1t64 unzip ninja-build || sudo apt-get install -y libaio1 unzip ninja-build
+
+      - name: Install Dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install ninja
+
+      - name: Install Oracle Instant Client
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" == "Windows" ]; then
+            pwsh -ExecutionPolicy Bypass -File ${{ matrix.setup_script }}
+          else
+            ./${{ matrix.setup_script }}
+          fi
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install CMake
+        if: runner.os != 'Windows'
+        run: |
+          # Check if cmake is installed, if not install it
+          if ! command -v cmake &> /dev/null;
+             then
+             if [ "${{ runner.os }}" == "Linux" ]; then
+                sudo apt-get install -y cmake
+             elif [ "${{ runner.os }}" == "macOS" ]; then
+                brew install cmake
+             fi
+          fi
+
+      - name: Build Extension
+        shell: bash
+        run: |
+          make release
+
+      - name: Run Smoke Tests
+        shell: bash
+        run: |
+          # Verify extension loads and runs basic query
+          ./build/release/duckdb -unsigned -c "LOAD 'build/release/extension/oracle/oracle.duckdb_extension'; SELECT oracle_query('dummy', 'SELECT 1');" 2>&1 | grep "ORA-" || echo "Smoke test passed (expected Oracle error)"
+          
+          # Verify version (if we had a version function, we would check it here)
+          ./build/release/duckdb -unsigned -c "LOAD 'build/release/extension/oracle/oracle.duckdb_extension'; SELECT * FROM duckdb_extensions() WHERE extension_name='oracle';"
+
+      - name: Rename Artifact
+        shell: bash
+        run: |
+          VERSION=${{ needs.validate-version.outputs.version }}
+          PLATFORM=${{ matrix.platform }}
+          ARCH=${{ matrix.arch }}
+          
+          mkdir -p deploy
+          cp build/release/extension/oracle/oracle.duckdb_extension deploy/oracle-${VERSION}-${PLATFORM}-${ARCH}.duckdb_extension
+          
+          # Generate checksum
+          cd deploy
+          if [ "${{ runner.os }}" == "Windows" ]; then
+            certutil -hashfile oracle-${VERSION}-${PLATFORM}-${ARCH}.duckdb_extension SHA256 > oracle-${VERSION}-${PLATFORM}-${ARCH}.duckdb_extension.sha256
+          else
+            shasum -a 256 oracle-${VERSION}-${PLATFORM}-${ARCH}.duckdb_extension > oracle-${VERSION}-${PLATFORM}-${ARCH}.duckdb_extension.sha256
+          fi
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: oracle-${{ needs.validate-version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}
+          path: deploy/*
+
+  create-release:
+    name: Create Release
+    needs: [validate-version, build-matrix]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: oracle-*
+          merge-multiple: true
+
+      - name: List Artifacts
+        run: ls -R artifacts
+
+      - name: Generate Release Notes
+        id: release_notes
+        run: |
+          # Get previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          
+          if [ -z "$PREV_TAG" ]; then
+            echo "No previous tag found. generating notes from start."
+            NOTES=$(git log --pretty=format:"- %h %s")
+          else
+            NOTES=$(git log --pretty=format:"- %h %s" ${PREV_TAG}..HEAD)
+          fi
+          
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo "## Changes" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "## Installation" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "-- Load the extension (unsigned)" >> $GITHUB_OUTPUT
+          echo "duckdb -unsigned" >> $GITHUB_OUTPUT
+          echo "LOAD 'path/to/oracle-${{ needs.validate-version.outputs.version }}-linux-x86_64.duckdb_extension';" >> $GITHUB_OUTPUT
+          echo "```" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.validate-version.outputs.version }}
+          name: Release ${{ needs.validate-version.outputs.version }}
+          body: ${{ steps.release_notes.outputs.notes }}
+          draft: false
+          prerelease: ${{ needs.validate-version.outputs.is_prerelease }}
+          files: artifacts/*

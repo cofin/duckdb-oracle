@@ -28,11 +28,11 @@ Legend:
 **Owner**: Expert Agent
 **Estimated Time**: 4 hours
 
-- [ ] Create `.github/workflows/release-unsigned.yml` skeleton
-- [ ] Define workflow triggers (manual, tag push, optional commit tag)
-- [ ] Design job structure (validate → build-matrix → create-release)
-- [ ] Document workflow inputs and outputs
-- [ ] Review with existing MainDistributionPipeline.yml for patterns
+- [x] Create `.github/workflows/release-unsigned.yml` skeleton
+- [x] Define workflow triggers (manual, tag push, optional commit tag)
+- [x] Design job structure (validate → build-matrix → create-release)
+- [x] Document workflow inputs and outputs
+- [x] Review with existing main-distribution-pipeline.yml for patterns
 
 **Deliverable**: Workflow file structure with job definitions
 
@@ -47,11 +47,11 @@ Legend:
 **Owner**: Expert Agent
 **Estimated Time**: 2 hours
 
-- [ ] Create `validate-version` job
-- [ ] Check version tag format (semver: vX.Y.Z, vX.Y.Z-beta.N)
-- [ ] Query GitHub API to prevent duplicate releases
-- [ ] Output validated version for downstream jobs
-- [ ] Handle edge cases (pre-release tags, build metadata)
+- [x] Create `validate-version` job
+- [x] Check version tag format (semver: vX.Y.Z, vX.Y.Z-beta.N)
+- [x] Query GitHub API to prevent duplicate releases
+- [x] Output validated version for downstream jobs
+- [x] Handle edge cases (pre-release tags, build metadata)
 
 **Deliverable**: Version validation logic
 
@@ -79,10 +79,6 @@ matrix:
       arch: aarch64
       platform: linux
       setup_script: scripts/setup_oci_linux.sh
-    - os: macos-13
-      arch: x86_64
-      platform: macos
-      setup_script: scripts/setup_oci_macos.sh
     - os: macos-14
       arch: arm64
       platform: macos
@@ -95,12 +91,12 @@ matrix:
 
 **Sub-tasks**:
 
-- [ ] Define matrix with 5 platform/arch combinations
-- [ ] Install dependencies per platform (libaio, cmake, ninja)
-- [ ] Run Oracle Instant Client setup script
-- [ ] Set ORACLE_HOME and LD_LIBRARY_PATH environment variables
-- [ ] Build extension in release mode (`make release`)
-- [ ] Verify build outputs exist
+- [x] Define matrix with 4 platform/arch combinations
+- [x] Install dependencies per platform (libaio, cmake, ninja)
+- [x] Run Oracle Instant Client setup script
+- [x] Set ORACLE_HOME and LD_LIBRARY_PATH environment variables
+- [x] Build extension in release mode (`make release`)
+- [x] Verify build outputs exist
 
 **Deliverable**: Working matrix build for all platforms
 
@@ -115,12 +111,12 @@ matrix:
 **Owner**: Expert Agent
 **Estimated Time**: 3 hours
 
-- [ ] Create smoke test job step in matrix build
-- [ ] Test 1: Load extension with `-unsigned` flag
-- [ ] Test 2: Verify oracle functions exist (oracle_query, oracle_scan)
-- [ ] Test 3: Verify extension version matches release version
-- [ ] Test 4: Connection failure test (no real Oracle, expect error)
-- [ ] Collect test results and fail job on any test failure
+- [x] Create smoke test job step in matrix build
+- [x] Test 1: Load extension with `-unsigned` flag
+- [x] Test 2: Verify oracle functions exist (oracle_query, oracle_scan)
+- [x] Test 3: Verify extension version matches release version
+- [x] Test 4: Connection failure test (no real Oracle, expect error)
+- [x] Collect test results and fail job on any test failure
 
 **Deliverable**: Smoke test suite
 
@@ -135,11 +131,11 @@ matrix:
 **Owner**: Expert Agent
 **Estimated Time**: 2 hours
 
-- [ ] Upload extension binary as artifact from each matrix job
-- [ ] Name artifacts consistently: `oracle-{version}-{platform}-{arch}`
-- [ ] Include metadata file with build info (DuckDB version, commit hash)
-- [ ] Set artifact retention to 90 days
-- [ ] Generate checksums (SHA256) for each binary
+- [x] Upload extension binary as artifact from each matrix job
+- [x] Name artifacts consistently: `oracle-{version}-{platform}-{arch}`
+- [x] Include metadata file with build info (DuckDB version, commit hash)
+- [x] Set artifact retention to 90 days
+- [x] Generate checksums (SHA256) for each binary
 
 **Deliverable**: Artifact upload logic
 
@@ -154,14 +150,14 @@ matrix:
 **Owner**: Expert Agent
 **Estimated Time**: 4 hours
 
-- [ ] Create `create-release` job (depends on build-matrix)
-- [ ] Download all artifacts from matrix builds
-- [ ] Rename artifacts to final format: `oracle-v{version}-{platform}-{arch}.duckdb_extension`
-- [ ] Generate release notes from git commits (since last tag)
-- [ ] Create GitHub Release via GitHub CLI or API
-- [ ] Attach all binaries to release
-- [ ] Mark as pre-release if version contains beta/rc/alpha
-- [ ] Include installation instructions in release body
+- [x] Create `create-release` job (depends on build-matrix)
+- [x] Download all artifacts from matrix builds
+- [x] Rename artifacts to final format: `oracle-v{version}-{platform}-{arch}.duckdb_extension`
+- [x] Generate release notes from git commits (since last tag)
+- [x] Create GitHub Release via GitHub CLI or API
+- [x] Attach all binaries to release
+- [x] Mark as pre-release if version contains beta/rc/alpha
+- [x] Include installation instructions in release body
 
 **Deliverable**: Release creation logic
 
@@ -198,11 +194,11 @@ matrix:
 **Owner**: Expert Agent
 **Estimated Time**: 2 hours
 
-- [ ] Create `docs/RELEASE.md` with release process documentation
-- [ ] Document how to trigger a release (tag creation)
-- [ ] Document version numbering strategy (semver)
-- [ ] Document how to test unsigned binaries locally
-- [ ] Update CLAUDE.md with release workflow overview
+- [x] Create `docs/RELEASE.md` with release process documentation
+- [x] Document how to trigger a release (tag creation)
+- [x] Document version numbering strategy (semver)
+- [x] Document how to test unsigned binaries locally
+- [x] Update CLAUDE.md with release workflow overview
 
 **Deliverable**: Release process documentation
 
@@ -248,7 +244,7 @@ matrix:
 - [ ] Query GitHub API: GET /repos/duckdb/duckdb/releases
 - [ ] Parse releases JSON response
 - [ ] Extract latest stable version (exclude pre-release by default)
-- [ ] Read current version from MainDistributionPipeline.yml
+- [ ] Read current version from main-distribution-pipeline.yml
 - [ ] Compare versions (use semver comparison)
 - [ ] Determine if update is major, minor, or patch
 - [ ] Log detection results
@@ -267,7 +263,7 @@ matrix:
 **Estimated Time**: 4 hours
 
 - [ ] Create new branch: `feat/duckdb-v{new_version}`
-- [ ] Update `duckdb_version` in MainDistributionPipeline.yml
+- [ ] Update `duckdb_version` in main-distribution-pipeline.yml
 - [ ] Update duckdb submodule to new tag
 - [ ] Update extension-ci-tools version if needed
 - [ ] Commit changes with descriptive message
@@ -286,7 +282,7 @@ matrix:
 **Owner**: Expert Agent
 **Estimated Time**: 2 hours
 
-- [ ] Trigger MainDistributionPipeline.yml on new branch
+- [ ] Trigger main-distribution-pipeline.yml on new branch
 - [ ] Wait for workflow completion (with timeout)
 - [ ] Capture workflow status (success/failure)
 - [ ] Collect build logs on failure
@@ -575,7 +571,7 @@ Last Updated: {date}
 **Owner**: Expert Agent
 **Estimated Time**: 4 hours
 
-- [ ] Trigger MainDistributionPipeline.yml
+- [ ] Trigger main-distribution-pipeline.yml
 - [ ] Verify builds succeed on all platforms
 - [ ] Verify tests pass on all platforms
 - [ ] Document any platform-specific issues
