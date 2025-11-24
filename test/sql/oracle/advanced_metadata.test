@@ -1,0 +1,98 @@
+# name: test/sql/oracle/advanced_metadata.test
+# description: Test lazy schema loading and multi-object-type support (smoke tests)
+# group: [oracle]
+
+require oracle
+
+# Test 1: Verify lazy schema loading can be disabled before attach
+statement ok
+SET oracle_lazy_schema_loading = false;
+
+query I
+SELECT current_setting('oracle_lazy_schema_loading');
+----
+false
+
+# Test 2: Verify metadata object types can be configured
+statement ok
+SET oracle_metadata_object_types = 'TABLE';
+
+query I
+SELECT current_setting('oracle_metadata_object_types');
+----
+TABLE
+
+# Test 3: Test setting metadata_object_types to multiple types
+statement ok
+SET oracle_metadata_object_types = 'TABLE,VIEW,SYNONYM';
+
+query I
+SELECT current_setting('oracle_metadata_object_types');
+----
+TABLE,VIEW,SYNONYM
+
+# Test 4: Test metadata result limit configuration
+statement ok
+SET oracle_metadata_result_limit = 5000;
+
+query I
+SELECT current_setting('oracle_metadata_result_limit');
+----
+5000
+
+# Test 5: Test metadata result limit set to 0 (unlimited)
+statement ok
+SET oracle_metadata_result_limit = 0;
+
+query I
+SELECT current_setting('oracle_metadata_result_limit');
+----
+0
+
+# Test 6: Verify all metadata settings work together
+statement ok
+SET oracle_lazy_schema_loading = true;
+SET oracle_metadata_object_types = 'TABLE,VIEW,MATERIALIZED VIEW';
+SET oracle_metadata_result_limit = 10000;
+
+query III
+SELECT
+    current_setting('oracle_lazy_schema_loading')::BOOLEAN,
+    current_setting('oracle_metadata_object_types'),
+    current_setting('oracle_metadata_result_limit')::INTEGER;
+----
+true	TABLE,VIEW,MATERIALIZED VIEW	10000
+
+# Test 7: Test that oracle_metadata_object_types accepts comma-separated values
+statement ok
+SET oracle_metadata_object_types = 'TABLE , VIEW , SYNONYM , MATERIALIZED VIEW';
+
+# Test 8: Verify spaces are preserved in setting value
+query I
+SELECT current_setting('oracle_metadata_object_types');
+----
+TABLE , VIEW , SYNONYM , MATERIALIZED VIEW
+
+# Test 9: Reset to canonical format (no spaces)
+statement ok
+SET oracle_metadata_object_types = 'TABLE,VIEW,SYNONYM,MATERIALIZED VIEW';
+
+# Test 10: Test very high metadata limit
+statement ok
+SET oracle_metadata_result_limit = 1000000;
+
+query I
+SELECT current_setting('oracle_metadata_result_limit');
+----
+1000000
+
+# Test 11: Reset all metadata settings to defaults
+statement ok
+SET oracle_lazy_schema_loading = true;
+SET oracle_metadata_object_types = 'TABLE,VIEW,SYNONYM,MATERIALIZED VIEW';
+SET oracle_metadata_result_limit = 10000;
+
+# Note: Integration tests with real Oracle database connections are in:
+# - advanced_metadata_integration.test (lazy loading with real schemas)
+# - advanced_metadata_objects.test (multi-object-type enumeration)
+# - advanced_metadata_limits.test (on-demand loading beyond limits)

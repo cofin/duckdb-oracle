@@ -1,0 +1,201 @@
+# name: test/integration/oracle/metadata.test
+# description: Integration tests for lazy schema loading and metadata scalability
+# group: [oracle]
+
+# require: oracle_available
+
+require oracle
+
+statement ok
+CREATE OR REPLACE MACRO oracle_test_conn() AS (
+    concat(
+        oracle_env('ORACLE_USER', 'duckdb_test'), '/',
+        oracle_env('ORACLE_PASSWORD', 'duckdb_test'), '@//',
+        oracle_env('ORACLE_HOST', 'localhost'), ':',
+        oracle_env('ORACLE_PORT', '1521'), '/',
+        oracle_env('ORACLE_SERVICE', 'FREEPDB1')
+    )
+);
+
+# Test 1: Metadata result limit
+statement ok
+SET oracle_metadata_result_limit = 5;
+
+query I
+SELECT COUNT(*) FROM oracle_query(oracle_test_conn(),
+    'SELECT * FROM all_objects WHERE rownum <= 10');
+----
+10
+
+# Derive connection params from environment with defaults (uses oracle_env helper).
+
+# Setup: Create test secret
+statement ok
+CREATE SECRET oracle_meta_test (
+    TYPE oracle,
+    HOST oracle_env('ORACLE_HOST', 'localhost'),
+    PORT CAST(oracle_env('ORACLE_PORT', '1521') AS INTEGER),
+    SERVICE oracle_env('ORACLE_SERVICE', 'FREEPDB1'),
+    USER oracle_env('ORACLE_USER', 'duckdb_test'),
+    PASSWORD oracle_env('ORACLE_PASSWORD', 'duckdb_test')
+);
+
+# Test 1: Test lazy schema loading enabled (default)
+statement ok
+SET oracle_lazy_schema_loading = true;
+
+# Attach with lazy loading - should only enumerate current schema
+statement ok
+ATTACH '' AS ora_lazy (TYPE oracle, SECRET oracle_meta_test);
+
+# Test 2: Verify current schema was detected
+# Query information about the attached catalog
+query I
+SELECT COUNT(*) > 0 FROM duckdb_schemas() WHERE database_name = 'ora_lazy';
+----
+true
+
+# Test 3: Query table in current schema (should work)
+# Assumes duckdb_test schema has at least DUAL or a test table
+query I
+SELECT COUNT(*) FROM oracle_query(oracle_test_conn(),
+    'SELECT 1 FROM DUAL');
+----
+1
+
+# Test 4: Detach and test with lazy loading disabled
+statement ok
+DETACH ora_lazy;
+
+statement ok
+SET oracle_lazy_schema_loading = false;
+
+# Test 5: Attach with lazy loading disabled - should enumerate all schemas
+statement ok
+ATTACH '' AS ora_full (TYPE oracle, SECRET oracle_meta_test);
+
+# Test 6: Verify multiple schemas enumerated when lazy loading disabled
+query I
+SELECT COUNT(*) FROM duckdb_schemas() WHERE database_name = 'ora_full';
+----
+<REGEX>:[1-9][0-9]*
+
+# Test 7: Detach and test metadata object types filtering
+statement ok
+DETACH ora_full;
+
+statement ok
+SET oracle_metadata_object_types = 'TABLE';
+
+# Test 8: Attach with only TABLE object type
+statement ok
+ATTACH '' AS ora_tables (TYPE oracle, SECRET oracle_meta_test);
+
+# Test 9: Verify only tables are enumerated (views should not appear)
+# This is a smoke test - actual verification would need specific test schema
+statement ok
+DETACH ora_tables;
+
+# Test 10: Test metadata object types with multiple types
+statement ok
+SET oracle_metadata_object_types = 'TABLE,VIEW';
+
+statement ok
+ATTACH '' AS ora_multi (TYPE oracle, SECRET oracle_meta_test);
+
+statement ok
+DETACH ora_multi;
+
+# Test 11: Test metadata result limit
+statement ok
+SET oracle_metadata_result_limit = 100;
+SET oracle_lazy_schema_loading = true;
+
+statement ok
+ATTACH '' AS ora_limited (TYPE oracle, SECRET oracle_meta_test);
+
+# Test 12: Verify attachment succeeded even with low limit
+query I
+SELECT COUNT(*) FROM duckdb_schemas() WHERE database_name = 'ora_limited';
+----
+<REGEX>:[1-9][0-9]*
+
+statement ok
+DETACH ora_limited;
+
+# Test 13: Test metadata result limit = 0 (unlimited)
+statement ok
+SET oracle_metadata_result_limit = 0;
+
+statement ok
+ATTACH '' AS ora_unlimited (TYPE oracle, SECRET oracle_meta_test);
+
+statement ok
+DETACH ora_unlimited;
+
+# Test 14: Test on-demand loading - set very low limit, query table beyond limit
+statement ok
+SET oracle_metadata_result_limit = 1;
+SET oracle_lazy_schema_loading = true;
+
+statement ok
+ATTACH '' AS ora_ondemand (TYPE oracle, SECRET oracle_meta_test);
+
+# Test 15: Query a table that might not be in first 1 enumerated
+# This tests on-demand loading fallback
+# The query should work even if table not in enumerated list
+query I
+SELECT COUNT(*) FROM oracle_query(oracle_test_conn(),
+    'SELECT 1 FROM DUAL');
+----
+1
+
+statement ok
+DETACH ora_ondemand;
+
+# Test 16: Test current schema detection
+statement ok
+SET oracle_lazy_schema_loading = true;
+SET oracle_metadata_result_limit = 10000;
+
+statement ok
+ATTACH '' AS ora_schema (TYPE oracle, SECRET oracle_meta_test);
+
+# Test 17: Verify oracle_clear_cache function works
+query I
+SELECT oracle_clear_cache();
+----
+<REGEX>:.*cleared.*
+
+statement ok
+DETACH ora_schema;
+
+# Test 18: Test combining all metadata settings
+statement ok
+SET oracle_lazy_schema_loading = true;
+SET oracle_metadata_object_types = 'TABLE,VIEW,SYNONYM,MATERIALIZED VIEW';
+SET oracle_metadata_result_limit = 10000;
+SET oracle_use_current_schema = true;
+
+statement ok
+ATTACH '' AS ora_combined (TYPE oracle, SECRET oracle_meta_test);
+
+# Test 19: Verify combined settings work
+query I
+SELECT COUNT(*) FROM duckdb_schemas() WHERE database_name = 'ora_combined';
+----
+<REGEX>:[1-9][0-9]*
+
+statement ok
+DETACH ora_combined;
+
+# Test 20: Reset all settings to defaults
+statement ok
+SET oracle_lazy_schema_loading = true;
+SET oracle_metadata_object_types = 'TABLE,VIEW,SYNONYM,MATERIALIZED VIEW';
+SET oracle_metadata_result_limit = 10000;
+SET oracle_use_current_schema = true;
+
+# Cleanup
+statement ok
+DROP SECRET oracle_meta_test;

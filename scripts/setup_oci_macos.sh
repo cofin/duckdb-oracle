@@ -14,7 +14,7 @@ case "$ARCH" in
     arm64)
         OCI_ARCH="arm64"
         BASIC_FILE="instantclient-basic-macos.${OCI_ARCH}-${OCI_VER_FULL}-2.dmg"
-        SDK_FILE="instantclient-sdk-macos.${OCI_ARCH}-${OCI_VER_FULL}-2.dmg"
+        SDK_FILE="instantclient-sdk-macos.${OCI_ARCH}-${OCI_VER_FULL}.dmg"
         ;;
     x86_64)
         echo "Error: Intel macOS (x86_64) is no longer supported"
@@ -44,12 +44,25 @@ curl -L -o sdk.dmg "${BASE_URL}/${SDK_FILE}" || {
 }
 
 echo "Mounting DMG files..."
-BASIC_MOUNT=$(hdiutil attach basic.dmg -nobrowse -noverify -noautoopen | grep /Volumes | awk '{print $3}')
-SDK_MOUNT=$(hdiutil attach sdk.dmg -nobrowse -noverify -noautoopen | grep /Volumes | awk '{print $3}')
+# Use -plist to parse mount point reliably, or simple awk if we assume standard output format with tabs
+# hdiutil standard output is: /dev/diskXsY <tab> TYPE <tab> /Volumes/Mount Point
+BASIC_MOUNT_INFO=$(hdiutil attach basic.dmg -nobrowse -noverify -noautoopen)
+echo "Basic Mount Info: $BASIC_MOUNT_INFO"
+BASIC_MOUNT=$(echo "$BASIC_MOUNT_INFO" | grep '/Volumes' | cut -f 3)
+
+SDK_MOUNT_INFO=$(hdiutil attach sdk.dmg -nobrowse -noverify -noautoopen)
+echo "SDK Mount Info: $SDK_MOUNT_INFO"
+SDK_MOUNT=$(echo "$SDK_MOUNT_INFO" | grep '/Volumes' | cut -f 3)
+
+echo "Basic Mount Point: '$BASIC_MOUNT'"
+echo "SDK Mount Point: '$SDK_MOUNT'"
+
+echo "Listing Basic Mount:"
+ls -la "$BASIC_MOUNT" || echo "Failed to list Basic mount"
 
 echo "Extracting files from DMG..."
-# Copy the instantclient directory from mounted DMG
-cp -R "${BASIC_MOUNT}"/instantclient_* "$INSTALL_DIR/" || {
+# Copy files from the root of the mounted DMG (no instantclient_* subdirectory)
+cp -R "${BASIC_MOUNT}"/* "$INSTALL_DIR/" || {
     echo "Failed to copy Basic package"
     hdiutil detach "$BASIC_MOUNT" 2>/dev/null || true
     hdiutil detach "$SDK_MOUNT" 2>/dev/null || true
@@ -57,10 +70,11 @@ cp -R "${BASIC_MOUNT}"/instantclient_* "$INSTALL_DIR/" || {
 }
 
 # Find the extracted directory
-OCI_HOME=$(find "$INSTALL_DIR" -maxdepth 1 -name "instantclient_*" | head -n 1)
+# For macOS DMG, files are extracted directly to INSTALL_DIR
+OCI_HOME="$INSTALL_DIR"
 
 # Copy SDK files into the same directory
-cp -R "${SDK_MOUNT}"/instantclient_*/sdk "$OCI_HOME/" || {
+cp -R "${SDK_MOUNT}"/sdk "$OCI_HOME/" || {
     echo "Failed to copy SDK package"
     hdiutil detach "$BASIC_MOUNT" 2>/dev/null || true
     hdiutil detach "$SDK_MOUNT" 2>/dev/null || true

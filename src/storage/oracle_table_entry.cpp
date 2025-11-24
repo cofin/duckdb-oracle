@@ -55,7 +55,7 @@ static void LoadColumns(OracleCatalogState &state, const string &schema, const s
 	                                "FROM all_tab_columns WHERE owner = UPPER(%s) AND table_name = UPPER(%s) "
 	                                "ORDER BY column_id",
 	                                Value(schema).ToSQLString().c_str(), Value(table).ToSQLString().c_str());
-	auto result = state.EnsureConnection().Query(query);
+	auto result = state.Query(query);
 	for (auto &row : result.rows) {
 		if (row.size() < 6) {
 			continue;
@@ -152,11 +152,10 @@ TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_p
 	    StringUtil::Format("SELECT %s FROM %s.%s", column_list.c_str(), quoted_schema.c_str(), quoted_table.c_str());
 
 	auto bind = make_uniq<OracleBindData>();
-	bind->column_names = names;
 	bind_data =
 	    OracleBindInternal(context, state->connection_string, query, return_types, names, bind.release(), state.get());
 
-	TableFunction tf({}, OracleQueryFunction, nullptr, nullptr, nullptr);
+	TableFunction tf({}, OracleQueryFunction, nullptr, OracleInitGlobal, nullptr);
 	tf.filter_pushdown = true;
 	tf.pushdown_complex_filter = OraclePushdownComplexFilter;
 	tf.projection_pushdown = true;

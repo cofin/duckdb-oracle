@@ -2,7 +2,7 @@
 
 #include "duckdb/common/types.hpp"
 #include "duckdb/common/exception.hpp"
-#include <oci.h>
+#include "oracle_connection_manager.hpp" // Include the manager
 #include <memory>
 #include <string>
 #include <vector>
@@ -30,13 +30,7 @@ public:
 	OracleResult Query(const std::string &query);
 
 private:
-	void Reset();
-	void CheckError(sword status, const std::string &msg);
-
-	OCIEnv *envhp = nullptr;
-	OCIError *errhp = nullptr;
-	OCISvcCtx *svchp = nullptr;
-	bool connected = false;
+	std::shared_ptr<OracleConnectionHandle> conn_handle;
 };
 
 } // namespace duckdb

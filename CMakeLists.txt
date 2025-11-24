@@ -28,7 +28,7 @@ else()
     endif()
 endif()
 
-find_library(OCI_LIBRARY NAMES clntsh HINTS ${ORACLE_HOME} ${ORACLE_HOME}/lib)
+find_library(OCI_LIBRARY NAMES clntsh oci HINTS ${ORACLE_HOME} ${ORACLE_HOME}/lib ${ORACLE_HOME}/sdk/lib/msvc)
 find_library(OCICORE_LIBRARY NAMES clntshcore HINTS ${ORACLE_HOME} ${ORACLE_HOME}/lib)
 find_library(NNZ_LIBRARY NAMES nnz HINTS ${ORACLE_HOME} ${ORACLE_HOME}/lib)
 find_path(OCI_INCLUDE_DIR NAMES oci.h HINTS ${ORACLE_HOME}/sdk/include ${ORACLE_HOME}/include)
@@ -54,6 +54,7 @@ include_directories(src/include)
 set(EXTENSION_SOURCES
     src/oracle_extension.cpp
     src/oracle_connection.cpp
+    src/oracle_connection_manager.cpp
     src/oracle_secret.cpp
     src/storage/oracle_catalog.cpp
     src/storage/oracle_schema_entry.cpp

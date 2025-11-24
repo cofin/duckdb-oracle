@@ -24,11 +24,25 @@ public:
 	}
 
 	vector<string> GetDefaultEntries() override {
-		return state->ListTables(schema.name);
+		// Use ListObjects with metadata_object_types setting
+		return state->ListObjects(schema.name, state->settings.metadata_object_types);
 	}
 
 	unique_ptr<CatalogEntry> CreateDefaultEntry(ClientContext &context, const string &entry_name) override {
-		return OracleTableEntry::Create(catalog, schema, schema.name, entry_name, state);
+		// Try on-demand loading if not in enumerated list (handles objects beyond limit)
+		string real_name = state->GetObjectName(schema.name, entry_name, "'TABLE','VIEW','MATERIALIZED VIEW'");
+		if (!real_name.empty()) {
+			return OracleTableEntry::Create(catalog, schema, schema.name, real_name, state);
+		}
+
+		// Try synonym resolution as fallback
+		bool found = false;
+		auto resolved = state->ResolveSynonym(schema.name, entry_name, found);
+		if (found) {
+			return OracleTableEntry::Create(catalog, schema, resolved.first, resolved.second, state);
+		}
+
+		return nullptr;
 	}
 
 private:
@@ -57,7 +71,12 @@ public:
 
 	unique_ptr<CatalogEntry> CreateDefaultEntry(ClientContext &context, const string &entry_name) override {
 		CreateSchemaInfo info;
-		info.schema = entry_name;
+		string real_name = state->GetRealSchemaName(entry_name);
+		if (!real_name.empty()) {
+			info.schema = real_name;
+		} else {
+			info.schema = entry_name;
+		}
 		info.internal = true;
 		info.on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
 
@@ -82,9 +101,17 @@ public:
 		return false;
 	}
 
+	optional_idx GetCatalogVersion(ClientContext &context) override {
+		return optional_idx();
+	}
+
 	void Initialize(bool load_builtin) override {
 		// Attempt connection early to fail fast
-		state->EnsureConnection();
+		state->Connect();
+
+		// Detect current schema after successful connection
+		state->DetectCurrentSchema();
+
 		DuckCatalog::Initialize(false);
 		GetSchemaCatalogSet().SetDefaultGenerator(make_uniq<OracleSchemaGenerator>(*this, state));
 	}

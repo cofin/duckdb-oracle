@@ -1,0 +1,44 @@
+# name: test/sql/oracle/advanced_execute.test
+# description: Test oracle_execute function (smoke tests without Oracle connection)
+# group: [oracle]
+
+require oracle
+
+# Test 1: Verify oracle_execute function exists and fails gracefully with invalid connection
+statement error
+SELECT oracle_execute('invalid_user/invalid_pass@//localhost:1521/INVALID', 'SELECT 1 FROM DUAL');
+----
+IO Error
+
+# Test 2: Test oracle_execute with empty SQL (should error)
+statement error
+SELECT oracle_execute('user/pass@//localhost:1521/DB', '');
+----
+
+# Test 3: Test oracle_execute with NULL connection string (returns NULL)
+query I
+SELECT oracle_execute(NULL, 'SELECT 1 FROM DUAL');
+----
+NULL
+
+# Test 4: Test oracle_execute with NULL SQL statement (returns NULL)
+query I
+SELECT oracle_execute('user/pass@//localhost:1521/DB', NULL);
+----
+NULL
+
+# Test 5: Test oracle_execute function signature (VARCHAR, VARCHAR -> VARCHAR)
+# This should fail with connection error, but verifies function signature
+statement error
+SELECT oracle_execute('dummy/dummy@//localhost:1521/dummy', 'CREATE TABLE test (id NUMBER)');
+----
+IO Error
+
+# Test 6: Verify oracle_execute is different from oracle_query
+# oracle_query returns a table, oracle_execute returns a status string
+statement error
+SELECT * FROM oracle_execute('user/pass@db', 'SELECT 1 FROM DUAL');
+----
+
+# Note: Integration tests with real Oracle database are in advanced_execute_integration.test
+# These smoke tests verify the function exists and handles errors gracefully without Oracle

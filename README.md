@@ -5,13 +5,17 @@
 This repository provides a native Oracle extension for DuckDB. It allows:
 
 - Attaching an Oracle database with `ATTACH ... (TYPE oracle)` and querying tables directly.
-- Table/query functions: `oracle_scan`, `oracle_query`.
+- Table/query functions: `oracle_scan`, `oracle_query`, `oracle_execute`.
 - Wallet helper: `oracle_attach_wallet`.
 - Cache maintenance: `oracle_clear_cache`.
+- Smart schema resolution with automatic current schema detection.
+- Scalable metadata enumeration for large schemas (100K+ tables).
 
 ## Platform Support
 
 > This extension uses [Oracle Instant Client](https://www.oracle.com/database/technologies/instant-client/downloads.html) and supports the following platforms: `linux_amd64`, `linux_arm64`, `osx_amd64` (Intel), `osx_arm64` (Apple Silicon M1/M2/M3), and `windows_amd64`.
+>
+> **Alpine Linux (musl) is not supported.** The Oracle Instant Client libraries (`libclntsh.so`) are linked against `glibc` and will fail to link or run on musl-based systems like Alpine. Use a glibc-based distribution (Debian, Ubuntu, Fedora, RHEL) instead.
 >
 > **WebAssembly (WASM) is not supported** as Oracle Instant Client requires native system libraries that cannot run in the browser sandbox. The builds `wasm_mvp`, `wasm_eh`, and `wasm_threads` are excluded from distribution.
 
@@ -120,10 +124,27 @@ ATTACH 'PRODDB_HIGH' AS prod (TYPE oracle, SECRET app_user);
 
 | Function | Description |
 | --- | --- |
-| `oracle_query(conn, sql)` | Runs arbitrary SQL/PLSQL against Oracle. |
+| `oracle_query(conn, sql)` | Runs arbitrary SQL/PLSQL against Oracle (returns result set). |
+| `oracle_execute(conn, sql)` | Executes arbitrary SQL without expecting result set (DDL, DML, PL/SQL blocks). |
 | `oracle_scan(conn, schema, table)` | Scans a table (`SELECT * FROM schema.table`). |
 | `oracle_attach_wallet(path)` | Sets `TNS_ADMIN` to the wallet directory (for Autonomous DB etc.). |
 | `oracle_clear_cache()` | Clears cached Oracle metadata/connections for attached DBs. |
+
+**Example: oracle_execute()**
+
+```sql
+-- Execute stored procedure
+SELECT oracle_execute('user/pass@db', 'BEGIN hr_pkg.update_salaries(1.05); END;');
+
+-- Run DDL
+SELECT oracle_execute('user/pass@db', 'CREATE INDEX idx_emp_dept ON employees(department_id)');
+
+-- Execute DML
+SELECT oracle_execute('user/pass@db', 'DELETE FROM temp_table WHERE created < SYSDATE - 7');
+-- Returns: "Statement executed successfully (N rows affected)"
+```
+
+**Security Warning**: `oracle_execute()` does not use prepared statements. Never concatenate user input into SQL strings. Use DuckDB SecretManager for credentials and validate all inputs to prevent SQL injection.
 
 ### Attach options (TYPE oracle)
 
@@ -144,10 +165,15 @@ Options map to settings below; unknown options are ignored.
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `oracle_enable_pushdown` | `false` | Push down filters/projection into Oracle. |
+| `oracle_enable_spatial_conversion` | `true` | Automatically convert SDO_GEOMETRY to WKT strings. |
+| `oracle_lazy_schema_loading` | `true` | Load only current schema by default (faster attach for large schemas). |
+| `oracle_metadata_object_types` | `TABLE,VIEW,SYNONYM,MATERIALIZED VIEW` | Object types to enumerate (comma-separated). |
+| `oracle_metadata_result_limit` | `10000` | Max objects enumerated (0=unlimited, beyond limit accessible via on-demand loading). |
+| `oracle_use_current_schema` | `true` | Resolve unqualified table names to current schema first. |
 | `oracle_prefetch_rows` | `200` | OCI prefetch rows per round-trip. |
 | `oracle_prefetch_memory` | `0` | OCI prefetch memory in bytes (0 = auto). |
-| `oracle_array_size` | `256` | Rows fetched per OCI iteration. |
-| `oracle_connection_cache` | `true` | Reuse OCI connections inside an attached DB. |
+| `oracle_array_size` | `256` | Rows fetched per OCI iteration (Array Fetch tuning). |
+| `oracle_connection_cache` | `true` | Reuse OCI connections inside an attached DB (Connection Pooling). |
 | `oracle_connection_limit` | `8` | Max cached connections. |
 | `oracle_debug_show_queries` | `false` | Log generated Oracle SQL. |
 
@@ -155,7 +181,81 @@ Example:
 
 ```sql
 SET oracle_enable_pushdown=true;
-SET oracle_prefetch_rows=500;
+SET oracle_prefetch_rows=1024;
+SET oracle_array_size=512; -- Tune for throughput
+```
+
+## Performance and Architecture
+
+### Array Fetch (Streaming)
+The extension implements OCI Array Fetch (`OCIDefineArrayOfStruct`) to retrieve multiple rows in a single network round-trip. This significantly improves throughput for large result sets. The batch size is controlled by `oracle_array_size` (default 256) and standard DuckDB vectors (`STANDARD_VECTOR_SIZE`).
+
+### Connection Pooling
+An internal connection manager (`OracleConnectionManager`) handles `OCI_THREADED` environments and maintains a pool of sessions. Connections are reused across queries when `oracle_connection_cache` is enabled (default), preventing expensive re-authentication overhead in high-concurrency scenarios. Connections automatically timeout after inactivity to release server resources.
+
+## Advanced Features
+
+### Schema Resolution and Current Schema Context
+
+The Oracle extension automatically detects the current schema when you attach and intelligently resolves unqualified table names, matching Oracle's native behavior.
+
+```sql
+-- Connected as HR user
+ATTACH 'hr/password@host:1521/service' AS ora (TYPE oracle);
+
+-- Current schema auto-detected: HR
+-- Unqualified table names resolve to current schema first
+SELECT * FROM ora.EMPLOYEES;  -- Resolves to ora.HR.EMPLOYEES
+
+-- Explicit qualification still works
+SELECT * FROM ora.HR.EMPLOYEES;
+SELECT * FROM ora.SYS.DUAL;
+
+-- Toggle behavior if needed
+SET oracle_use_current_schema = false;  -- Require explicit schema qualification
+```
+
+### Metadata Scalability for Large Schemas
+
+For Oracle databases with thousands of tables, the extension uses lazy schema loading to provide instant attach times:
+
+```sql
+-- Lazy loading enabled by default (recommended for large schemas)
+ATTACH 'user/pass@large_db' AS ora (TYPE oracle);
+-- Attaches in <5 seconds regardless of schema size
+
+-- Only current schema enumerated, but all tables accessible
+SELECT * FROM ora.CURRENT_SCHEMA.TABLE_1;      -- In enumerated list
+SELECT * FROM ora.CURRENT_SCHEMA.TABLE_99999;  -- Beyond limit, loaded on-demand
+
+-- Control object types enumerated
+SET oracle_metadata_object_types = 'TABLE,VIEW';  -- Exclude synonyms/materialized views
+
+-- Adjust enumeration limit for better autocomplete
+SET oracle_metadata_result_limit = 50000;  -- Enumerate more objects (slower attach)
+
+-- Disable lazy loading for full schema visibility (slow for large schemas)
+SET oracle_lazy_schema_loading = false;
+ATTACH 'user/pass@db' AS ora_full (TYPE oracle);
+```
+
+**How it works:**
+
+- First 10,000 objects (tables/views/synonyms) enumerated for autocomplete/discovery
+- Tables beyond limit still accessible via on-demand loading
+- Warning logged when limit reached, but no functionality lost
+- Set limit to 0 for unlimited enumeration (not recommended for 100K+ schemas)
+
+### Synonym Resolution
+
+The extension automatically resolves Oracle synonyms to their target tables:
+
+```sql
+-- Private and public synonyms work transparently
+SELECT * FROM ora.SCHEMA.MY_SYNONYM;   -- Resolves to target table
+SELECT * FROM ora.SCHEMA.PUB_SYNONYM;  -- Public synonym resolution
+
+-- Priority: private synonyms > public synonyms
 ```
 
 ### Wallet / Autonomous Database
@@ -165,6 +265,206 @@ CALL oracle_attach_wallet('/path/to/wallet_dir');
 -- then use ezconnect or tnsnames entries from that wallet
 ATTACH 'user/pass@myadb_tp' AS adb (TYPE oracle);
 ```
+
+## Working with Spatial Data
+
+The Oracle extension automatically converts Oracle Spatial `SDO_GEOMETRY` types to WKT (Well-Known Text) strings, enabling spatial analysis with DuckDB Spatial functions.
+
+### Prerequisites
+
+- Oracle Standard Edition or higher (requires Oracle JVM for SDO_UTIL functions)
+- Oracle Spatial enabled in your database
+- For spatial analysis: DuckDB Spatial extension (`INSTALL spatial; LOAD spatial;`)
+
+### Quick Example
+
+```sql
+-- Attach Oracle database with spatial data
+ATTACH 'user/password@host:1521/service' AS ora (TYPE oracle);
+
+-- Query spatial columns (returns WKT strings)
+SELECT parcel_id, geometry FROM ora.gis.parcels LIMIT 5;
+-- Result: geometry column contains "POINT(1 2)", "POLYGON((0 0, ...))", etc.
+
+-- Use with DuckDB Spatial extension for analysis
+LOAD spatial;
+SELECT
+    parcel_id,
+    ST_Area(ST_GeomFromText(geometry)) AS area,
+    ST_GeometryType(ST_GeomFromText(geometry)) AS geom_type
+FROM ora.gis.parcels
+WHERE ST_Area(ST_GeomFromText(geometry)) > 1000;
+```
+
+### Supported Oracle Spatial Types
+
+The extension detects and converts the following Oracle Spatial types:
+
+- `SDO_GEOMETRY` (standard Oracle Spatial type)
+- `MDSYS.SDO_GEOMETRY` (fully qualified schema name)
+
+All spatial types are automatically converted to WKT format using Oracle's `SDO_UTIL.TO_WKTGEOMETRY()` function.
+
+### Configuration
+
+```sql
+-- Disable automatic spatial conversion (returns raw SDO_GEOMETRY representation)
+SET oracle_enable_spatial_conversion = false;
+
+-- Enable spatial conversion (default behavior)
+SET oracle_enable_spatial_conversion = true;
+
+-- Configure during ATTACH
+ATTACH 'user/pass@host:1521/service' AS ora (
+    TYPE oracle,
+    enable_spatial_conversion = true
+);
+```
+
+### Spatial Data Workflow
+
+#### Step 1: Attach Oracle database
+
+```sql
+ATTACH 'gis_user/password@gis-server:1521/GISDB' AS gis (TYPE oracle);
+```
+
+#### Step 2: Explore spatial tables
+
+```sql
+-- List tables with geometry columns
+SELECT table_schema, table_name, column_name, data_type
+FROM gis.information_schema.columns
+WHERE data_type LIKE '%GEOMETRY%';
+```
+
+#### Step 3: Query spatial data
+
+```sql
+-- Spatial data is returned as WKT strings
+SELECT * FROM gis.spatial_schema.parcels LIMIT 10;
+```
+
+#### Step 4: Perform spatial analysis
+
+```sql
+LOAD spatial;
+
+-- Calculate areas
+SELECT
+    parcel_id,
+    owner_name,
+    ST_Area(ST_GeomFromText(geometry)) AS area_sqm
+FROM gis.spatial_schema.parcels
+ORDER BY area_sqm DESC
+LIMIT 100;
+
+-- Spatial filtering
+SELECT COUNT(*)
+FROM gis.spatial_schema.buildings
+WHERE ST_Within(
+    ST_GeomFromText(location),
+    ST_GeomFromText('POLYGON((...))')  -- bounding box
+);
+
+-- Export to GeoParquet
+INSTALL spatial;
+LOAD spatial;
+
+COPY (
+    SELECT
+        parcel_id,
+        ST_GeomFromText(geometry) AS geometry,
+        land_use,
+        assessed_value
+    FROM gis.spatial_schema.parcels
+) TO 'parcels.parquet' (FORMAT PARQUET);
+```
+
+### Limitations
+
+- **Oracle Express Edition**: Not supported (requires Oracle JVM for WKT conversion functions)
+- **Read-only**: No INSERT/UPDATE of spatial data (extension is read-only overall)
+- **Advanced types**: `SDO_TOPO_GEOMETRY`, `SDO_GEORASTER` not supported
+- **Spatial indexes**: Oracle spatial indexes are not pushed down (queries run without index hints)
+- **Large geometries**: Complex geometries with >4KB WKT representation may require Oracle-side simplification
+
+### Troubleshooting Spatial Data
+
+#### Error: "ORA-13199: SDO_UTIL function not found"
+
+This means Oracle Spatial or JVM is not available:
+
+- Check Oracle edition: `SELECT * FROM v$version;` (must not be Express)
+- Verify Oracle Spatial: `SELECT comp_name, status FROM dba_registry WHERE comp_name = 'Spatial';`
+- Verify JVM: `SELECT comp_name, status FROM dba_registry WHERE comp_name LIKE '%Java%';`
+
+#### Geometry column shows raw object representation
+
+Ensure `oracle_enable_spatial_conversion = true` (default):
+
+```sql
+SELECT current_setting('oracle_enable_spatial_conversion');
+-- Should return: true
+```
+
+#### WKT strings appear truncated
+
+For very large geometries, use Oracle-side simplification:
+
+```sql
+-- In Oracle, simplify geometry before querying
+CREATE VIEW simplified_parcels AS
+SELECT
+    parcel_id,
+    SDO_UTIL.SIMPLIFY(geometry, 0.5) AS geometry
+FROM parcels;
+
+-- Query from DuckDB
+SELECT * FROM ora.spatial_schema.simplified_parcels;
+```
+
+## Testing
+
+The extension has two test suites:
+
+### Unit Tests (No Oracle Required)
+
+Smoke tests that verify extension loading, error handling, and basic functionality without requiring a live Oracle database:
+
+```sh
+make test
+```
+
+These tests run in CI on every commit and should complete in seconds.
+
+### Integration Tests (Requires Oracle Container)
+
+Full integration test suite that runs against a containerized Oracle database. Automatically starts an Oracle container, runs tests, and cleans up:
+
+```sh
+# Run full integration suite (Docker/Podman required)
+make integration
+
+# Run manually with options (log suppression enabled by default)
+./scripts/test_integration.sh [--show-logs] [--keep-container]
+
+# Use different Oracle image
+ORACLE_IMAGE=gvenzl/oracle-xe:21-slim make integration
+```
+
+**Requirements:**
+
+- Docker or Podman installed
+- ~3GB disk space for Oracle container image
+- 5-10 minutes for first run (image download + database initialization)
+
+The integration script (`scripts/test_integration.sh`):
+
+- Auto-detects Docker or Podman
+- Finds available port automatically
+- Cleans up container by default (disable with `--keep-container`)
+- Works identically in local and CI environments
 
 ## Build from source
 
@@ -182,8 +482,11 @@ export VCPKG_TOOLCHAIN_PATH="$PWD/vcpkg/scripts/buildsystems/vcpkg.cmake"
 # build
 make
 
-# run tests (SQL suite)
+# run unit tests (fast, no Oracle required)
 make test
+
+# run integration tests (with Oracle container)
+make integration
 ```
 
 Outputs (release):

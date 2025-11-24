@@ -21,3 +21,11 @@ For figuring out how and why the C++ API changed, we recommend using the followi
 - DuckDB's [Release Notes](https://github.com/duckdb/duckdb/releases)
 - DuckDB's history of [Core extension patches](https://github.com/duckdb/duckdb/commits/main/.github/patches/extensions)
 - The git history of the relevant C++ Header file of the API that has changed
+
+# Platform Compatibility
+
+- **Supported**: Linux (glibc), macOS (Intel/Apple Silicon), Windows.
+- **Unsupported**:
+  - Alpine Linux (musl libc) - Oracle Instant Client requires glibc.
+  - WebAssembly (WASM) - Native OCI libraries cannot be sandboxed.
+  - Linux 32-bit / Windows 32-bit (no OCI available).

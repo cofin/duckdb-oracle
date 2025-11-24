@@ -72,7 +72,7 @@ static unique_ptr<Catalog> OracleAttach(optional_ptr<StorageExtensionInfo> stora
 		state = oracle_info->state;
 	} else {
 		state = make_shared_ptr<OracleCatalogState>(connection_string);
-		OracleCatalogState::Register(state);
+		OracleCatalogState::Register(state, name);
 		if (oracle_info) {
 			oracle_info->state = state;
 		}

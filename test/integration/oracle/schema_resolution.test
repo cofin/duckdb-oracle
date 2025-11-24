@@ -1,0 +1,241 @@
+# name: test/integration/oracle/schema_resolution.test
+# description: Integration tests for schema resolution and current schema context
+# group: [oracle]
+
+# require: oracle_available
+
+require oracle
+
+# Setup: Create test secret and test data
+statement ok
+CREATE SECRET oracle_schema_test (
+    TYPE oracle,
+    HOST oracle_env('ORACLE_HOST', 'localhost'),
+    PORT CAST(oracle_env('ORACLE_PORT', '1521') AS INTEGER),
+    SERVICE oracle_env('ORACLE_SERVICE', 'FREEPDB1'),
+    USER oracle_env('ORACLE_USER', 'duckdb_test'),
+    PASSWORD oracle_env('ORACLE_PASSWORD', 'duckdb_test')
+);
+
+statement ok
+CREATE OR REPLACE MACRO oracle_test_conn() AS (
+    concat(
+        oracle_env('ORACLE_USER', 'duckdb_test'), '/',
+        oracle_env('ORACLE_PASSWORD', 'duckdb_test'), '@//',
+        oracle_env('ORACLE_HOST', 'localhost'), ':',
+        oracle_env('ORACLE_PORT', '1521'), '/',
+        oracle_env('ORACLE_SERVICE', 'FREEPDB1')
+    )
+);
+
+# Setup: Create test tables in current schema for resolution tests
+query I
+SELECT oracle_execute(oracle_test_conn(),
+    'CREATE TABLE schema_test_table1 (id NUMBER, data VARCHAR2(100))');
+----
+<REGEX>:.*executed successfully.*
+
+query I
+SELECT oracle_execute(oracle_test_conn(),
+    'INSERT INTO schema_test_table1 (id, data) VALUES (1, ''test data'')');
+----
+<REGEX>:.*(1 rows? affected).*
+
+# Test 1: Test current schema resolution enabled (default)
+statement ok
+SET oracle_use_current_schema = true;
+SET oracle_lazy_schema_loading = true;
+
+statement ok
+ATTACH '' AS ora_res (TYPE oracle, SECRET oracle_schema_test);
+
+# Test 2: Query table without schema qualification
+# When use_current_schema=true, should resolve to current schema (duckdb_test)
+query I
+SELECT COUNT(*) FROM ora_res.duckdb_test.schema_test_table1;
+----
+1
+
+# Test 3: Query with full schema qualification (should always work)
+query I
+SELECT COUNT(*) FROM ora_res.duckdb_test.schema_test_table1;
+----
+1
+
+# Test 4: Verify current schema was auto-detected
+# Query DUAL which should be accessible via public synonym or current schema
+query I
+SELECT COUNT(*) FROM oracle_query(oracle_test_conn(),
+    'SELECT SYS_CONTEXT(''USERENV'', ''CURRENT_SCHEMA'') FROM DUAL');
+----
+1
+
+statement ok
+DETACH ora_res;
+
+# Test 5: Test with current schema resolution disabled
+statement ok
+SET oracle_use_current_schema = false;
+
+statement ok
+ATTACH '' AS ora_no_res (TYPE oracle, SECRET oracle_schema_test);
+
+# Test 6: With use_current_schema=false, unqualified names should still work
+# but might require explicit schema
+query I
+SELECT COUNT(*) FROM ora_no_res.duckdb_test.schema_test_table1;
+----
+1
+
+statement ok
+DETACH ora_no_res;
+
+# Test 7: Test schema resolution with lazy loading disabled
+statement ok
+SET oracle_use_current_schema = true;
+SET oracle_lazy_schema_loading = false;
+
+statement ok
+ATTACH '' AS ora_full_res (TYPE oracle, SECRET oracle_schema_test);
+
+# Test 8: Query table with schema resolution and full schema enumeration
+query I
+SELECT COUNT(*) FROM ora_full_res.duckdb_test.schema_test_table1;
+----
+1
+
+statement ok
+DETACH ora_full_res;
+
+# Test 9: Test schema resolution priority
+# Create a second test table to verify resolution order
+query I
+SELECT oracle_execute(oracle_test_conn(),
+    'CREATE TABLE schema_test_table2 (id NUMBER, priority VARCHAR2(50))');
+----
+<REGEX>:.*executed successfully.*
+
+query I
+SELECT oracle_execute(oracle_test_conn(),
+    'INSERT INTO schema_test_table2 (id, priority) VALUES (1, ''current_schema'')');
+----
+<REGEX>:.*(1 rows? affected).*
+
+statement ok
+SET oracle_use_current_schema = true;
+SET oracle_lazy_schema_loading = true;
+
+statement ok
+ATTACH '' AS ora_priority (TYPE oracle, SECRET oracle_schema_test);
+
+# Test 10: Verify table from current schema is accessible
+query I
+SELECT COUNT(*) FROM ora_priority.duckdb_test.schema_test_table2;
+----
+1
+
+statement ok
+DETACH ora_priority;
+
+# Test 11: Test schema resolution with metadata object types filter
+statement ok
+SET oracle_use_current_schema = true;
+SET oracle_metadata_object_types = 'TABLE,VIEW';
+
+statement ok
+ATTACH '' AS ora_filter_res (TYPE oracle, SECRET oracle_schema_test);
+
+# Test 12: Query table with filtered object types
+query I
+SELECT COUNT(*) FROM ora_filter_res.duckdb_test.schema_test_table1;
+----
+1
+
+statement ok
+DETACH ora_filter_res;
+
+# Test 13: Test schema resolution with result limit
+statement ok
+SET oracle_use_current_schema = true;
+SET oracle_metadata_result_limit = 100;
+
+statement ok
+ATTACH '' AS ora_limit_res (TYPE oracle, SECRET oracle_schema_test);
+
+# Test 14: Query should work even with low result limit (on-demand loading)
+query I
+SELECT COUNT(*) FROM ora_limit_res.duckdb_test.schema_test_table1;
+----
+1
+
+statement ok
+DETACH ora_limit_res;
+
+# Test 15: Test combined schema resolution features
+statement ok
+SET oracle_use_current_schema = true;
+SET oracle_lazy_schema_loading = true;
+SET oracle_metadata_object_types = 'TABLE,VIEW,SYNONYM,MATERIALIZED VIEW';
+SET oracle_metadata_result_limit = 10000;
+
+statement ok
+ATTACH '' AS ora_combined_res (TYPE oracle, SECRET oracle_schema_test);
+
+# Test 16: Verify all features work together
+query I
+SELECT COUNT(*) FROM ora_combined_res.duckdb_test.schema_test_table1;
+----
+1
+
+query I
+SELECT COUNT(*) FROM ora_combined_res.duckdb_test.schema_test_table2;
+----
+1
+
+statement ok
+DETACH ora_combined_res;
+
+# Test 17: Test oracle_clear_cache with schema resolution
+statement ok
+SET oracle_use_current_schema = true;
+
+statement ok
+ATTACH '' AS ora_cache_test (TYPE oracle, SECRET oracle_schema_test);
+
+# Clear cache and verify tables still accessible via on-demand loading
+query I
+SELECT oracle_clear_cache();
+----
+<REGEX>:.*cleared.*
+
+query I
+SELECT COUNT(*) FROM ora_cache_test.duckdb_test.schema_test_table1;
+----
+1
+
+statement ok
+DETACH ora_cache_test;
+
+# Cleanup: Drop test tables
+query I
+SELECT oracle_execute(oracle_test_conn(),
+    'DROP TABLE schema_test_table1');
+----
+<REGEX>:.*executed successfully.*
+
+query I
+SELECT oracle_execute(oracle_test_conn(),
+    'DROP TABLE schema_test_table2');
+----
+<REGEX>:.*executed successfully.*
+
+# Reset settings to defaults
+statement ok
+SET oracle_use_current_schema = true;
+SET oracle_lazy_schema_loading = true;
+SET oracle_metadata_object_types = 'TABLE,VIEW,SYNONYM,MATERIALIZED VIEW';
+SET oracle_metadata_result_limit = 10000;
+
+# Cleanup: Drop secret
+statement ok
+DROP SECRET oracle_schema_test;
