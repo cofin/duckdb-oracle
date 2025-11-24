@@ -1,6 +1,5 @@
 #include "oracle_secret.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
-#include "duckdb/main/extension_util.hpp"
 #include <cstdlib>
 
 #ifdef _WIN32
