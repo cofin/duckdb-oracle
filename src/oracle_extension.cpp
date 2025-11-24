@@ -625,6 +625,8 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 					FlatVector::GetData<timestamp_t>(output.data[col_idx])[row_count] =
 					    ParseOciTimestamp(ptr, gstate.return_lens[col_idx][row_count]);
 					break;
+				default:
+					break;
 				}
 			}
 		}
