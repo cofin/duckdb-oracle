@@ -78,4 +78,4 @@ IO Error
 
 ## Continuous Integration
 
-Tests are automatically run by the GitHub Actions workflow defined in `.github/workflows/MainDistributionPipeline.yml` on every push and pull request to the `main` branch.
+Tests are automatically run by the GitHub Actions workflow defined in `.github/workflows/main-distribution-pipeline.yml` on every push and pull request to the `main` branch.

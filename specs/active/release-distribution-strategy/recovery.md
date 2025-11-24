@@ -75,7 +75,7 @@ specs/active/release-distribution-strategy/
 
 - Reusable workflows for building DuckDB extensions
 - Handles multi-platform builds automatically
-- Current project already uses v1.4.1 in MainDistributionPipeline.yml
+- Current project already uses v1.4.1 in main-distribution-pipeline.yml
 - Provides extension distribution pipeline
 
 ## Architecture Decisions
@@ -109,7 +109,7 @@ specs/active/release-distribution-strategy/
 - macOS arm64
 - Windows x86_64
 
-**Excluded**: WebAssembly (Oracle Instant Client incompatible), macOS amd64 (already excluded in MainDistributionPipeline.yml)
+**Excluded**: WebAssembly (Oracle Instant Client incompatible), macOS amd64 (already excluded in main-distribution-pipeline.yml)
 
 **Rationale**: Cover most common platforms while respecting technical constraints
 
@@ -135,12 +135,12 @@ specs/active/release-distribution-strategy/
    - "Acceptance Criteria - Phase 1"
 2. Read tasks.md "Phase 1" section
 3. Start with Task 1.1: Create `.github/workflows/release-unsigned.yml`
-4. Reference existing `.github/workflows/MainDistributionPipeline.yml` for patterns
+4. Reference existing `.github/workflows/main-distribution-pipeline.yml` for patterns
 5. Reference existing `scripts/setup_oci_*.sh` for Oracle Instant Client setup
 
 **Key Files to Reference**:
-- `.github/workflows/MainDistributionPipeline.yml` - Existing CI workflow
-- `.github/workflows/OracleCI.yml` - Linux build example
+- `.github/workflows/main-distribution-pipeline.yml` - Existing CI workflow
+- `.github/workflows/oracle-ci.yml` - Linux build example
 - `scripts/setup_oci_linux.sh` - Oracle Instant Client setup for Linux
 - `scripts/setup_oci_macos.sh` - Oracle Instant Client setup for macOS
 - `scripts/setup_oci_windows.ps1` - Oracle Instant Client setup for Windows
@@ -306,7 +306,7 @@ Before considering each phase complete:
 - [ ] Run `make test` - all tests pass
 - [ ] Run `make integration` - all tests pass
 - [ ] Run `make tidy-check` - no warnings
-- [ ] Trigger MainDistributionPipeline.yml - all platforms pass
+- [ ] Trigger main-distribution-pipeline.yml - all platforms pass
 - [ ] Review description.yml syntax
 - [ ] Test before_build script on Linux/macOS/Windows
 
