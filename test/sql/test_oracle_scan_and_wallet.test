@@ -18,8 +18,8 @@ SELECT oracle_attach_wallet('/this/path/does/not/exist');
 ----
 IO Error
 
-# wallet path success on a known directory
+# Attach valid directory (current directory is always valid)
 query I
-SELECT oracle_attach_wallet('/tmp');
+SELECT oracle_attach_wallet('.');
 ----
-Wallet attached: /tmp
+Wallet attached: .
