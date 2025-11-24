@@ -61,8 +61,8 @@ echo "Listing Basic Mount:"
 ls -la "$BASIC_MOUNT" || echo "Failed to list Basic mount"
 
 echo "Extracting files from DMG..."
-# Copy the instantclient directory from mounted DMG
-cp -R "${BASIC_MOUNT}"/instantclient_* "$INSTALL_DIR/" || {
+# Copy files from the root of the mounted DMG (no instantclient_* subdirectory)
+cp -R "${BASIC_MOUNT}"/* "$INSTALL_DIR/" || {
     echo "Failed to copy Basic package"
     hdiutil detach "$BASIC_MOUNT" 2>/dev/null || true
     hdiutil detach "$SDK_MOUNT" 2>/dev/null || true
@@ -70,10 +70,11 @@ cp -R "${BASIC_MOUNT}"/instantclient_* "$INSTALL_DIR/" || {
 }
 
 # Find the extracted directory
-OCI_HOME=$(find "$INSTALL_DIR" -maxdepth 1 -name "instantclient_*" | head -n 1)
+# For macOS DMG, files are extracted directly to INSTALL_DIR
+OCI_HOME="$INSTALL_DIR"
 
 # Copy SDK files into the same directory
-cp -R "${SDK_MOUNT}"/instantclient_*/sdk "$OCI_HOME/" || {
+cp -R "${SDK_MOUNT}"/sdk "$OCI_HOME/" || {
     echo "Failed to copy SDK package"
     hdiutil detach "$BASIC_MOUNT" 2>/dev/null || true
     hdiutil detach "$SDK_MOUNT" 2>/dev/null || true
