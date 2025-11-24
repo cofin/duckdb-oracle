@@ -172,8 +172,8 @@ Options map to settings below; unknown options are ignored.
 | `oracle_use_current_schema` | `true` | Resolve unqualified table names to current schema first. |
 | `oracle_prefetch_rows` | `200` | OCI prefetch rows per round-trip. |
 | `oracle_prefetch_memory` | `0` | OCI prefetch memory in bytes (0 = auto). |
-| `oracle_array_size` | `256` | Rows fetched per OCI iteration. |
-| `oracle_connection_cache` | `true` | Reuse OCI connections inside an attached DB. |
+| `oracle_array_size` | `256` | Rows fetched per OCI iteration (Array Fetch tuning). |
+| `oracle_connection_cache` | `true` | Reuse OCI connections inside an attached DB (Connection Pooling). |
 | `oracle_connection_limit` | `8` | Max cached connections. |
 | `oracle_debug_show_queries` | `false` | Log generated Oracle SQL. |
 
@@ -181,8 +181,17 @@ Example:
 
 ```sql
 SET oracle_enable_pushdown=true;
-SET oracle_prefetch_rows=500;
+SET oracle_prefetch_rows=1024;
+SET oracle_array_size=512; -- Tune for throughput
 ```
+
+## Performance and Architecture
+
+### Array Fetch (Streaming)
+The extension implements OCI Array Fetch (`OCIDefineArrayOfStruct`) to retrieve multiple rows in a single network round-trip. This significantly improves throughput for large result sets. The batch size is controlled by `oracle_array_size` (default 256) and standard DuckDB vectors (`STANDARD_VECTOR_SIZE`).
+
+### Connection Pooling
+An internal connection manager (`OracleConnectionManager`) handles `OCI_THREADED` environments and maintains a pool of sessions. Connections are reused across queries when `oracle_connection_cache` is enabled (default), preventing expensive re-authentication overhead in high-concurrency scenarios. Connections automatically timeout after inactivity to release server resources.
 
 ## Advanced Features
 
@@ -437,8 +446,8 @@ Full integration test suite that runs against a containerized Oracle database. A
 # Run full integration suite (Docker/Podman required)
 make integration
 
-# Keep container running for debugging
-./scripts/test_integration.sh --keep-container
+# Run manually with options (log suppression enabled by default)
+./scripts/test_integration.sh [--show-logs] [--keep-container]
 
 # Use different Oracle image
 ORACLE_IMAGE=gvenzl/oracle-xe:21-slim make integration
