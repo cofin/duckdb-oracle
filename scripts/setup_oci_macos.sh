@@ -44,8 +44,21 @@ curl -L -o sdk.dmg "${BASE_URL}/${SDK_FILE}" || {
 }
 
 echo "Mounting DMG files..."
-BASIC_MOUNT=$(hdiutil attach basic.dmg -nobrowse -noverify -noautoopen | grep /Volumes | awk '{print $3}')
-SDK_MOUNT=$(hdiutil attach sdk.dmg -nobrowse -noverify -noautoopen | grep /Volumes | awk '{print $3}')
+# Use -plist to parse mount point reliably, or simple awk if we assume standard output format with tabs
+# hdiutil standard output is: /dev/diskXsY <tab> TYPE <tab> /Volumes/Mount Point
+BASIC_MOUNT_INFO=$(hdiutil attach basic.dmg -nobrowse -noverify -noautoopen)
+echo "Basic Mount Info: $BASIC_MOUNT_INFO"
+BASIC_MOUNT=$(echo "$BASIC_MOUNT_INFO" | grep '/Volumes' | cut -f 3)
+
+SDK_MOUNT_INFO=$(hdiutil attach sdk.dmg -nobrowse -noverify -noautoopen)
+echo "SDK Mount Info: $SDK_MOUNT_INFO"
+SDK_MOUNT=$(echo "$SDK_MOUNT_INFO" | grep '/Volumes' | cut -f 3)
+
+echo "Basic Mount Point: '$BASIC_MOUNT'"
+echo "SDK Mount Point: '$SDK_MOUNT'"
+
+echo "Listing Basic Mount:"
+ls -la "$BASIC_MOUNT" || echo "Failed to list Basic mount"
 
 echo "Extracting files from DMG..."
 # Copy the instantclient directory from mounted DMG
