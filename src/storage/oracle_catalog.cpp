@@ -155,6 +155,13 @@ vector<string> OracleCatalogState::ListSchemas() {
 
 	// Lazy loading: return only current schema by default
 	if (settings.lazy_schema_loading) {
+		if (current_schema.empty()) {
+			auto result = connection->Query("SELECT SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') FROM DUAL");
+			if (!result.rows.empty() && !result.rows[0].empty()) {
+				current_schema = result.rows[0][0];
+			}
+		}
+
 		if (!current_schema.empty()) {
 			schema_cache.push_back(current_schema);
 			return schema_cache;
