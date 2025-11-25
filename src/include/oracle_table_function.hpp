@@ -43,6 +43,7 @@ struct OracleScanState : public GlobalTableFunctionState {
 	vector<OCIDefine *> defines;
 	vector<vector<sb2>> indicators;
 	vector<vector<ub2>> return_lens;
+	vector<idx_t> column_mapping; // Map output column index to buffer index
 	bool executed = false;
 	bool defines_bound = false;
 	bool finished = false;

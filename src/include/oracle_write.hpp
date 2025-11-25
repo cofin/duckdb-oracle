@@ -36,7 +36,7 @@ public:
 	}
 
 	bool Equals(const FunctionData &other_p) const override {
-		auto &other = (const OracleWriteBindData &)other_p;
+		auto &other = other_p.Cast<OracleWriteBindData>();
 		return table_name == other.table_name && connection_string == other.connection_string;
 	}
 };
@@ -44,7 +44,7 @@ public:
 class OracleWriteGlobalState : public GlobalFunctionData {
 public:
 	OracleWriteGlobalState(std::shared_ptr<OracleConnectionHandle> conn, const string &query);
-	~OracleWriteGlobalState();
+	~OracleWriteGlobalState() override;
 
 	std::shared_ptr<OracleConnectionHandle> connection;
 	OCIStmt *stmthp;
@@ -53,7 +53,7 @@ public:
 class OracleWriteLocalState : public LocalFunctionData {
 public:
 	OracleWriteLocalState(std::shared_ptr<OracleConnectionHandle> conn, OCIStmt *stmthp);
-	~OracleWriteLocalState();
+	~OracleWriteLocalState() override;
 
 	void Sink(DataChunk &chunk, const vector<string> &oracle_types);
 	void Flush();

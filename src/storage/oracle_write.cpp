@@ -16,8 +16,9 @@ static void CheckOCIError(sword status, OCIError *errhp, const std::string &msg)
 	text errbuf[512];
 	sb4 errcode = 0;
 	if (errhp) {
-		OCIErrorGet((dvoid *)errhp, (ub4)1, (text *)NULL, &errcode, errbuf, (ub4)sizeof(errbuf), OCI_HTYPE_ERROR);
-		throw IOException(msg + ": " + std::string((char *)errbuf));
+		OCIErrorGet(reinterpret_cast<dvoid *>(errhp), (ub4)1, nullptr, &errcode, errbuf, (ub4)sizeof(errbuf),
+		            OCI_HTYPE_ERROR);
+		throw IOException(msg + ": " + std::string(reinterpret_cast<char *>(errbuf)));
 	}
 	throw IOException(msg + ": (No Error Handle)");
 }
@@ -124,12 +125,13 @@ unique_ptr<FunctionData> OracleWriteBind(ClientContext &context, CopyFunctionBin
 			std::unordered_map<string, string> col_name_map; // UpperName -> ActualName
 
 			for (auto &row : query_res.rows) {
-				if (row.size() < 4)
+				if (row.size() < 4) {
 					continue;
-				string owner = row[0];
-				string table = row[1];
-				string col = row[2];
-				string type = row[3];
+				}
+				const string &owner = row[0];
+				const string &table = row[1];
+				const string &col = row[2];
+				const string &type = row[3];
 
 				if (best_table_name.empty()) {
 					best_table_name = table;
@@ -148,8 +150,9 @@ unique_ptr<FunctionData> OracleWriteBind(ClientContext &context, CopyFunctionBin
 					}
 				}
 
-				if (table == result->object_name)
+				if (table == result->object_name) {
 					found_exact = true;
+				}
 
 				if (table == best_table_name) {
 					col_type_map[col] = type;
@@ -204,12 +207,16 @@ unique_ptr<FunctionData> OracleWriteBind(ClientContext &context, CopyFunctionBin
 OracleWriteGlobalState::OracleWriteGlobalState(std::shared_ptr<OracleConnectionHandle> conn, const string &query)
     : connection(std::move(conn)), stmthp(nullptr) {
 	auto ctx = connection->Get();
-	CheckOCIError(OCIHandleAlloc(ctx->envhp, (dvoid **)&stmthp, OCI_HTYPE_STMT, 0, nullptr), ctx->errhp,
-	              "OCIHandleAlloc stmthp");
+	CheckOCIError(OCIHandleAlloc(ctx->envhp, reinterpret_cast<dvoid **>(&stmthp), OCI_HTYPE_STMT, 0, nullptr),
+	              ctx->errhp, "OCIHandleAlloc stmthp");
 
-	CheckOCIError(
-	    OCIStmtPrepare(stmthp, ctx->errhp, (OraText *)query.c_str(), query.size(), OCI_NTV_SYNTAX, OCI_DEFAULT),
-	    ctx->errhp, "OCIStmtPrepare");
+	// Make a mutable copy of query string for OCI
+	std::vector<char> query_buffer(query.begin(), query.end());
+	query_buffer.push_back(0);
+
+	CheckOCIError(OCIStmtPrepare(stmthp, ctx->errhp, reinterpret_cast<OraText *>(query_buffer.data()),
+	                             static_cast<ub4>(query.size()), OCI_NTV_SYNTAX, OCI_DEFAULT),
+	              ctx->errhp, "OCIStmtPrepare");
 }
 
 OracleWriteGlobalState::~OracleWriteGlobalState() {
@@ -220,7 +227,7 @@ OracleWriteGlobalState::~OracleWriteGlobalState() {
 
 unique_ptr<GlobalFunctionData> OracleWriteInitGlobal(ClientContext &context, FunctionData &bind_data,
                                                      const string &file_path) {
-	auto &data = (OracleWriteBindData &)bind_data;
+	auto &data = bind_data.Cast<OracleWriteBindData>();
 
 	// Acquire connection
 	OracleSettings settings; // Default settings
@@ -234,14 +241,16 @@ unique_ptr<GlobalFunctionData> OracleWriteInitGlobal(ClientContext &context, Fun
 	sql += KeywordHelper::WriteQuoted(data.object_name, '"') + " (";
 
 	for (idx_t i = 0; i < data.column_names.size(); i++) {
-		if (i > 0)
+		if (i > 0) {
 			sql += ", ";
+		}
 		sql += KeywordHelper::WriteQuoted(data.column_names[i], '"');
 	}
 	sql += ") VALUES (";
 	for (idx_t i = 0; i < data.column_names.size(); i++) {
-		if (i > 0)
+		if (i > 0) {
 			sql += ", ";
+		}
 
 		string type = StringUtil::Upper(data.oracle_types[i]);
 		string placeholder = ":" + std::to_string(i + 1);
@@ -282,9 +291,9 @@ unique_ptr<LocalFunctionData> OracleWriteInitLocal(ExecutionContext &context, Fu
 
 void OracleWriteSink(ExecutionContext &context, FunctionData &bind_data, GlobalFunctionData &gstate_p,
                      LocalFunctionData &lstate_p, DataChunk &input) {
-	auto &gstate = (OracleWriteGlobalState &)gstate_p;
-	auto &lstate = (OracleWriteLocalState &)lstate_p;
-	auto &data = (OracleWriteBindData &)bind_data;
+	auto &gstate = gstate_p.Cast<OracleWriteGlobalState>();
+	auto &lstate = lstate_p.Cast<OracleWriteLocalState>();
+	auto &data = bind_data.Cast<OracleWriteBindData>();
 
 	if (!lstate.connection) {
 		lstate = OracleWriteLocalState(gstate.connection, gstate.stmthp);
@@ -295,8 +304,9 @@ void OracleWriteSink(ExecutionContext &context, FunctionData &bind_data, GlobalF
 
 void OracleWriteLocalState::Sink(DataChunk &chunk, const vector<string> &oracle_types) {
 	idx_t count = chunk.size();
-	if (count == 0)
+	if (count == 0) {
 		return;
+	}
 
 	// Determine max sizes for buffer allocation
 	vector<size_t> required_sizes(chunk.ColumnCount(), 4096);
@@ -318,8 +328,9 @@ void OracleWriteLocalState::Sink(DataChunk &chunk, const vector<string> &oracle_
 				} else {
 					s = val.ToString();
 				}
-				if (s.size() > max_len)
+				if (s.size() > max_len) {
 					max_len = s.size();
+				}
 			}
 		}
 
@@ -373,15 +384,16 @@ void OracleWriteLocalState::Sink(DataChunk &chunk, const vector<string> &oracle_
 
 			auto ctx = connection->Get();
 			CheckOCIError(OCIBindByPos(stmthp, &binds[col_idx], ctx->errhp, col_idx + 1, bind_buffers[col_idx].data(),
-			                           current_buffer_sizes[col_idx], bind_type, indicator_buffers[col_idx].data(),
-			                           length_buffers[col_idx].data(), nullptr, 0, nullptr, OCI_DEFAULT),
+			                           static_cast<sb4>(current_buffer_sizes[col_idx]), bind_type,
+			                           indicator_buffers[col_idx].data(), length_buffers[col_idx].data(), nullptr, 0,
+			                           nullptr, OCI_DEFAULT),
 			              ctx->errhp, "OCIBindByPos");
 
 			// Set up array binding stride for batch inserts
 			CheckOCIError(OCIBindArrayOfStruct(binds[col_idx], ctx->errhp,
 			                                   static_cast<ub4>(current_buffer_sizes[col_idx]), // data skip
-			                                   sizeof(sb2),                                     // indicator skip
-			                                   sizeof(ub2),                                     // length skip
+			                                   static_cast<ub4>(sizeof(sb2)),                   // indicator skip
+			                                   static_cast<ub4>(sizeof(ub2)),                   // length skip
 			                                   0),                                              // return code skip
 			              ctx->errhp, "OCIBindArrayOfStruct");
 		}
@@ -451,7 +463,7 @@ void OracleWriteLocalState::Flush() {
 }
 
 void OracleWriteFinalize(ClientContext &context, FunctionData &bind_data, GlobalFunctionData &gstate_p) {
-	auto &gstate = (OracleWriteGlobalState &)gstate_p;
+	auto &gstate = gstate_p.Cast<OracleWriteGlobalState>();
 	if (gstate.connection) {
 		auto ctx = gstate.connection->Get();
 		CheckOCIError(OCITransCommit(ctx->svchp, ctx->errhp, OCI_DEFAULT), ctx->errhp, "OCITransCommit");

@@ -468,6 +468,55 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &context, Ta
 	auto &bind = input.bind_data->Cast<OracleBindData>();
 	auto state = make_uniq<OracleScanState>(bind.column_names.size());
 
+	// Populate column mapping: output column index -> buffer index
+	// This handles cases where bind_data (query) produces more columns than DuckDB requests (e.g. filters)
+	if (!input.column_ids.empty()) {
+		state->column_mapping.resize(input.column_ids.size());
+		for (idx_t i = 0; i < input.column_ids.size(); i++) {
+			idx_t col_idx = input.column_ids[i];
+			if (col_idx < bind.original_names.size()) {
+				string name = bind.original_names[col_idx];
+				// Find name in bind.column_names
+				bool found = false;
+				for (idx_t j = 0; j < bind.column_names.size(); j++) {
+					if (bind.column_names[j] == name) {
+						state->column_mapping[i] = j;
+						found = true;
+						break;
+					}
+				}
+				if (!found) {
+					// Should not happen if logic is correct
+					state->column_mapping[i] = i;
+				}
+			} else {
+				state->column_mapping[i] = i;
+			}
+		}
+	} else if (!input.projection_ids.empty()) {
+		// Projection IDs might be used instead
+		state->column_mapping.resize(input.projection_ids.size());
+		for (idx_t i = 0; i < input.projection_ids.size(); i++) {
+			idx_t col_idx = input.projection_ids[i];
+			if (col_idx < bind.original_names.size()) {
+				string name = bind.original_names[col_idx];
+				bool found = false;
+				for (idx_t j = 0; j < bind.column_names.size(); j++) {
+					if (bind.column_names[j] == name) {
+						state->column_mapping[i] = j;
+						found = true;
+						break;
+					}
+				}
+				if (!found) {
+					state->column_mapping[i] = i;
+				}
+			} else {
+				state->column_mapping[i] = i;
+			}
+		}
+	}
+
 	state->conn_handle = bind.conn_handle;
 	if (!state->conn_handle) {
 		state->conn_handle = OracleConnectionManager::Instance().Acquire(bind.connection_string, bind.settings);
@@ -715,34 +764,38 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 
 		for (row_count = 0; row_count < rows_fetched; row_count++) {
 			for (idx_t col_idx = 0; col_idx < output.ColumnCount(); col_idx++) {
-				if (gstate.indicators[col_idx][row_count] == -1) {
+				idx_t buffer_idx = col_idx;
+				if (col_idx < gstate.column_mapping.size()) {
+					buffer_idx = gstate.column_mapping[col_idx];
+				} else if (gstate.column_mapping.empty()) {
+					// No mapping (identity), but be safe
+					buffer_idx = col_idx;
+				}
+
+				if (buffer_idx >= gstate.indicators.size()) {
+					continue;
+				}
+
+				if (gstate.indicators[buffer_idx][row_count] == -1) {
 					FlatVector::SetNull(output.data[col_idx], row_count, true);
 					continue;
 				}
 
-				ub4 element_size = gstate.buffers[col_idx].size() / STANDARD_VECTOR_SIZE;
-				char *ptr = (char *)gstate.buffers[col_idx].data() + (row_count * element_size);
-				ub2 actual_len = gstate.return_lens[col_idx][row_count];
-
-				if (getenv("ORACLE_DEBUG")) {
-					// Show raw buffer content for debugging
-					string raw_preview(ptr, std::min((ub2)50, actual_len));
-					fprintf(stderr, "[oracle] Fetch col=%lu row=%lu type=%s len=%u raw='%s'\n", (unsigned long)col_idx,
-					        (unsigned long)row_count, output.GetTypes()[col_idx].ToString().c_str(),
-					        (unsigned)actual_len, raw_preview.c_str());
-				}
+				ub4 element_size = gstate.buffers[buffer_idx].size() / STANDARD_VECTOR_SIZE;
+				char *ptr = (char *)gstate.buffers[buffer_idx].data() + (row_count * element_size);
+				ub2 actual_len = gstate.return_lens[buffer_idx][row_count];
 
 				switch (output.GetTypes()[col_idx].id()) {
 				case LogicalTypeId::VARCHAR:
 				case LogicalTypeId::BLOB: {
-					string_t val(ptr, gstate.return_lens[col_idx][row_count]);
+					string_t val(ptr, gstate.return_lens[buffer_idx][row_count]);
 					FlatVector::GetData<string_t>(output.data[col_idx])[row_count] =
 					    StringVector::AddString(output.data[col_idx], val);
 					break;
 				}
 				case LogicalTypeId::BIGINT: {
 					// Fetch as string, parse to int64
-					string_t val(ptr, gstate.return_lens[col_idx][row_count]);
+					string_t val(ptr, gstate.return_lens[buffer_idx][row_count]);
 					string s = val.GetString();
 					try {
 						FlatVector::GetData<int64_t>(output.data[col_idx])[row_count] = std::stoll(s);
@@ -753,7 +806,7 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 				}
 				case LogicalTypeId::DOUBLE: {
 					// Fetch as string, parse to double
-					string_t val(ptr, gstate.return_lens[col_idx][row_count]);
+					string_t val(ptr, gstate.return_lens[buffer_idx][row_count]);
 					string s = val.GetString();
 					try {
 						FlatVector::GetData<double>(output.data[col_idx])[row_count] = std::stod(s);
@@ -765,7 +818,7 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 				case LogicalTypeId::DECIMAL: {
 					// Oracle NUMBER -> DuckDB DECIMAL
 					// Fetch as string, convert using DuckDB's decimal conversion
-					string_t val(ptr, gstate.return_lens[col_idx][row_count]);
+					string_t val(ptr, gstate.return_lens[buffer_idx][row_count]);
 					string s = val.GetString();
 					try {
 						// Use Value::DECIMAL to parse and convert
@@ -778,12 +831,12 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 				}
 				case LogicalTypeId::TIMESTAMP:
 					FlatVector::GetData<timestamp_t>(output.data[col_idx])[row_count] =
-					    ParseOciTimestamp(ptr, gstate.return_lens[col_idx][row_count]);
+					    ParseOciTimestamp(ptr, gstate.return_lens[buffer_idx][row_count]);
 					break;
 				case LogicalTypeId::LIST: {
 					// Parse VECTOR JSON array to LIST<FLOAT>
 					// VECTOR_SERIALIZE returns "[1.0, 2.0, 3.0]" format
-					string_t val(ptr, gstate.return_lens[col_idx][row_count]);
+					string_t val(ptr, gstate.return_lens[buffer_idx][row_count]);
 					string json_str = val.GetString();
 					auto list_val = ParseVectorJsonToList(json_str);
 					// Use SetValue for proper LIST handling in table function output
