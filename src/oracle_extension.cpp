@@ -556,33 +556,40 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &context, Ta
 					case LogicalTypeId::DOUBLE:
 						type = SQLT_STR; // Fetch as string
 						break;
-					case LogicalTypeId::BLOB:
-						if (col_idx < bind.oci_types.size()) {
-							auto oci_type = bind.oci_types[col_idx];
-							if (oci_type == SQLT_BLOB) {
-								type = SQLT_LBI; // BLOB -> Long Binary
-							} else if (oci_type == SQLT_CLOB) {
-								type = SQLT_LNG; // CLOB -> Long
-							} else {
-								type = SQLT_STR; // RAW -> Hex String
-							}
-						} else {
-							type = SQLT_STR;
-						}
-						break;
-					default:
+					            						case LogicalTypeId::BLOB:
+					            							if (col_idx < bind.oci_types.size()) {
+					            								auto oci_type = bind.oci_types[col_idx];
+					            								if (oci_type == SQLT_BLOB) {
+					            									type = SQLT_BIN; // BLOB -> Binary
+					            								} else if (oci_type == SQLT_CLOB) {
+					            									type = SQLT_BIN; // CLOB -> Binary
+					            								} else {
+					            									type = SQLT_BIN; // RAW -> Binary
+					            								}
+					            							} else {
+					            								type = SQLT_STR;
+					            							}
+					            							state->buffers[col_idx].resize(size * STANDARD_VECTOR_SIZE);
+					            							break;					default:
 						type = SQLT_STR;
 						break;
 					}
 				}
 				state->buffers[col_idx].resize(size * STANDARD_VECTOR_SIZE);
 		
-				CheckOCIError(OCIDefineByPos(state->stmt.get(), &state->defines[col_idx], state->err, col_idx + 1,
-				                             state->buffers[col_idx].data(), size, type, state->indicators[col_idx].data(),
-				                             state->return_lens[col_idx].data(), nullptr, OCI_DEFAULT),
-				              state->err, "Failed to define OCI column");
-		CheckOCIError(OCIDefineArrayOfStruct(state->defines[col_idx], state->err, size, sizeof(sb2), sizeof(ub2), 0),
-		              state->err, "Failed to set OCI array of struct");
+								CheckOCIError(OCIDefineByPos(state->stmt.get(), &state->defines[col_idx], state->err, col_idx + 1,
+		
+								                             state->buffers[col_idx].data(), size, type, state->indicators[col_idx].data(),
+		
+								                             state->return_lens[col_idx].data(), nullptr, OCI_DEFAULT),
+		
+								              state->err, "Failed to define OCI column");
+		
+						
+		
+								CheckOCIError(OCIDefineArrayOfStruct(state->defines[col_idx], state->err, size, sizeof(sb2), sizeof(ub2), 0),
+		
+								              state->err, "Failed to set OCI array of struct");
 	}
 	state->defines_bound = true;
 	return std::move(state);

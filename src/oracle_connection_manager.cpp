@@ -219,8 +219,8 @@ std::shared_ptr<OracleContext> OracleConnectionManager::CreateConnection(const s
 		OCIHandleFree(stmt, OCI_HTYPE_STMT);
 	}
 
-	// Enable statement cache
-	ub4 stmt_cache_size = 32;
+	// Enable statement cache (Disable for debugging shift issue)
+	ub4 stmt_cache_size = 0;
 	OCIAttrSet(ctx->svchp, OCI_HTYPE_SVCCTX, &stmt_cache_size, 0, OCI_ATTR_STMTCACHESIZE, ctx->errhp);
 
 	// Default call timeout for operations on this service context

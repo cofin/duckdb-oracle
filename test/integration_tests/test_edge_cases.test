@@ -52,7 +52,7 @@ statement ok
 SELECT oracle_clear_cache();
 
 query ITIT
-SELECT id, val_str, val_num, CAST(val_date AS DATE) FROM ora.null_test ORDER BY id
+SELECT id, val_str, val_num, CAST(val_date AS DATE) FROM ora.DUCKDB_TEST.null_test ORDER BY id
 ----
 1	NULL	NULL	NULL
 2	Not Null	123	2024-01-01
@@ -79,7 +79,7 @@ statement ok
 SELECT oracle_clear_cache();
 
 query I
-SELECT * FROM ora.empty_test
+SELECT * FROM ora.DUCKDB_TEST.empty_test
 ----
 
 # --- Large Strings (CLOB/VARCHAR) ---
@@ -99,9 +99,9 @@ SELECT oracle_execute('ora', '
 statement ok
 SELECT oracle_execute('ora', 'CREATE TABLE large_text (content CLOB)');
 
-# Insert 4000+ chars
+# Insert 4000+ chars (use TO_CLOB to avoid VARCHAR2 4000 limit on concat)
 statement ok
-SELECT oracle_execute('ora', 'INSERT INTO large_text VALUES (RPAD(''A'', 4000, ''A'') || ''B'')');
+SELECT oracle_execute('ora', 'INSERT INTO large_text VALUES (TO_CLOB(RPAD(''A'', 4000, ''A'')) || ''B'')');
 
 # Clear cache
 statement ok
@@ -109,7 +109,7 @@ SELECT oracle_clear_cache();
 
 # Verify length (4001)
 query I
-SELECT LENGTH(content) FROM ora.large_text
+SELECT LENGTH(content) FROM ora.DUCKDB_TEST.large_text
 ----
 4001
 

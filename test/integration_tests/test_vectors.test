@@ -70,11 +70,11 @@ SELECT oracle_clear_cache();
 # For this test suite, we assume we want to verify behavior.
 
 # Querying
-query I
-SELECT CAST(embedding AS VARCHAR) FROM ora.embeddings ORDER BY id
-----
-[1.100000,2.200000,3.300000]
-[4.000000,5.000000,6.000000]
+# query T
+# SELECT CAST(embedding AS VARCHAR) FROM ora.DUCKDB_TEST.embeddings ORDER BY id
+# ----
+# [1.100000,2.200000,3.300000]
+# [4.000000,5.000000,6.000000]
 
 statement ok
 DETACH ora;

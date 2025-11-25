@@ -21,7 +21,7 @@ ATTACH '' AS ora (TYPE ORACLE, SECRET 'test_oracle');
 # Needs a Type and a Package/Function
 
 statement ok
-SELECT oracle_execute('ora', ''
+SELECT oracle_execute('ora', '
     CREATE OR REPLACE TYPE t_row AS OBJECT (
         id NUMBER,
         description VARCHAR2(50)
@@ -29,12 +29,12 @@ SELECT oracle_execute('ora', ''
 ');
 
 statement ok
-SELECT oracle_execute('ora', ''
+SELECT oracle_execute('ora', '
     CREATE OR REPLACE TYPE t_tab IS TABLE OF t_row
 ');
 
 statement ok
-SELECT oracle_execute('ora', ''
+SELECT oracle_execute('ora', '
     CREATE OR REPLACE FUNCTION get_rows(p_count NUMBER) RETURN t_tab PIPELINED AS
     BEGIN
         FOR i IN 1 .. p_count LOOP
@@ -50,7 +50,7 @@ SELECT oracle_execute('ora', ''
 # However, we can use `oracle_query` to query them.
 
 query IT
-SELECT * FROM oracle_query('ora', ''SELECT * FROM TABLE(get_rows(3))') ORDER BY id
+SELECT * FROM oracle_query('ora', 'SELECT * FROM TABLE(get_rows(3))') ORDER BY id
 ----
 1	Row 1
 2	Row 2
@@ -66,7 +66,7 @@ INSERT INTO local_ids VALUES (1), (3);
 query IT
 SELECT l.id, r.description 
 FROM local_ids l 
-JOIN oracle_query('ora', ''SELECT * FROM TABLE(get_rows(5))') r ON l.id = r.id
+JOIN oracle_query('ora', 'SELECT * FROM TABLE(get_rows(5))') r ON l.id = r.id
 ORDER BY l.id
 ----
 1	Row 1
@@ -74,13 +74,13 @@ ORDER BY l.id
 
 # Cleanup
 statement ok
-SELECT oracle_execute('ora', ''DROP FUNCTION get_rows');
+SELECT oracle_execute('ora', 'DROP FUNCTION get_rows');
 
 statement ok
-SELECT oracle_execute('ora', ''DROP TYPE t_tab');
+SELECT oracle_execute('ora', 'DROP TYPE t_tab');
 
 statement ok
-SELECT oracle_execute('ora', ''DROP TYPE t_row');
+SELECT oracle_execute('ora', 'DROP TYPE t_row');
 
 statement ok
 DETACH ora;

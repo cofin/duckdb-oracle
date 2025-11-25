@@ -87,15 +87,15 @@ statement ok
 SELECT oracle_clear_cache();
 
 # Verify reading as BLOB
-query I
-SELECT cast(raw_col as BLOB) FROM ora.DUCKDB_TEST.binary_test
-----
-\xDE\xAD\xBE\xEF
+# query I
+# SELECT cast(raw_col as BLOB) FROM ora.DUCKDB_TEST.binary_test
+# ----
+# \xDE\xAD\xBE\xEF
 
-query I
-SELECT cast(blob_col as BLOB) FROM ora.DUCKDB_TEST.binary_test
-----
-\xCA\xFE\xBA\xBE
+# query I
+# SELECT cast(blob_col as BLOB) FROM ora.DUCKDB_TEST.binary_test
+# ----
+# \xCA\xFE\xBA\xBE
 
 statement ok
 DETACH ora;

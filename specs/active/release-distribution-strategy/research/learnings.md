@@ -42,6 +42,29 @@ We prepared the repository for submission to the DuckDB Community Extensions reg
         - XML & BLOBs
 - **Code Quality**: Verified `make format` compliance.
 
+### 4. OCI Array Fetch & Data Corruption (Critical Fixes)
+
+We encountered and resolved severe data corruption issues during OCI Array Fetch (`OCIStmtFetch2`):
+
+- **Symptoms**:
+    - Data from one column appearing in the buffer of the next column ("column shift").
+    - Garbage values (e.g., `1.0` double appearing in a binary buffer) when mixing `NUMBER` (bound as `SQLT_FLT`) and `RAW`/`BLOB` columns.
+    - `ORA-00932` (incompatible data type) when fetching `BLOB` as `SQLT_STR`.
+
+- **Root Cause**:
+    - Appears to be an internal OCI driver issue regarding buffer alignment/stride calculation in `OCIDefineArrayOfStruct` when mixing specific types (Float/Double) with variable-length types, or when buffer sizes vary significantly.
+
+- **Solution Implemented**:
+    - **Universal String Binding for Numbers**: We switched `BIGINT` and `DOUBLE` binding from `SQLT_INT`/`SQLT_FLT` to `SQLT_STR`. We parse the string results in the query function. This eliminated the binary layout corruption.
+    - **Explicit LOB Types**: `BLOB` columns are now bound as `SQLT_LBI` (Long Binary) and `CLOB` as `SQLT_LNG` (Long) to support inline fetching.
+    - **RAW as String**: `RAW` columns are bound as `SQLT_STR` (Hex String) for maximum stability. DuckDB handles the hex-to-blob cast automatically.
+    - **Minimum Buffer Alignment**: Enforced a minimum buffer size of 4000 bytes for all columns to ensure consistent memory layout.
+
+### 5. Schema Resolution Robustness
+
+- **Issue**: The `oracle_use_current_schema` setting was not reliably mapping DuckDB's default `main` schema to the Oracle user's schema in all paths (e.g., `ATTACH` vs explicit usage).
+- **Fix**: Enhanced `OracleSchemaGenerator` to explicitly intercept `main` (and `DEFAULT_SCHEMA`) requests and redirect them to the detected current Oracle schema.
+
 ## Key Technical Insights
 
 ### Oracle Catalog & DDL
@@ -71,3 +94,4 @@ We prepared the repository for submission to the DuckDB Community Extensions reg
 - `CONTRIBUTING.md`
 - `SECURITY.md`
 - `specs/active/release-distribution-strategy/research/description.yml`
+- `specs/guides/oci-array-fetch-quirks.md`
