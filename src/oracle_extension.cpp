@@ -10,6 +10,7 @@
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/common/limits.hpp"
 #include "duckdb/common/types/value.hpp"
+#include "duckdb/common/vector_operations/generic_executor.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
@@ -595,6 +596,69 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &context, Ta
 	return std::move(state);
 }
 
+//! Parse VECTOR_SERIALIZE JSON array "[1.0, 2.0, 3.0]" to LIST<FLOAT>
+static Value ParseVectorJsonToList(const string &json_str) {
+	vector<Value> elements;
+
+	// Trim whitespace
+	string s = json_str;
+	StringUtil::Trim(s);
+
+	// Handle empty or invalid input
+	if (s.empty() || s[0] != '[') {
+		return Value::LIST(LogicalType::FLOAT, std::move(elements));
+	}
+
+	// Remove brackets
+	if (s.size() >= 2 && s.front() == '[' && s.back() == ']') {
+		s = s.substr(1, s.size() - 2);
+	}
+
+	// Parse comma-separated values
+	if (!s.empty()) {
+		auto parts = StringUtil::Split(s, ',');
+		for (auto &part : parts) {
+			StringUtil::Trim(part);
+			if (!part.empty()) {
+				try {
+					float val = std::stof(part);
+					elements.push_back(Value::FLOAT(val));
+				} catch (...) {
+					// Skip invalid values
+				}
+			}
+		}
+	}
+
+	return Value::LIST(LogicalType::FLOAT, std::move(elements));
+}
+
+//! Decode hex string to binary BLOB
+static string DecodeHexToBlob(const string &hex_str) {
+	string result;
+	result.reserve(hex_str.size() / 2);
+
+	for (size_t i = 0; i + 1 < hex_str.size(); i += 2) {
+		char high = hex_str[i];
+		char low = hex_str[i + 1];
+
+		auto hex_digit = [](char c) -> int {
+			if (c >= '0' && c <= '9')
+				return c - '0';
+			if (c >= 'A' && c <= 'F')
+				return c - 'A' + 10;
+			if (c >= 'a' && c <= 'f')
+				return c - 'a' + 10;
+			return 0;
+		};
+
+		char byte = static_cast<char>((hex_digit(high) << 4) | hex_digit(low));
+		result.push_back(byte);
+	}
+
+	return result;
+}
+
 void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &bind_data = (OracleBindData &)*data.bind_data;
 	auto &gstate = data.global_state->Cast<OracleScanState>();
@@ -679,6 +743,15 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 					FlatVector::GetData<timestamp_t>(output.data[col_idx])[row_count] =
 					    ParseOciTimestamp(ptr, gstate.return_lens[col_idx][row_count]);
 					break;
+				case LogicalTypeId::LIST: {
+					// Parse VECTOR JSON array to LIST<FLOAT>
+					// VECTOR_SERIALIZE returns "[1.0, 2.0, 3.0]" format
+					string_t val(ptr, gstate.return_lens[col_idx][row_count]);
+					string json_str = val.GetString();
+					auto list_val = ParseVectorJsonToList(json_str);
+					ListVector::PushBack(output.data[col_idx], list_val);
+					break;
+				}
 				default:
 					break;
 				}

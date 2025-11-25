@@ -11,13 +11,93 @@
 
 namespace duckdb {
 
-static LogicalType MapOracleColumn(const string &data_type, idx_t precision, idx_t scale, idx_t char_len) {
+//! Generate Oracle SQL expression for type conversion based on column category and Oracle version
+static string GetConversionExpression(const string &quoted_col, const OracleColumnMetadata &meta,
+                                      const OracleVersionInfo &version) {
+	switch (meta.category) {
+	case OracleTypeCategory::SPATIAL:
+		// Convert SDO_GEOMETRY to WKT string using Oracle's built-in function
+		return StringUtil::Format("SDO_UTIL.TO_WKTGEOMETRY(%s)", quoted_col.c_str());
+
+	case OracleTypeCategory::VECTOR:
+		// VECTOR type (Oracle 23ai+): use VECTOR_SERIALIZE if available (23.4+), otherwise TO_CHAR
+		if (version.supports_vector_serialize) {
+			return StringUtil::Format("VECTOR_SERIALIZE(%s)", quoted_col.c_str());
+		}
+		// Fallback for older 23ai versions
+		return StringUtil::Format("TO_CHAR(%s)", quoted_col.c_str());
+
+	case OracleTypeCategory::JSON:
+		// JSON type (Oracle 21c+): serialize to string for reliable fetch
+		if (version.supports_json_type) {
+			return StringUtil::Format("JSON_SERIALIZE(%s RETURNING VARCHAR2(32767))", quoted_col.c_str());
+		}
+		// Pre-21c: JSON stored as VARCHAR/CLOB, no conversion needed
+		return quoted_col;
+
+	case OracleTypeCategory::XML:
+		// XMLTYPE: serialize to CLOB for reliable fetch
+		return StringUtil::Format("XMLSERIALIZE(CONTENT %s AS CLOB)", quoted_col.c_str());
+
+	case OracleTypeCategory::LOB_BLOB:
+		// BLOB: convert to hex for reliable fetch (avoids OCI buffer alignment issues)
+		if (meta.needs_server_conversion) {
+			return StringUtil::Format("RAWTOHEX(%s)", quoted_col.c_str());
+		}
+		return quoted_col;
+
+	case OracleTypeCategory::LOB_CLOB:
+		// CLOB: convert to VARCHAR if needed (for very large CLOBs)
+		if (meta.needs_server_conversion) {
+			return StringUtil::Format("TO_CHAR(%s)", quoted_col.c_str());
+		}
+		return quoted_col;
+
+	case OracleTypeCategory::RAW:
+		// RAW: convert to hex for reliable fetch (avoids OCI buffer alignment issues)
+		if (meta.needs_server_conversion) {
+			return StringUtil::Format("RAWTOHEX(%s)", quoted_col.c_str());
+		}
+		return quoted_col;
+
+	case OracleTypeCategory::STANDARD:
+	case OracleTypeCategory::NUMERIC:
+	case OracleTypeCategory::TEMPORAL:
+	case OracleTypeCategory::UNKNOWN:
+	default:
+		// No conversion needed
+		return quoted_col;
+	}
+}
+
+static LogicalType MapOracleColumn(const string &data_type, idx_t precision, idx_t scale, idx_t char_len,
+                                   const OracleSettings &settings) {
 	auto upper = StringUtil::Upper(data_type);
+
+	// VECTOR type (Oracle 23ai+) - map to LIST<FLOAT> or VARCHAR based on setting
+	if (upper == "VECTOR" || StringUtil::StartsWith(upper, "VECTOR(")) {
+		if (settings.vector_to_list) {
+			// VECTOR_SERIALIZE returns JSON array "[1.0, 2.0, 3.0]"
+			// We parse this in OracleQueryFunction and return as LIST<FLOAT>
+			return LogicalType::LIST(LogicalType::FLOAT);
+		}
+		return LogicalType::VARCHAR;
+	}
 
 	// Spatial geometry type detection
 	if (upper == "SDO_GEOMETRY" || upper == "MDSYS.SDO_GEOMETRY") {
 		// Map to VARCHAR for WKT string representation
 		// TODO: Map to GEOMETRY type after spatial extension integration
+		return LogicalType::VARCHAR;
+	}
+
+	// JSON type (Oracle 21c+) - always VARCHAR (JSON_SERIALIZE output)
+	if (upper == "JSON") {
+		return LogicalType::VARCHAR;
+	}
+
+	// XML type - always VARCHAR (XMLSERIALIZE output)
+	if (upper == "XMLTYPE" || upper == "SYS.XMLTYPE") {
 		return LogicalType::VARCHAR;
 	}
 
@@ -77,7 +157,7 @@ static void LoadColumns(OracleCatalogState &state, const string &schema, const s
 		idx_t scale = parse_idx(row[4]);
 		auto nullable = row[5] == "Y";
 
-		auto logical = MapOracleColumn(data_type, precision, scale, data_len);
+		auto logical = MapOracleColumn(data_type, precision, scale, data_len, state.settings);
 		ColumnDefinition col_def(col_name, logical);
 		columns.push_back(std::move(col_def));
 
@@ -123,7 +203,13 @@ TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_p
 	auto quoted_schema = KeywordHelper::WriteQuoted(schema_name, '"');
 	auto quoted_table = KeywordHelper::WriteQuoted(table_name, '"');
 
-	// Build column list with WKT conversion for spatial columns
+	// Get Oracle version info and settings for version-aware type conversions
+	const auto &version_info = state->GetVersionInfo();
+	const auto &settings = state->settings;
+
+	// Build column list with type conversions for problematic Oracle types
+	// This handles: SPATIAL, VECTOR, JSON, XML, LOB, RAW types
+	// Controlled by enable_type_conversion setting
 	string column_list;
 	idx_t col_idx = 0;
 	for (auto &col : columns.Physical()) {
@@ -133,16 +219,16 @@ TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_p
 
 		auto quoted_col = KeywordHelper::WriteQuoted(col.Name(), '"');
 
-		// Check if this column is a spatial geometry type
-		bool is_spatial = false;
-		if (col_idx < column_metadata.size()) {
-			is_spatial = column_metadata[col_idx].is_spatial;
-		}
-
-		if (is_spatial) {
-			// Convert SDO_GEOMETRY to WKT CLOB using Oracle's built-in function
-			column_list +=
-			    StringUtil::Format("SDO_UTIL.TO_WKTGEOMETRY(%s) AS %s", quoted_col.c_str(), quoted_col.c_str());
+		// Apply type-specific conversion if enabled and needed
+		if (settings.enable_type_conversion && col_idx < column_metadata.size()) {
+			const auto &meta = column_metadata[col_idx];
+			if (meta.RequiresQueryRewrite(version_info, settings.try_native_lobs)) {
+				// Generate conversion expression and alias
+				auto converted = GetConversionExpression(quoted_col, meta, version_info);
+				column_list += StringUtil::Format("%s AS %s", converted.c_str(), quoted_col.c_str());
+			} else {
+				column_list += quoted_col;
+			}
 		} else {
 			column_list += quoted_col;
 		}

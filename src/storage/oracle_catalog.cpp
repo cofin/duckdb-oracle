@@ -75,6 +75,15 @@ void OracleCatalogState::ApplyOptions(const unordered_map<string, Value> &option
 			settings.metadata_result_limit = val <= 0 ? 0 : static_cast<idx_t>(val);
 		} else if (key == "use_current_schema") {
 			settings.use_current_schema = entry.second.GetValue<bool>();
+		} else if (key == "try_native_lobs") {
+			settings.try_native_lobs = entry.second.GetValue<bool>();
+		} else if (key == "lob_max_size") {
+			auto val = entry.second.GetValue<int64_t>();
+			settings.lob_max_size = val <= 0 ? 0 : static_cast<idx_t>(val);
+		} else if (key == "vector_to_list") {
+			settings.vector_to_list = entry.second.GetValue<bool>();
+		} else if (key == "enable_type_conversion") {
+			settings.enable_type_conversion = entry.second.GetValue<bool>();
 		}
 	}
 }
@@ -85,6 +94,8 @@ void OracleCatalogState::ClearCaches() {
 	table_cache.clear();
 	object_cache.clear();
 	current_schema.clear();
+	version_detected = false;
+	version_info = OracleVersionInfo();
 	// Reset connection if caching is enabled; a fresh connect will be created lazily.
 	connection = make_uniq<OracleConnection>();
 }
@@ -146,6 +157,72 @@ void OracleCatalogState::DetectCurrentSchema() {
 		}
 	} catch (const std::exception &e) {
 	}
+}
+
+void OracleCatalogState::DetectOracleVersion() {
+	lock_guard<std::mutex> guard(lock);
+	if (version_detected) {
+		return;
+	}
+	EnsureConnectionInternal();
+	try {
+		// Try V$INSTANCE first (most reliable)
+		auto result = connection->Query("SELECT VERSION_FULL FROM V$INSTANCE");
+		string version_str;
+		if (!result.rows.empty() && !result.rows[0].empty()) {
+			version_str = result.rows[0][0];
+		} else {
+			// Fallback to PRODUCT_COMPONENT_VERSION
+			result = connection->Query(
+			    "SELECT VERSION FROM PRODUCT_COMPONENT_VERSION WHERE ROWNUM = 1");
+			if (!result.rows.empty() && !result.rows[0].empty()) {
+				version_str = result.rows[0][0];
+			}
+		}
+
+		if (!version_str.empty()) {
+			// Parse version string like "23.4.0.24.05" or "21.3.0.0.0"
+			auto parts = StringUtil::Split(version_str, '.');
+			if (!parts.empty()) {
+				try {
+					version_info.major = std::stoi(parts[0]);
+				} catch (...) {
+				}
+			}
+			if (parts.size() >= 2) {
+				try {
+					version_info.minor = std::stoi(parts[1]);
+				} catch (...) {
+				}
+			}
+			if (parts.size() >= 3) {
+				try {
+					version_info.patch = std::stoi(parts[2]);
+				} catch (...) {
+				}
+			}
+
+			// Set feature flags based on version
+			version_info.supports_json_type = (version_info.major >= 21);
+			version_info.supports_vector = (version_info.major >= 23);
+			version_info.supports_vector_serialize =
+			    (version_info.major > 23) || (version_info.major == 23 && version_info.minor >= 4);
+
+			if (settings.debug_show_queries) {
+				fprintf(stderr, "[oracle] Detected Oracle version: %d.%d.%d (JSON=%s, VECTOR=%s, VECTOR_SERIALIZE=%s)\n",
+				        version_info.major, version_info.minor, version_info.patch,
+				        version_info.supports_json_type ? "yes" : "no",
+				        version_info.supports_vector ? "yes" : "no",
+				        version_info.supports_vector_serialize ? "yes" : "no");
+			}
+		}
+	} catch (const std::exception &e) {
+		// Silently ignore version detection failures - assume older version
+		if (settings.debug_show_queries) {
+			fprintf(stderr, "[oracle] Version detection failed: %s\n", e.what());
+		}
+	}
+	version_detected = true;
 }
 
 vector<string> OracleCatalogState::ListSchemas() {

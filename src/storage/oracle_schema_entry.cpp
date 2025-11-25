@@ -35,13 +35,13 @@ public:
 	}
 
 	vector<string> GetDefaultEntries() override {
-		auto &ora_schema = (OracleSchemaEntry &)schema;
+		auto &ora_schema = schema.Cast<OracleSchemaEntry>();
 		// Use ListObjects with metadata_object_types setting
 		return state->ListObjects(ora_schema.oracle_schema, state->settings.metadata_object_types);
 	}
 
 	unique_ptr<CatalogEntry> CreateDefaultEntry(ClientContext &context, const string &entry_name) override {
-		auto &ora_schema = (OracleSchemaEntry &)schema;
+		auto &ora_schema = schema.Cast<OracleSchemaEntry>();
 		string schema_name = ora_schema.oracle_schema;
 
 		// Try on-demand loading if not in enumerated list (handles objects beyond limit)
@@ -144,8 +144,9 @@ public:
 		// Attempt connection early to fail fast
 		state->Connect();
 
-		// Detect current schema after successful connection
+		// Detect current schema and Oracle version after successful connection
 		state->DetectCurrentSchema();
+		state->DetectOracleVersion();
 
 		GetSchemaCatalogSet().SetDefaultGenerator(make_uniq<OracleSchemaGenerator>(*this, state));
 	}

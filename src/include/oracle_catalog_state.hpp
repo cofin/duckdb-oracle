@@ -12,6 +12,16 @@
 
 namespace duckdb {
 
+//! Oracle database version information with feature flags
+struct OracleVersionInfo {
+	int major = 0;
+	int minor = 0;
+	int patch = 0;
+	bool supports_json_type = false;         // Oracle 21c+ has native JSON type
+	bool supports_vector = false;            // Oracle 23ai+ has VECTOR type
+	bool supports_vector_serialize = false;  // Oracle 23.4+ has VECTOR_SERIALIZE function
+};
+
 //! Shared state per attached Oracle database used by generators for schemas/tables.
 class OracleCatalogState {
 public:
@@ -37,6 +47,12 @@ public:
 		return current_schema;
 	}
 
+	// Oracle version detection
+	void DetectOracleVersion();
+	const OracleVersionInfo &GetVersionInfo() const {
+		return version_info;
+	}
+
 	// Metadata enumeration
 	vector<string> ListSchemas();
 	vector<string> ListTables(const string &schema);
@@ -57,6 +73,8 @@ private:
 	std::mutex lock;
 	unique_ptr<OracleConnection> connection;
 	string current_schema;
+	OracleVersionInfo version_info;
+	bool version_detected = false;
 	vector<string> schema_cache;
 	unordered_map<string, vector<string>> table_cache;
 	unordered_map<string, vector<string>> object_cache;

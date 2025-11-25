@@ -69,12 +69,19 @@ SELECT oracle_clear_cache();
 # If this fails, it means we need to implement VECTOR support in the C++ code.
 # For this test suite, we assume we want to verify behavior.
 
-# Querying
-# query T
-# SELECT CAST(embedding AS VARCHAR) FROM ora.DUCKDB_TEST.embeddings ORDER BY id
-# ----
-# [1.100000,2.200000,3.300000]
-# [4.000000,5.000000,6.000000]
+# Query VECTOR column - returns as LIST<FLOAT> when vector_to_list=true (default)
+# The VECTOR_SERIALIZE function converts to "[1.1, 2.2, 3.3]" format
+query I
+SELECT embedding FROM ora.DUCKDB_TEST.embeddings ORDER BY id
+----
+[1.1, 2.2, 3.3]
+[4.0, 5.0, 6.0]
+
+# Also verify we can access elements as LIST
+query R
+SELECT embedding[1] FROM ora.DUCKDB_TEST.embeddings WHERE id = 1
+----
+1.1
 
 statement ok
 DETACH ora;

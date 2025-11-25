@@ -86,16 +86,18 @@ SELECT oracle_execute('ora', 'INSERT INTO binary_test VALUES (1, ''DEADBEEF'', H
 statement ok
 SELECT oracle_clear_cache();
 
-# Verify reading as BLOB
-# query I
-# SELECT cast(raw_col as BLOB) FROM ora.DUCKDB_TEST.binary_test
-# ----
-# \xDE\xAD\xBE\xEF
+# Verify reading RAW and BLOB columns
+# With enable_type_conversion=true and try_native_lobs=true (default), these use native fetch
+# The columns should return as BLOB type in DuckDB
+query I
+SELECT raw_col FROM ora.DUCKDB_TEST.binary_test WHERE id = 1
+----
+\xDE\xAD\xBE\xEF
 
-# query I
-# SELECT cast(blob_col as BLOB) FROM ora.DUCKDB_TEST.binary_test
-# ----
-# \xCA\xFE\xBA\xBE
+query I
+SELECT blob_col FROM ora.DUCKDB_TEST.binary_test WHERE id = 1
+----
+\xCA\xFE\xBA\xBE
 
 statement ok
 DETACH ora;
