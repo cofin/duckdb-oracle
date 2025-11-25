@@ -1,6 +1,6 @@
 # name: test/integration_tests/test_write_spatial.test
 # description: Test Oracle Write (COPY) for Spatial (SDO_GEOMETRY)
-# group: [oracle]
+# group: [integration_tests]
 
 require oracle
 

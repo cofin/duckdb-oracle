@@ -11,14 +11,14 @@ namespace duckdb {
 struct OracleWriteBindData : public FunctionData {
 	string table_name;
 	string connection_string;
-	
+
 	// Helper to reconstruct SQL
 	string schema_name;
 	string object_name;
-	
+
 	vector<string> column_names;
 	vector<LogicalType> column_types;
-	
+
 	// Oracle metadata for smart binding
 	vector<string> oracle_types; // e.g., "NUMBER", "BLOB", "SDO_GEOMETRY"
 
@@ -34,7 +34,7 @@ public:
 		result->oracle_types = oracle_types;
 		return std::move(result);
 	}
-	
+
 	bool Equals(const FunctionData &other_p) const override {
 		auto &other = (const OracleWriteBindData &)other_p;
 		return table_name == other.table_name && connection_string == other.connection_string;
@@ -67,14 +67,14 @@ private:
 
 	std::shared_ptr<OracleConnectionHandle> connection;
 	OCIStmt *stmthp;
-	
+
 	// Buffers for binding
 	std::vector<std::vector<char>> bind_buffers;
 	std::vector<std::vector<sb2>> indicator_buffers;
 	std::vector<std::vector<ub2>> length_buffers;
 	std::vector<OCIBind *> binds;
 	std::vector<size_t> current_buffer_sizes;
-	
+
 	static constexpr idx_t MAX_BATCH_SIZE = STANDARD_VECTOR_SIZE;
 };
 

@@ -8,17 +8,17 @@ namespace duckdb {
 
 //! Classification of Oracle column types for fetch/conversion strategy
 enum class OracleTypeCategory {
-	STANDARD,    // VARCHAR, CHAR, NCHAR - no conversion needed
-	NUMERIC,     // NUMBER - fetch as string, parse to int/double
-	TEMPORAL,    // DATE/TIMESTAMP - fetch as string, parse to timestamp
-	SPATIAL,     // SDO_GEOMETRY - convert via SDO_UTIL.TO_WKTGEOMETRY
-	VECTOR,      // VECTOR (23ai) - convert via VECTOR_SERIALIZE or native
-	JSON,        // JSON (21c+) - convert via JSON_SERIALIZE
-	LOB_CLOB,    // CLOB - try native, fallback to TO_CHAR
-	LOB_BLOB,    // BLOB - try native, fallback to RAWTOHEX
-	RAW,         // RAW - try native SQLT_BIN, fallback to RAWTOHEX
-	XML,         // XMLTYPE - convert via XMLSERIALIZE
-	UNKNOWN      // Fallback to VARCHAR
+	STANDARD, // VARCHAR, CHAR, NCHAR - no conversion needed
+	NUMERIC,  // NUMBER - fetch as string, parse to int/double
+	TEMPORAL, // DATE/TIMESTAMP - fetch as string, parse to timestamp
+	SPATIAL,  // SDO_GEOMETRY - convert via SDO_UTIL.TO_WKTGEOMETRY
+	VECTOR,   // VECTOR (23ai) - convert via VECTOR_SERIALIZE or native
+	JSON,     // JSON (21c+) - convert via JSON_SERIALIZE
+	LOB_CLOB, // CLOB - try native, fallback to TO_CHAR
+	LOB_BLOB, // BLOB - try native, fallback to RAWTOHEX
+	RAW,      // RAW - try native SQLT_BIN, fallback to RAWTOHEX
+	XML,      // XMLTYPE - convert via XMLSERIALIZE
+	UNKNOWN   // Fallback to VARCHAR
 };
 
 //! Metadata about Oracle column types for query rewriting and fetch strategy
@@ -26,10 +26,9 @@ struct OracleColumnMetadata {
 	string column_name;
 	string oracle_data_type;
 	OracleTypeCategory category;
-	bool needs_server_conversion;  // Determined at runtime based on type category
+	bool needs_server_conversion; // Determined at runtime based on type category
 
-	OracleColumnMetadata(const string &name, const string &data_type)
-	    : column_name(name), oracle_data_type(data_type) {
+	OracleColumnMetadata(const string &name, const string &data_type) : column_name(name), oracle_data_type(data_type) {
 		auto upper = StringUtil::Upper(data_type);
 
 		// Classify Oracle type
@@ -44,18 +43,18 @@ struct OracleColumnMetadata {
 			needs_server_conversion = true;
 		} else if (upper == "BLOB" || upper == "BFILE") {
 			category = OracleTypeCategory::LOB_BLOB;
-			needs_server_conversion = false;  // Try native first
+			needs_server_conversion = false; // Try native first
 		} else if (upper == "CLOB" || upper == "NCLOB") {
 			category = OracleTypeCategory::LOB_CLOB;
-			needs_server_conversion = false;  // Try native first
+			needs_server_conversion = false; // Try native first
 		} else if (upper == "RAW" || StringUtil::StartsWith(upper, "RAW(")) {
 			category = OracleTypeCategory::RAW;
-			needs_server_conversion = false;  // Try native first
+			needs_server_conversion = false; // Try native first
 		} else if (upper == "XMLTYPE" || upper == "SYS.XMLTYPE") {
 			category = OracleTypeCategory::XML;
 			needs_server_conversion = true;
-		} else if (upper == "NUMBER" || upper == "FLOAT" || upper == "BINARY_FLOAT" ||
-		           upper == "BINARY_DOUBLE" || StringUtil::StartsWith(upper, "NUMBER(")) {
+		} else if (upper == "NUMBER" || upper == "FLOAT" || upper == "BINARY_FLOAT" || upper == "BINARY_DOUBLE" ||
+		           StringUtil::StartsWith(upper, "NUMBER(")) {
 			category = OracleTypeCategory::NUMERIC;
 			needs_server_conversion = false;
 		} else if (upper == "DATE" || StringUtil::Contains(upper, "TIMESTAMP")) {
@@ -84,9 +83,9 @@ struct OracleColumnMetadata {
 		case OracleTypeCategory::XML:
 			return true;
 		case OracleTypeCategory::VECTOR:
-			return true;  // Always rewrite VECTOR for now (safer)
+			return true; // Always rewrite VECTOR for now (safer)
 		case OracleTypeCategory::JSON:
-			return version.supports_json_type;  // Only rewrite if native JSON type
+			return version.supports_json_type; // Only rewrite if native JSON type
 		case OracleTypeCategory::LOB_BLOB:
 		case OracleTypeCategory::RAW:
 			// If try_native_lobs is false, always convert to hex for safety

@@ -173,8 +173,7 @@ void OracleCatalogState::DetectOracleVersion() {
 			version_str = result.rows[0][0];
 		} else {
 			// Fallback to PRODUCT_COMPONENT_VERSION
-			result = connection->Query(
-			    "SELECT VERSION FROM PRODUCT_COMPONENT_VERSION WHERE ROWNUM = 1");
+			result = connection->Query("SELECT VERSION FROM PRODUCT_COMPONENT_VERSION WHERE ROWNUM = 1");
 			if (!result.rows.empty() && !result.rows[0].empty()) {
 				version_str = result.rows[0][0];
 			}
@@ -209,10 +208,10 @@ void OracleCatalogState::DetectOracleVersion() {
 			    (version_info.major > 23) || (version_info.major == 23 && version_info.minor >= 4);
 
 			if (settings.debug_show_queries) {
-				fprintf(stderr, "[oracle] Detected Oracle version: %d.%d.%d (JSON=%s, VECTOR=%s, VECTOR_SERIALIZE=%s)\n",
+				fprintf(stderr,
+				        "[oracle] Detected Oracle version: %d.%d.%d (JSON=%s, VECTOR=%s, VECTOR_SERIALIZE=%s)\n",
 				        version_info.major, version_info.minor, version_info.patch,
-				        version_info.supports_json_type ? "yes" : "no",
-				        version_info.supports_vector ? "yes" : "no",
+				        version_info.supports_json_type ? "yes" : "no", version_info.supports_vector ? "yes" : "no",
 				        version_info.supports_vector_serialize ? "yes" : "no");
 			}
 		}

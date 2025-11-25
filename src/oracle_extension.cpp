@@ -15,6 +15,7 @@
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
 #include "duckdb/planner/expression/bound_operator_expression.hpp"
+#include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -281,6 +282,11 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
                                             OracleCatalogState *state /* = nullptr */) {
 	auto result = bind_data_ptr ? unique_ptr<OracleBindData>(bind_data_ptr) : make_uniq<OracleBindData>();
 	result->connection_string = connection_string;
+
+	// Clear output vectors - they will be populated from OCI describe below.
+	// This prevents duplication when caller pre-populates vectors (e.g., GetScanFunction).
+	names.clear();
+	return_types.clear();
 	result->base_query = query;
 	result->query = query;
 	result->settings = GetOracleSettings(context, state);
@@ -535,63 +541,70 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &context, Ta
 		}
 	}
 
-		// Bind defines to persistent buffers
+	// Bind defines to persistent buffers
 	for (idx_t col_idx = 0; col_idx < bind.column_names.size(); col_idx++) {
-		        ub4 size = 4000; // Default max
-				if (col_idx < bind.oci_sizes.size() && bind.oci_sizes[col_idx] > 0) {
-					size = bind.oci_sizes[col_idx] * 4; // UTF8 safety
-				}
-				// Enforce minimum size to avoid alignment issues
-				if (size < 4000) size = 4000;
-				
-				// Resize auxiliary buffers
-				state->indicators[col_idx].resize(STANDARD_VECTOR_SIZE);
-				state->return_lens[col_idx].resize(STANDARD_VECTOR_SIZE);
-		
-				ub2 type = SQLT_STR;
-				// Ensure bounds check for original_types
-				if (col_idx < bind.original_types.size()) {
-					switch (bind.original_types[col_idx].id()) {
-					case LogicalTypeId::BIGINT:
-						type = SQLT_STR; // Fetch as string
-						break;
-					case LogicalTypeId::DOUBLE:
-						type = SQLT_STR; // Fetch as string
-						break;
-					            						case LogicalTypeId::BLOB:
-					            							if (col_idx < bind.oci_types.size()) {
-					            								auto oci_type = bind.oci_types[col_idx];
-					            								if (oci_type == SQLT_BLOB) {
-					            									type = SQLT_BIN; // BLOB -> Binary
-					            								} else if (oci_type == SQLT_CLOB) {
-					            									type = SQLT_BIN; // CLOB -> Binary
-					            								} else {
-					            									type = SQLT_BIN; // RAW -> Binary
-					            								}
-					            							} else {
-					            								type = SQLT_STR;
-					            							}
-					            							state->buffers[col_idx].resize(size * STANDARD_VECTOR_SIZE);
-					            							break;					default:
-						type = SQLT_STR;
-						break;
+		ub4 size = 4000; // Default max
+		if (col_idx < bind.oci_sizes.size() && bind.oci_sizes[col_idx] > 0) {
+			size = bind.oci_sizes[col_idx] * 4; // UTF8 safety
+		}
+		// Enforce minimum size to avoid alignment issues
+		if (size < 4000)
+			size = 4000;
+
+		// Resize auxiliary buffers
+		state->indicators[col_idx].resize(STANDARD_VECTOR_SIZE);
+		state->return_lens[col_idx].resize(STANDARD_VECTOR_SIZE);
+
+		if (bind.settings.debug_show_queries || getenv("ORACLE_DEBUG")) {
+			fprintf(stderr, "[oracle] DefineCol[%lu]: name=%s size=%u oci_size=%lu original_type=%s\n",
+			        (unsigned long)col_idx, bind.column_names[col_idx].c_str(), (unsigned)size,
+			        col_idx < bind.oci_sizes.size() ? (unsigned long)bind.oci_sizes[col_idx] : 0UL,
+			        col_idx < bind.original_types.size() ? bind.original_types[col_idx].ToString().c_str() : "N/A");
+		}
+
+		ub2 type = SQLT_STR;
+		// Ensure bounds check for original_types
+		if (col_idx < bind.original_types.size()) {
+			switch (bind.original_types[col_idx].id()) {
+			case LogicalTypeId::BIGINT:
+				type = SQLT_STR; // Fetch as string
+				break;
+			case LogicalTypeId::DOUBLE:
+				type = SQLT_STR; // Fetch as string
+				break;
+			case LogicalTypeId::BLOB:
+				if (col_idx < bind.oci_types.size()) {
+					auto oci_type = bind.oci_types[col_idx];
+					if (oci_type == SQLT_BLOB) {
+						type = SQLT_BIN; // BLOB -> Binary
+					} else if (oci_type == SQLT_CLOB) {
+						type = SQLT_BIN; // CLOB -> Binary
+					} else {
+						type = SQLT_BIN; // RAW -> Binary
 					}
+				} else {
+					type = SQLT_STR;
 				}
 				state->buffers[col_idx].resize(size * STANDARD_VECTOR_SIZE);
-		
-								CheckOCIError(OCIDefineByPos(state->stmt.get(), &state->defines[col_idx], state->err, col_idx + 1,
-		
-								                             state->buffers[col_idx].data(), size, type, state->indicators[col_idx].data(),
-		
-								                             state->return_lens[col_idx].data(), nullptr, OCI_DEFAULT),
-		
-								              state->err, "Failed to define OCI column");
-		
-						
-		
-								CheckOCIError(OCIDefineArrayOfStruct(state->defines[col_idx], state->err, size, sizeof(sb2), sizeof(ub2), 0),
-		
-								              state->err, "Failed to set OCI array of struct");
+				break;
+			default:
+				type = SQLT_STR;
+				break;
+			}
+		}
+		state->buffers[col_idx].resize(size * STANDARD_VECTOR_SIZE);
+
+		CheckOCIError(OCIDefineByPos(state->stmt.get(), &state->defines[col_idx], state->err, col_idx + 1,
+
+		                             state->buffers[col_idx].data(), size, type, state->indicators[col_idx].data(),
+
+		                             state->return_lens[col_idx].data(), nullptr, OCI_DEFAULT),
+
+		              state->err, "Failed to define OCI column");
+
+		CheckOCIError(OCIDefineArrayOfStruct(state->defines[col_idx], state->err, size, sizeof(sb2), sizeof(ub2), 0),
+
+		              state->err, "Failed to set OCI array of struct");
 	}
 	state->defines_bound = true;
 	return std::move(state);
@@ -709,6 +722,15 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 
 				ub4 element_size = gstate.buffers[col_idx].size() / STANDARD_VECTOR_SIZE;
 				char *ptr = (char *)gstate.buffers[col_idx].data() + (row_count * element_size);
+				ub2 actual_len = gstate.return_lens[col_idx][row_count];
+
+				if (getenv("ORACLE_DEBUG")) {
+					// Show raw buffer content for debugging
+					string raw_preview(ptr, std::min((ub2)50, actual_len));
+					fprintf(stderr, "[oracle] Fetch col=%lu row=%lu type=%s len=%u raw='%s'\n", (unsigned long)col_idx,
+					        (unsigned long)row_count, output.GetTypes()[col_idx].ToString().c_str(),
+					        (unsigned)actual_len, raw_preview.c_str());
+				}
 
 				switch (output.GetTypes()[col_idx].id()) {
 				case LogicalTypeId::VARCHAR:
@@ -740,6 +762,20 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 					}
 					break;
 				}
+				case LogicalTypeId::DECIMAL: {
+					// Oracle NUMBER -> DuckDB DECIMAL
+					// Fetch as string, convert using DuckDB's decimal conversion
+					string_t val(ptr, gstate.return_lens[col_idx][row_count]);
+					string s = val.GetString();
+					try {
+						// Use Value::DECIMAL to parse and convert
+						auto decimal_val = Value(s).DefaultCastAs(output.GetTypes()[col_idx]);
+						output.data[col_idx].SetValue(row_count, decimal_val);
+					} catch (...) {
+						FlatVector::SetNull(output.data[col_idx], row_count, true);
+					}
+					break;
+				}
 				case LogicalTypeId::TIMESTAMP:
 					FlatVector::GetData<timestamp_t>(output.data[col_idx])[row_count] =
 					    ParseOciTimestamp(ptr, gstate.return_lens[col_idx][row_count]);
@@ -750,7 +786,8 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 					string_t val(ptr, gstate.return_lens[col_idx][row_count]);
 					string json_str = val.GetString();
 					auto list_val = ParseVectorJsonToList(json_str);
-					ListVector::PushBack(output.data[col_idx], list_val);
+					// Use SetValue for proper LIST handling in table function output
+					output.data[col_idx].SetValue(row_count, list_val);
 					break;
 				}
 				default:
@@ -784,18 +821,40 @@ static bool TryExtractComparison(Expression &expr, const vector<string> &names, 
 	if (expr.type != ExpressionType::COMPARE_EQUAL && expr.type != ExpressionType::COMPARE_LESSTHAN &&
 	    expr.type != ExpressionType::COMPARE_GREATERTHAN && expr.type != ExpressionType::COMPARE_LESSTHANOREQUALTO &&
 	    expr.type != ExpressionType::COMPARE_GREATERTHANOREQUALTO) {
+		if (getenv("ORACLE_DEBUG")) {
+			fprintf(stderr, "[oracle] TryExtractComparison: not a comparison, type=%d\n", (int)expr.type);
+		}
 		return false;
 	}
 	auto &cmp = expr.Cast<BoundComparisonExpression>();
-	BoundReferenceExpression *col = nullptr;
+	if (getenv("ORACLE_DEBUG")) {
+		fprintf(stderr, "[oracle] TryExtractComparison: left_type=%d, right_type=%d\n", (int)cmp.left->type,
+		        (int)cmp.right->type);
+	}
 	Expression *const_expr = nullptr;
 	ExpressionType op_type = expr.type;
 
-	if (cmp.left->type == ExpressionType::BOUND_REF && cmp.right->type == ExpressionType::VALUE_CONSTANT) {
-		col = &cmp.left->Cast<BoundReferenceExpression>();
+	// Helper lambda to check if expression is a column reference
+	auto is_column_ref = [](Expression *e) {
+		return e->type == ExpressionType::BOUND_REF || e->type == ExpressionType::BOUND_COLUMN_REF;
+	};
+
+	// Helper lambda to get column index from either BOUND_REF or BOUND_COLUMN_REF
+	auto get_column_index = [](Expression *e) -> idx_t {
+		if (e->type == ExpressionType::BOUND_REF) {
+			return e->Cast<BoundReferenceExpression>().index;
+		} else if (e->type == ExpressionType::BOUND_COLUMN_REF) {
+			return e->Cast<BoundColumnRefExpression>().binding.column_index;
+		}
+		return DConstants::INVALID_INDEX;
+	};
+
+	idx_t col_idx = DConstants::INVALID_INDEX;
+	if (is_column_ref(cmp.left.get()) && cmp.right->type == ExpressionType::VALUE_CONSTANT) {
+		col_idx = get_column_index(cmp.left.get());
 		const_expr = cmp.right.get();
-	} else if (cmp.right->type == ExpressionType::BOUND_REF && cmp.left->type == ExpressionType::VALUE_CONSTANT) {
-		col = &cmp.right->Cast<BoundReferenceExpression>();
+	} else if (is_column_ref(cmp.right.get()) && cmp.left->type == ExpressionType::VALUE_CONSTANT) {
+		col_idx = get_column_index(cmp.right.get());
 		const_expr = cmp.left.get();
 		// flip operator
 		switch (op_type) {
@@ -815,14 +874,24 @@ static bool TryExtractComparison(Expression &expr, const vector<string> &names, 
 			break;
 		}
 	} else {
+		if (getenv("ORACLE_DEBUG")) {
+			fprintf(stderr, "[oracle] TryExtractComparison: no column_ref + VALUE_CONSTANT pattern\n");
+		}
 		return false;
 	}
 
-	if (col->index >= names.size()) {
+	if (col_idx == DConstants::INVALID_INDEX || col_idx >= names.size()) {
+		if (getenv("ORACLE_DEBUG")) {
+			fprintf(stderr, "[oracle] TryExtractComparison: col_idx=%lu >= names.size()=%lu\n", (unsigned long)col_idx,
+			        (unsigned long)names.size());
+		}
 		return false;
 	}
 	string const_sql;
 	if (!ConstantToSQL(*const_expr, const_sql)) {
+		if (getenv("ORACLE_DEBUG")) {
+			fprintf(stderr, "[oracle] TryExtractComparison: ConstantToSQL failed\n");
+		}
 		return false;
 	}
 
@@ -847,7 +916,7 @@ static bool TryExtractComparison(Expression &expr, const vector<string> &names, 
 		return false;
 	}
 
-	out_clause = ColumnRefSQL(names[col->index]) + " " + op + " " + const_sql;
+	out_clause = ColumnRefSQL(names[col_idx]) + " " + op + " " + const_sql;
 	return true;
 }
 
@@ -856,14 +925,25 @@ static bool TryExtractIsNull(Expression &expr, const vector<string> &names, stri
 		return false;
 	}
 	auto &op = expr.Cast<BoundOperatorExpression>();
-	if (op.children.size() != 1 || op.children[0]->type != ExpressionType::BOUND_REF) {
+	if (op.children.size() != 1) {
 		return false;
 	}
-	auto &col = op.children[0]->Cast<BoundReferenceExpression>();
-	if (col.index >= names.size()) {
+
+	// Get column index from either BOUND_REF or BOUND_COLUMN_REF
+	idx_t col_idx = DConstants::INVALID_INDEX;
+	auto child_type = op.children[0]->type;
+	if (child_type == ExpressionType::BOUND_REF) {
+		col_idx = op.children[0]->Cast<BoundReferenceExpression>().index;
+	} else if (child_type == ExpressionType::BOUND_COLUMN_REF) {
+		col_idx = op.children[0]->Cast<BoundColumnRefExpression>().binding.column_index;
+	} else {
 		return false;
 	}
-	out_clause = ColumnRefSQL(names[col.index]) + " IS NULL";
+
+	if (col_idx == DConstants::INVALID_INDEX || col_idx >= names.size()) {
+		return false;
+	}
+	out_clause = ColumnRefSQL(names[col_idx]) + " IS NULL";
 	return true;
 }
 
@@ -873,14 +953,30 @@ void OraclePushdownComplexFilter(ClientContext &, LogicalGet &get, FunctionData 
 	if (!bind.settings.enable_pushdown) {
 		return;
 	}
+
+	if (bind.settings.debug_show_queries || getenv("ORACLE_DEBUG")) {
+		fprintf(stderr, "[oracle] pushdown: expressions=%lu, column_names=%lu\n", (unsigned long)expressions.size(),
+		        (unsigned long)bind.column_names.size());
+		for (idx_t i = 0; i < bind.column_names.size(); i++) {
+			fprintf(stderr, "[oracle] pushdown: column_names[%lu]=%s\n", (unsigned long)i,
+			        bind.column_names[i].c_str());
+		}
+	}
+
 	vector<unique_ptr<Expression>> remaining;
 	vector<string> clauses;
 	for (auto &expr : expressions) {
 		string clause;
 		if (TryExtractComparison(*expr, bind.column_names, clause) ||
 		    TryExtractIsNull(*expr, bind.column_names, clause)) {
+			if (bind.settings.debug_show_queries || getenv("ORACLE_DEBUG")) {
+				fprintf(stderr, "[oracle] pushdown: extracted clause: %s\n", clause.c_str());
+			}
 			clauses.push_back(std::move(clause));
 			continue;
+		}
+		if (bind.settings.debug_show_queries || getenv("ORACLE_DEBUG")) {
+			fprintf(stderr, "[oracle] pushdown: could not extract expression type=%d\n", (int)expr->type);
 		}
 		remaining.push_back(std::move(expr));
 	}
@@ -895,6 +991,15 @@ void OraclePushdownComplexFilter(ClientContext &, LogicalGet &get, FunctionData 
 	vector<LogicalType> projected_types = bind.original_types;
 	vector<ub2> projected_oci_types = bind.oci_types;
 	vector<ub4> projected_oci_sizes = bind.oci_sizes;
+
+	if (bind.settings.debug_show_queries || getenv("ORACLE_DEBUG")) {
+		fprintf(stderr, "[oracle] pushdown: projection_ids.size()=%lu, original_names.size()=%lu\n",
+		        (unsigned long)get.projection_ids.size(), (unsigned long)bind.original_names.size());
+		for (idx_t i = 0; i < get.projection_ids.size(); i++) {
+			fprintf(stderr, "[oracle] pushdown: projection_ids[%lu]=%lu\n", (unsigned long)i,
+			        (unsigned long)get.projection_ids[i]);
+		}
+	}
 
 	if (!get.projection_ids.empty()) {
 		projected_names.clear();
@@ -972,14 +1077,18 @@ static void LoadInternal(ExtensionLoader &loader) {
 	auto oracle_scan_func =
 	    TableFunction("oracle_scan", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                  OracleQueryFunction, OracleScanBind, OracleInitGlobal, nullptr);
-	oracle_scan_func.filter_pushdown = true;
+	// We don't implement table_filters, so set filter_pushdown = false
+	// This tells DuckDB to apply filters client-side via LogicalFilter operator
+	// The pushdown_complex_filter callback handles Oracle-side WHERE clause generation when enabled
+	oracle_scan_func.filter_pushdown = false;
 	oracle_scan_func.pushdown_complex_filter = OraclePushdownComplexFilter;
 	oracle_scan_func.projection_pushdown = true;
 	loader.RegisterFunction(oracle_scan_func);
 
 	auto oracle_query_func = TableFunction("oracle_query", {LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                                       OracleQueryFunction, OracleQueryBind, OracleInitGlobal, nullptr);
-	oracle_query_func.filter_pushdown = true;
+	// We don't implement table_filters, so set filter_pushdown = false
+	oracle_query_func.filter_pushdown = false;
 	oracle_query_func.pushdown_complex_filter = OraclePushdownComplexFilter;
 	oracle_query_func.projection_pushdown = true;
 	loader.RegisterFunction(oracle_query_func);
@@ -1015,7 +1124,7 @@ void OracleExtension::Load(ExtensionLoader &loader) {
 	auto &db = loader.GetDatabaseInstance();
 	auto &config = DBConfig::GetConfig(db);
 	config.AddExtensionOption("oracle_enable_pushdown", "Enable Oracle filter/projection pushdown",
-	                          LogicalType::BOOLEAN, Value::BOOLEAN(false));
+	                          LogicalType::BOOLEAN, Value::BOOLEAN(true));
 	config.AddExtensionOption("oracle_prefetch_rows", "OCI prefetch row count", LogicalType::UBIGINT,
 	                          Value::UBIGINT(1024));
 	config.AddExtensionOption("oracle_prefetch_memory", "OCI prefetch memory (bytes, 0=auto)", LogicalType::UBIGINT,

@@ -17,9 +17,9 @@ struct OracleVersionInfo {
 	int major = 0;
 	int minor = 0;
 	int patch = 0;
-	bool supports_json_type = false;         // Oracle 21c+ has native JSON type
-	bool supports_vector = false;            // Oracle 23ai+ has VECTOR type
-	bool supports_vector_serialize = false;  // Oracle 23.4+ has VECTOR_SERIALIZE function
+	bool supports_json_type = false;        // Oracle 21c+ has native JSON type
+	bool supports_vector = false;           // Oracle 23ai+ has VECTOR type
+	bool supports_vector_serialize = false; // Oracle 23.4+ has VECTOR_SERIALIZE function
 };
 
 //! Shared state per attached Oracle database used by generators for schemas/tables.
@@ -49,7 +49,11 @@ public:
 
 	// Oracle version detection
 	void DetectOracleVersion();
-	const OracleVersionInfo &GetVersionInfo() const {
+	const OracleVersionInfo &GetVersionInfo() {
+		// Ensure version is detected on-demand (e.g., after cache clear)
+		if (!version_detected) {
+			DetectOracleVersion();
+		}
 		return version_info;
 	}
 

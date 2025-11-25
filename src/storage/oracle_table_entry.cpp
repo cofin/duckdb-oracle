@@ -244,7 +244,10 @@ TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_p
 	    OracleBindInternal(context, state->connection_string, query, return_types, names, bind.release(), state.get());
 
 	TableFunction tf({}, OracleQueryFunction, nullptr, OracleInitGlobal, nullptr);
-	tf.filter_pushdown = true;
+	// We don't implement table_filters, so set filter_pushdown = false
+	// This tells DuckDB to apply filters client-side via LogicalFilter operator
+	// The pushdown_complex_filter callback handles Oracle-side WHERE clause generation when enabled
+	tf.filter_pushdown = false;
 	tf.pushdown_complex_filter = OraclePushdownComplexFilter;
 	tf.projection_pushdown = true;
 	tf.name = table_name;

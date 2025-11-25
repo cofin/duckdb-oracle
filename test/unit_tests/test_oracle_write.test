@@ -1,6 +1,6 @@
 # name: test/unit_tests/test_oracle_write.test
 # description: Test Oracle Write (COPY) syntax
-# group: [oracle]
+# group: [unit_tests]
 
 require oracle
 
@@ -21,5 +21,5 @@ IO Error: Invalid Oracle connection string
 statement error
 COPY (SELECT 1 AS a) TO 'dummy_table' (FORMAT ORACLE, CONNECTION_STRING 'bad_connection_string', UNKNOWN_OPTION 'val');
 ----
-binder error: Unrecognized option
+Unrecognized option for Oracle COPY
 

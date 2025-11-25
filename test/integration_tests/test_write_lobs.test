@@ -1,6 +1,6 @@
 # name: test/integration_tests/test_write_lobs.test
 # description: Test Oracle Write (COPY) for LOBs
-# group: [oracle]
+# group: [integration_tests]
 
 require oracle
 
