@@ -17,6 +17,17 @@
 
 namespace duckdb {
 
+// Forward declaration
+class OracleTableGenerator;
+
+class OracleSchemaEntry : public DuckSchemaEntry {
+public:
+	OracleSchemaEntry(Catalog &catalog, CreateSchemaInfo &info, shared_ptr<OracleCatalogState> state,
+	                  string oracle_schema_p = "");
+
+	string oracle_schema;
+};
+
 class OracleTableGenerator : public DefaultGenerator {
 public:
 	OracleTableGenerator(Catalog &catalog, SchemaCatalogEntry &schema, shared_ptr<OracleCatalogState> state)
@@ -24,22 +35,26 @@ public:
 	}
 
 	vector<string> GetDefaultEntries() override {
+		auto &ora_schema = (OracleSchemaEntry &)schema;
 		// Use ListObjects with metadata_object_types setting
-		return state->ListObjects(schema.name, state->settings.metadata_object_types);
+		return state->ListObjects(ora_schema.oracle_schema, state->settings.metadata_object_types);
 	}
 
 	unique_ptr<CatalogEntry> CreateDefaultEntry(ClientContext &context, const string &entry_name) override {
+		auto &ora_schema = (OracleSchemaEntry &)schema;
+		string schema_name = ora_schema.oracle_schema;
+
 		// Try on-demand loading if not in enumerated list (handles objects beyond limit)
-		string real_name = state->GetObjectName(schema.name, entry_name, "'TABLE','VIEW','MATERIALIZED VIEW'");
+		string real_name = state->GetObjectName(schema_name, entry_name, "'TABLE','VIEW','MATERIALIZED VIEW'");
 		if (!real_name.empty()) {
-			return OracleTableEntry::Create(catalog, schema, schema.name, real_name, state);
+			return OracleTableEntry::Create(catalog, schema, schema_name, real_name, state, entry_name);
 		}
 
 		// Try synonym resolution as fallback
 		bool found = false;
-		auto resolved = state->ResolveSynonym(schema.name, entry_name, found);
+		auto resolved = state->ResolveSynonym(schema_name, entry_name, found);
 		if (found) {
-			return OracleTableEntry::Create(catalog, schema, resolved.first, resolved.second, state);
+			return OracleTableEntry::Create(catalog, schema, resolved.first, resolved.second, state, entry_name);
 		}
 
 		return nullptr;
@@ -50,14 +65,15 @@ private:
 	shared_ptr<OracleCatalogState> state;
 };
 
-class OracleSchemaEntry : public DuckSchemaEntry {
-public:
-	OracleSchemaEntry(Catalog &catalog, CreateSchemaInfo &info, shared_ptr<OracleCatalogState> state)
-	    : DuckSchemaEntry(catalog, info) {
-		auto &table_set = GetCatalogSet(CatalogType::TABLE_ENTRY);
-		table_set.SetDefaultGenerator(make_uniq<OracleTableGenerator>(catalog, *this, std::move(state)));
+OracleSchemaEntry::OracleSchemaEntry(Catalog &catalog, CreateSchemaInfo &info, shared_ptr<OracleCatalogState> state,
+                                     string oracle_schema_p)
+    : DuckSchemaEntry(catalog, info), oracle_schema(std::move(oracle_schema_p)) {
+	if (oracle_schema.empty()) {
+		oracle_schema = info.schema;
 	}
-};
+	auto &table_set = GetCatalogSet(CatalogType::TABLE_ENTRY);
+	table_set.SetDefaultGenerator(make_uniq<OracleTableGenerator>(catalog, *this, std::move(state)));
+}
 
 class OracleSchemaGenerator : public DefaultGenerator {
 public:
@@ -71,6 +87,25 @@ public:
 
 	unique_ptr<CatalogEntry> CreateDefaultEntry(ClientContext &context, const string &entry_name) override {
 		CreateSchemaInfo info;
+		string oracle_schema;
+
+		// Handle default "main" schema mapping
+		if ((entry_name == DEFAULT_SCHEMA || entry_name == "main") && state->settings.use_current_schema) {
+			string current = state->GetCurrentSchema();
+			if (current.empty()) {
+				state->DetectCurrentSchema();
+				current = state->GetCurrentSchema();
+			}
+
+			if (!current.empty()) {
+				info.schema = entry_name; // Keep catalog name as "main"
+				oracle_schema = current;  // Map to current schema (e.g., "HR")
+				info.internal = true;
+				info.on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+				return make_uniq<OracleSchemaEntry>(catalog, info, state, oracle_schema);
+			}
+		}
+
 		string real_name = state->GetRealSchemaName(entry_name);
 		if (!real_name.empty()) {
 			info.schema = real_name;
@@ -112,7 +147,6 @@ public:
 		// Detect current schema after successful connection
 		state->DetectCurrentSchema();
 
-		DuckCatalog::Initialize(false);
 		GetSchemaCatalogSet().SetDefaultGenerator(make_uniq<OracleSchemaGenerator>(*this, state));
 	}
 

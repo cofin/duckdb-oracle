@@ -28,7 +28,8 @@ public:
 	unique_ptr<BaseStatistics> GetStatistics(ClientContext &context, column_t column_id) override;
 
 	static unique_ptr<OracleTableEntry> Create(Catalog &catalog, SchemaCatalogEntry &schema, const string &schema_name,
-	                                           const string &table_name, shared_ptr<OracleCatalogState> state);
+	                                           const string &table_name, shared_ptr<OracleCatalogState> state,
+	                                           const string &duckdb_entry_name = "");
 
 private:
 	shared_ptr<OracleCatalogState> state;

@@ -139,9 +139,12 @@ void OracleCatalogState::DetectCurrentSchema() {
 		return;
 	}
 	EnsureConnectionInternal();
-	auto result = connection->Query("SELECT SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') FROM DUAL");
-	if (!result.rows.empty() && !result.rows[0].empty()) {
-		current_schema = result.rows[0][0];
+	try {
+		auto result = connection->Query("SELECT SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') FROM DUAL");
+		if (!result.rows.empty() && !result.rows[0].empty()) {
+			current_schema = result.rows[0][0];
+		}
+	} catch (const std::exception &e) {
 	}
 }
 
@@ -163,6 +166,9 @@ vector<string> OracleCatalogState::ListSchemas() {
 		}
 
 		if (!current_schema.empty()) {
+			if (settings.use_current_schema) {
+				schema_cache.push_back("main");
+			}
 			schema_cache.push_back(current_schema);
 			return schema_cache;
 		}

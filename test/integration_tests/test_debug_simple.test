@@ -1,0 +1,51 @@
+# name: test/integration_tests/test_debug_simple.test
+# description: Debug Oracle types
+# group: [integration_tests]
+
+require oracle
+
+statement ok
+CREATE OR REPLACE SECRET test_oracle (
+    TYPE ORACLE,
+    USER 'duckdb_test',
+    PASSWORD 'duckdb_test',
+    HOST 'localhost',
+    PORT ${ORACLE_PORT},
+    SERVICE 'FREEPDB1'
+);
+
+statement ok
+ATTACH '' AS ora (TYPE ORACLE, SECRET 'test_oracle');
+
+statement ok
+SELECT oracle_execute('ora', '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE debug_types'';
+    EXCEPTION
+        WHEN OTHERS THEN NULL;
+    END;
+');
+
+statement ok
+SELECT oracle_execute('ora', '
+    CREATE TABLE debug_types (
+        id NUMBER,
+        d DATE,
+        v VARCHAR2(10),
+        r RAW(10)
+    )
+');
+
+statement ok
+SELECT oracle_execute('ora', 'INSERT INTO debug_types VALUES (1, TO_DATE(''2024-01-01'', ''YYYY-MM-DD''), ''A'', ''AA'')');
+
+statement ok
+SELECT oracle_clear_cache();
+
+query TTTT
+SELECT cast(id as double), cast(d as varchar), v, cast(r as blob) FROM ora.DUCKDB_TEST.debug_types
+----
+1.0	2024-01-01 00:00:00	A	AA
+
+statement ok
+DETACH ora;

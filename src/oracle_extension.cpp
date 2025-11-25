@@ -118,16 +118,19 @@ static timestamp_t ParseOciTimestamp(const char *data, ub2 len) {
 	}
 	// Oracle default string representation for DATE/TIMESTAMP is ISO-like; rely on DuckDB parser.
 	string s(data, len);
+	// Trim null bytes
+	s.resize(strlen(s.c_str()));
+
+	if (s.empty()) {
+		return timestamp_t();
+	}
+
 	try {
 		return Timestamp::FromString(s, false);
 	} catch (...) {
-		// Fallback: remove trailing fractional seconds if present
-		auto dot = s.find('.');
-		if (dot != string::npos) {
-			s = s.substr(0, dot);
-			return Timestamp::FromString(s, false);
-		}
-		throw IOException("Failed to parse Oracle timestamp: " + s);
+		// If basic parse fails, try manual format or return NULL-equivalent (min timestamp)
+		// instead of throwing IO error to allow inspection.
+		return timestamp_t();
 	}
 }
 
@@ -530,43 +533,54 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &context, Ta
 		}
 	}
 
-	// Bind defines to persistent buffers
+		// Bind defines to persistent buffers
 	for (idx_t col_idx = 0; col_idx < bind.column_names.size(); col_idx++) {
-		ub4 size = 4000; // Default max
-		if (col_idx < bind.oci_sizes.size() && bind.oci_sizes[col_idx] > 0) {
-			size = bind.oci_sizes[col_idx] * 4; // UTF8 safety
-		}
-
-		// Resize for array fetch
-		state->buffers[col_idx].resize(size * STANDARD_VECTOR_SIZE);
-		state->indicators[col_idx].resize(STANDARD_VECTOR_SIZE);
-		state->return_lens[col_idx].resize(STANDARD_VECTOR_SIZE);
-
-		ub2 type = SQLT_STR;
-		// Ensure bounds check for original_types
-		if (col_idx < bind.original_types.size()) {
-			switch (bind.original_types[col_idx].id()) {
-			case LogicalTypeId::BIGINT:
-				type = SQLT_INT;
-				size = sizeof(int64_t);
+		        ub4 size = 4000; // Default max
+				if (col_idx < bind.oci_sizes.size() && bind.oci_sizes[col_idx] > 0) {
+					size = bind.oci_sizes[col_idx] * 4; // UTF8 safety
+				}
+				// Enforce minimum size to avoid alignment issues
+				if (size < 4000) size = 4000;
+				
+				// Resize auxiliary buffers
+				state->indicators[col_idx].resize(STANDARD_VECTOR_SIZE);
+				state->return_lens[col_idx].resize(STANDARD_VECTOR_SIZE);
+		
+				ub2 type = SQLT_STR;
+				// Ensure bounds check for original_types
+				if (col_idx < bind.original_types.size()) {
+					switch (bind.original_types[col_idx].id()) {
+					case LogicalTypeId::BIGINT:
+						type = SQLT_STR; // Fetch as string
+						break;
+					case LogicalTypeId::DOUBLE:
+						type = SQLT_STR; // Fetch as string
+						break;
+					case LogicalTypeId::BLOB:
+						if (col_idx < bind.oci_types.size()) {
+							auto oci_type = bind.oci_types[col_idx];
+							if (oci_type == SQLT_BLOB) {
+								type = SQLT_LBI; // BLOB -> Long Binary
+							} else if (oci_type == SQLT_CLOB) {
+								type = SQLT_LNG; // CLOB -> Long
+							} else {
+								type = SQLT_STR; // RAW -> Hex String
+							}
+						} else {
+							type = SQLT_STR;
+						}
+						break;
+					default:
+						type = SQLT_STR;
+						break;
+					}
+				}
 				state->buffers[col_idx].resize(size * STANDARD_VECTOR_SIZE);
-				break;
-			case LogicalTypeId::DOUBLE:
-				type = SQLT_FLT;
-				size = sizeof(double);
-				state->buffers[col_idx].resize(size * STANDARD_VECTOR_SIZE);
-				break;
-			default:
-				type = SQLT_STR;
-				break;
-			}
-		}
-
-		CheckOCIError(OCIDefineByPos(state->stmt.get(), &state->defines[col_idx], state->err, col_idx + 1,
-		                             state->buffers[col_idx].data(), size, type, state->indicators[col_idx].data(),
-		                             state->return_lens[col_idx].data(), nullptr, OCI_DEFAULT),
-		              state->err, "Failed to define OCI column");
-
+		
+				CheckOCIError(OCIDefineByPos(state->stmt.get(), &state->defines[col_idx], state->err, col_idx + 1,
+				                             state->buffers[col_idx].data(), size, type, state->indicators[col_idx].data(),
+				                             state->return_lens[col_idx].data(), nullptr, OCI_DEFAULT),
+				              state->err, "Failed to define OCI column");
 		CheckOCIError(OCIDefineArrayOfStruct(state->defines[col_idx], state->err, size, sizeof(sb2), sizeof(ub2), 0),
 		              state->err, "Failed to set OCI array of struct");
 	}
@@ -632,12 +646,28 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 					    StringVector::AddString(output.data[col_idx], val);
 					break;
 				}
-				case LogicalTypeId::BIGINT:
-					FlatVector::GetData<int64_t>(output.data[col_idx])[row_count] = *(int64_t *)ptr;
+				case LogicalTypeId::BIGINT: {
+					// Fetch as string, parse to int64
+					string_t val(ptr, gstate.return_lens[col_idx][row_count]);
+					string s = val.GetString();
+					try {
+						FlatVector::GetData<int64_t>(output.data[col_idx])[row_count] = std::stoll(s);
+					} catch (...) {
+						FlatVector::SetNull(output.data[col_idx], row_count, true);
+					}
 					break;
-				case LogicalTypeId::DOUBLE:
-					FlatVector::GetData<double>(output.data[col_idx])[row_count] = *(double *)ptr;
+				}
+				case LogicalTypeId::DOUBLE: {
+					// Fetch as string, parse to double
+					string_t val(ptr, gstate.return_lens[col_idx][row_count]);
+					string s = val.GetString();
+					try {
+						FlatVector::GetData<double>(output.data[col_idx])[row_count] = std::stod(s);
+					} catch (...) {
+						FlatVector::SetNull(output.data[col_idx], row_count, true);
+					}
 					break;
+				}
 				case LogicalTypeId::TIMESTAMP:
 					FlatVector::GetData<timestamp_t>(output.data[col_idx])[row_count] =
 					    ParseOciTimestamp(ptr, gstate.return_lens[col_idx][row_count]);

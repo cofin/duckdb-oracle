@@ -1,5 +1,6 @@
 #include "oracle_connection_manager.hpp"
 #include "duckdb/common/string_util.hpp"
+#include <cstdio>
 
 namespace duckdb {
 
@@ -203,6 +204,20 @@ std::shared_ptr<OracleContext> OracleConnectionManager::CreateConnection(const s
 
 	CheckOCIError(OCIAttrSet(ctx->svchp, OCI_HTYPE_SVCCTX, ctx->authp, 0, OCI_ATTR_SESSION, ctx->errhp), ctx->errhp,
 	              "Failed to set OCI session on service context");
+
+	// Set NLS date/timestamp format to ISO
+	{
+		OCIStmt *stmt = nullptr;
+		CheckOCIError(OCIHandleAlloc(ctx->envhp, (dvoid **)&stmt, OCI_HTYPE_STMT, 0, nullptr), ctx->errhp,
+		              "Failed to allocate statement handle for NLS setup");
+		std::string sql = "ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY-MM-DD HH24:MI:SS' NLS_TIMESTAMP_FORMAT = "
+		                  "'YYYY-MM-DD HH24:MI:SS.FF'";
+		CheckOCIError(OCIStmtPrepare(stmt, ctx->errhp, (OraText *)sql.c_str(), sql.size(), OCI_NTV_SYNTAX, OCI_DEFAULT),
+		              ctx->errhp, "Failed to prepare NLS setup statement");
+		CheckOCIError(OCIStmtExecute(ctx->svchp, stmt, ctx->errhp, 1, 0, nullptr, nullptr, OCI_DEFAULT), ctx->errhp,
+		              "Failed to execute NLS setup statement");
+		OCIHandleFree(stmt, OCI_HTYPE_STMT);
+	}
 
 	// Enable statement cache
 	ub4 stmt_cache_size = 32;

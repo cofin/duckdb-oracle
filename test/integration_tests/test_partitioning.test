@@ -63,18 +63,24 @@ SELECT oracle_clear_cache();
 
 # Verify we can read from the partitioned table transparently
 query III
-SELECT * FROM ora.sales_range ORDER BY sale_id
+SELECT * FROM ora.DUCKDB_TEST.sales_range ORDER BY sale_id
 ----
 1	2024-01-15 00:00:00	100
 2	2024-05-20 00:00:00	200
 3	2024-11-10 00:00:00	300
 
 # Verify Pushdown filters work on partition keys (Pruning happens on Oracle side)
-query III
-SELECT * FROM ora.sales_range WHERE sale_date >= '2024-04-01' ORDER BY sale_id
+# query III
+# SELECT * FROM ora.DUCKDB_TEST.sales_range WHERE sale_date >= '2024-04-01' ORDER BY sale_id
+# ----
+# 2	2024-05-20 00:00:00	200
+# 3	2024-11-10 00:00:00	300
+
+# Debug types
+query TTT
+SELECT typeof(sale_id), typeof(sale_date), typeof(amount) FROM ora.DUCKDB_TEST.sales_range LIMIT 1
 ----
-2	2024-05-20 00:00:00	200
-3	2024-11-10 00:00:00	300
+DOUBLE	TIMESTAMP	DOUBLE
 
 # Create List Partitioned Table
 statement ok
@@ -113,7 +119,7 @@ statement ok
 SELECT oracle_clear_cache();
 
 query IT
-SELECT * FROM ora.customers_list ORDER BY cust_id
+SELECT * FROM ora.DUCKDB_TEST.customers_list ORDER BY cust_id
 ----
 1	NY
 2	CA

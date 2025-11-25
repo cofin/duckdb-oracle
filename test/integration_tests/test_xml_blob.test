@@ -48,9 +48,10 @@ SELECT oracle_clear_cache();
 
 # DuckDB maps XMLTYPE to VARCHAR (usually)
 query IT
-SELECT id, CAST(doc AS VARCHAR) FROM ora.xml_test
+SELECT id, replace(replace(replace(CAST(doc AS VARCHAR), chr(10), ''), chr(13), ''), ' ', '') FROM ora.DUCKDB_TEST.xml_test
 ----
 1	<root><item>A</item></root>
+
 
 # --- BLOB and RAW ---
 
@@ -87,12 +88,12 @@ SELECT oracle_clear_cache();
 
 # Verify reading as BLOB
 query I
-SELECT cast(raw_col as BLOB) FROM ora.binary_test
+SELECT cast(raw_col as BLOB) FROM ora.DUCKDB_TEST.binary_test
 ----
 \xDE\xAD\xBE\xEF
 
 query I
-SELECT cast(blob_col as BLOB) FROM ora.binary_test
+SELECT cast(blob_col as BLOB) FROM ora.DUCKDB_TEST.binary_test
 ----
 \xCA\xFE\xBA\xBE
 

@@ -96,10 +96,11 @@ OracleTableEntry::OracleTableEntry(Catalog &catalog, SchemaCatalogEntry &schema,
 
 unique_ptr<OracleTableEntry> OracleTableEntry::Create(Catalog &catalog, SchemaCatalogEntry &schema,
                                                       const string &schema_name, const string &table_name,
-                                                      shared_ptr<OracleCatalogState> state) {
+                                                      shared_ptr<OracleCatalogState> state,
+                                                      const string &duckdb_entry_name) {
 	auto info = make_uniq<CreateTableInfo>();
-	info->schema = schema_name;
-	info->table = table_name;
+	info->schema = schema.name;
+	info->table = duckdb_entry_name.empty() ? table_name : duckdb_entry_name;
 	vector<ColumnDefinition> cols;
 	vector<OracleColumnMetadata> metadata;
 	LoadColumns(*state, schema_name, table_name, cols, metadata);

@@ -57,6 +57,11 @@ SELECT oracle_clear_cache();
 
 # Verify view visibility and content
 query IT
+SELECT * FROM ora.main.view_test
+----
+2	B
+
+query IT
 SELECT * FROM ora.view_test
 ----
 2	B

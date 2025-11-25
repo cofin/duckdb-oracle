@@ -2,6 +2,7 @@
 #include "duckdb/common/string_util.hpp"
 #include <cstring>
 #include <functional>
+#include <cstdio>
 
 namespace duckdb {
 
@@ -56,6 +57,7 @@ OracleResult OracleConnection::Query(const std::string &query) {
 	CheckOCIError(
 	    OCIStmtPrepare(stmthp, ctx->errhp, (OraText *)query.c_str(), query.size(), OCI_NTV_SYNTAX, OCI_DEFAULT),
 	    ctx->errhp, "OCIStmtPrepare");
+
 	CheckOCIError(OCIStmtExecute(ctx->svchp, stmthp, ctx->errhp, 0, 0, nullptr, nullptr, OCI_DESCRIBE_ONLY), ctx->errhp,
 	              "OCIStmtExecute describe");
 
@@ -93,12 +95,14 @@ OracleResult OracleConnection::Query(const std::string &query) {
 		              ctx->errhp, "OCIDefineByPos");
 	}
 
+	idx_t rows = 0;
 	while (true) {
 		auto status = OCIStmtFetch2(stmthp, ctx->errhp, 1, OCI_FETCH_NEXT, 0, OCI_DEFAULT);
 		if (status == OCI_NO_DATA) {
 			break;
 		}
 		CheckOCIError(status, ctx->errhp, "OCIStmtFetch2");
+		rows++;
 
 		std::vector<std::string> row;
 		row.reserve(param_count);

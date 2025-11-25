@@ -43,6 +43,7 @@ struct OracleScanState : public GlobalTableFunctionState {
 	vector<OCIDefine *> defines;
 	vector<vector<sb2>> indicators;
 	vector<vector<ub2>> return_lens;
+	vector<vector<OCILobLocator *>> lob_locators; // Added for LOB support
 	bool executed = false;
 	bool defines_bound = false;
 	bool finished = false;
@@ -52,6 +53,7 @@ struct OracleScanState : public GlobalTableFunctionState {
 		defines.assign(column_count, nullptr);
 		indicators.resize(column_count);
 		return_lens.resize(column_count);
+		lob_locators.resize(column_count);
 	}
 
 	idx_t MaxThreads() const override {
