@@ -268,7 +268,7 @@ main() {
       echo "Running test: ${test_file}"
       
       # Create a temporary test file with the port and connection string replaced
-      TEMP_TEST_FILE="test/integration_tests/temp_running_test.test"
+      TEMP_TEST_FILE="test/integration_temp.test"
       sed -e "s/\${ORACLE_PORT}/${db_port}/g" -e "s|\${ORACLE_CONNECTION_STRING}|${ORACLE_CONNECTION_STRING}|g" "${test_file}" > "${TEMP_TEST_FILE}"
       
       if command -v timeout >/dev/null 2>&1; then

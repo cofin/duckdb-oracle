@@ -1,0 +1,62 @@
+# name: test/integration_tests/test_write_basic.test
+# description: Test Oracle Write (COPY) for basic types
+# group: [oracle]
+
+require oracle
+
+# Connection string will be replaced by test runner
+# ORACLE_CONNECTION_STRING
+
+statement ok
+ATTACH '${ORACLE_CONNECTION_STRING}' AS ora (TYPE ORACLE);
+
+# Create target table
+statement ok
+SELECT oracle_execute('ora', '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE write_basic PURGE'';
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
+');
+
+statement ok
+SELECT oracle_execute('ora', '
+    CREATE TABLE write_basic (
+        id NUMBER PRIMARY KEY,
+        val_str VARCHAR2(100),
+        val_int NUMBER(10),
+        val_dbl NUMBER(10,5),
+        val_date DATE,
+        val_ts TIMESTAMP
+    )
+');
+
+statement ok
+SELECT oracle_clear_cache();
+
+# Insert using COPY
+# Note: We select from DuckDB values
+statement ok
+COPY (
+    SELECT 
+        1 as id, 
+        'hello' as val_str, 
+        123 as val_int, 
+        123.45 as val_dbl, 
+        TIMESTAMP '2023-01-01 10:00:00' as val_date,
+        TIMESTAMP '2023-01-01 10:00:00.123' as val_ts
+    UNION ALL
+    SELECT 
+        2, 'world', 456, 67.89, TIMESTAMP '2023-02-01 11:00:00', TIMESTAMP '2023-02-01 11:00:00.456'
+) TO 'write_basic' (FORMAT ORACLE, CONNECTION_STRING '${ORACLE_CONNECTION_STRING}');
+
+# Verify data
+query IITRTT
+SELECT id, val_str, val_int, val_dbl, val_date, val_ts FROM ora.write_basic ORDER BY id;
+----
+1	hello	123	123.45	2023-01-01 10:00:00	2023-01-01 10:00:00.123
+2	world	456	67.89	2023-02-01 11:00:00	2023-02-01 11:00:00.456
+
+# Cleanup
+statement ok
+SELECT oracle_execute('ora', 'DROP TABLE write_basic PURGE');

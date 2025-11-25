@@ -1,0 +1,66 @@
+# name: test/integration_tests/test_write_lobs.test
+# description: Test Oracle Write (COPY) for LOBs
+# group: [oracle]
+
+require oracle
+
+statement ok
+ATTACH '${ORACLE_CONNECTION_STRING}' AS ora (TYPE ORACLE);
+
+statement ok
+SELECT oracle_execute('ora', '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE write_lobs PURGE'';
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
+');
+
+statement ok
+SELECT oracle_execute('ora', '
+    CREATE TABLE write_lobs (
+        id NUMBER PRIMARY KEY,
+        val_clob CLOB,
+        val_blob BLOB
+    )
+');
+
+statement ok
+SELECT oracle_clear_cache();
+
+# Insert LOBs
+# We use repeat to generate a reasonably large string/blob (e.g. > 4k)
+# DuckDB repeat('a', 5000) -> 5000 chars.
+statement ok
+COPY (
+    SELECT 
+        1 as id, 
+        repeat('a', 5000) as val_clob, 
+        'ABC'::BLOB as val_blob
+    UNION ALL
+    SELECT 
+        2, 
+        'short', 
+        '\x00\x01\x02'::BLOB
+) TO 'write_lobs' (FORMAT ORACLE, CONNECTION_STRING '${ORACLE_CONNECTION_STRING}');
+
+# Verify
+# We read back and check lengths/content
+query I
+SELECT id FROM ora.write_lobs ORDER BY id;
+----
+1
+2
+
+query I
+SELECT length(val_clob) FROM ora.write_lobs WHERE id=1;
+----
+5000
+
+query I
+SELECT val_blob FROM ora.write_lobs WHERE id=2;
+----
+\x00\x01\x02
+
+# Cleanup
+statement ok
+SELECT oracle_execute('ora', 'DROP TABLE write_lobs PURGE');

@@ -18,6 +18,9 @@ struct OracleWriteBindData : public FunctionData {
 	
 	vector<string> column_names;
 	vector<LogicalType> column_types;
+	
+	// Oracle metadata for smart binding
+	vector<string> oracle_types; // e.g., "NUMBER", "BLOB", "SDO_GEOMETRY"
 
 public:
 	unique_ptr<FunctionData> Copy() const override {
@@ -28,6 +31,7 @@ public:
 		result->object_name = object_name;
 		result->column_names = column_names;
 		result->column_types = column_types;
+		result->oracle_types = oracle_types;
 		return std::move(result);
 	}
 	
@@ -51,7 +55,7 @@ public:
 	OracleWriteLocalState(std::shared_ptr<OracleConnectionHandle> conn, OCIStmt *stmthp);
 	~OracleWriteLocalState();
 
-	void Sink(DataChunk &chunk);
+	void Sink(DataChunk &chunk, const vector<string> &oracle_types);
 	void Flush();
 
 	friend void OracleWriteSink(ExecutionContext &context, FunctionData &bind_data, GlobalFunctionData &gstate,
@@ -69,6 +73,7 @@ private:
 	std::vector<std::vector<sb2>> indicator_buffers;
 	std::vector<std::vector<ub2>> length_buffers;
 	std::vector<OCIBind *> binds;
+	std::vector<size_t> current_buffer_sizes;
 	
 	static constexpr idx_t MAX_BATCH_SIZE = STANDARD_VECTOR_SIZE;
 };

@@ -1,0 +1,56 @@
+# name: test/integration_tests/test_write_spatial.test
+# description: Test Oracle Write (COPY) for Spatial (SDO_GEOMETRY)
+# group: [oracle]
+
+require oracle
+
+# Spatial type SDO_GEOMETRY is not available in the slim container image
+# used for CI (gvenzl/oracle-free:23-slim).
+# Uncomment these tests if running against an Oracle instance with Spatial/Locator installed.
+
+# statement ok
+# ATTACH '${ORACLE_CONNECTION_STRING}' AS ora (TYPE ORACLE);
+
+# statement ok
+# SELECT oracle_execute('ora', '
+#     BEGIN
+#         EXECUTE IMMEDIATE ''DROP TABLE write_spatial PURGE'';
+#     EXCEPTION WHEN OTHERS THEN NULL;
+#     END;
+# ');
+
+# statement ok
+# SELECT oracle_execute('ora', '
+#     CREATE TABLE write_spatial (
+#         id NUMBER PRIMARY KEY,
+#         geom MDSYS.SDO_GEOMETRY
+#     )
+# ');
+
+# statement ok
+# SELECT oracle_clear_cache();
+
+# # Insert WKT
+# statement ok
+# COPY (
+#     SELECT 
+#         1 as id, 
+#         'POINT(10 20)' as geom
+#     UNION ALL
+#     SELECT 
+#         2, 
+#         'POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'
+# ) TO 'write_spatial' (FORMAT ORACLE, CONNECTION_STRING '${ORACLE_CONNECTION_STRING}');
+
+# # Verify
+# # When reading back, the extension converts SDO_GEOMETRY to WKT string automatically
+# query IT
+# SELECT id, geom FROM ora.write_spatial ORDER BY id;
+# ----
+# 1	POINT (10.0 20.0)
+# 2	POLYGON ((0.0 0.0, 10.0 0.0, 10.0 10.0, 0.0 10.0, 0.0 0.0))
+
+# # Cleanup
+# statement ok
+# SELECT oracle_execute('ora', 'DROP TABLE write_spatial PURGE');
+
