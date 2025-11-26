@@ -187,6 +187,9 @@ static OracleSettings GetOracleSettings(ClientContext &context, OracleCatalogSta
 	if (context.TryGetCurrentSetting("oracle_use_current_schema", option_value)) {
 		settings.use_current_schema = option_value.GetValue<bool>();
 	}
+	if (context.TryGetCurrentSetting("oracle_enable_spatial_types", option_value)) {
+		settings.enable_spatial_types = option_value.GetValue<bool>();
+	}
 	return settings;
 }
 
@@ -404,6 +407,8 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
 				return_types.push_back(LogicalType::TIMESTAMP);
 				break;
 			case SQLT_CLOB:
+				return_types.push_back(LogicalType::VARCHAR); // Fetch CLOB as string (text)
+				break;
 			case SQLT_BLOB:
 			case SQLT_BIN:
 			case SQLT_LBI:
@@ -626,11 +631,18 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &context, Ta
 					auto oci_type = bind.oci_types[col_idx];
 					if (oci_type == SQLT_BLOB) {
 						type = SQLT_BIN; // BLOB -> Binary
-					} else if (oci_type == SQLT_CLOB) {
-						type = SQLT_BIN; // CLOB -> Binary
 					} else {
 						type = SQLT_BIN; // RAW -> Binary
 					}
+				} else {
+					type = SQLT_STR;
+				}
+				state->buffers[col_idx].resize(size * STANDARD_VECTOR_SIZE);
+				break;
+			case LogicalTypeId::VARCHAR:
+				// Ensure CLOBs are fetched as strings (SQLT_STR/SQLT_CHR)
+				if (col_idx < bind.oci_types.size() && bind.oci_types[col_idx] == SQLT_CLOB) {
+					type = SQLT_STR; // CLOB -> String
 				} else {
 					type = SQLT_STR;
 				}
@@ -841,6 +853,21 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 					auto list_val = ParseVectorJsonToList(json_str);
 					// Use SetValue for proper LIST handling in table function output
 					output.data[col_idx].SetValue(row_count, list_val);
+					break;
+				}
+				case LogicalTypeId::USER: {
+					// Handle GEOMETRY type (mapped from SDO_GEOMETRY -> WKT -> GEOMETRY)
+					// We fetch WKT as string, then cast to target USER type (GEOMETRY)
+					string_t val(ptr, gstate.return_lens[buffer_idx][row_count]);
+					string s = val.GetString();
+					try {
+						// CastAs requires ClientContext to look up the cast function (VARCHAR -> GEOMETRY)
+						auto geom_val = Value(s).CastAs(context, output.GetTypes()[col_idx]);
+						output.data[col_idx].SetValue(row_count, geom_val);
+					} catch (...) {
+						// If cast fails (e.g. spatial extension not loaded), set to NULL
+						FlatVector::SetNull(output.data[col_idx], row_count, true);
+					}
 					break;
 				}
 				default:
@@ -1202,6 +1229,9 @@ void OracleExtension::Load(ExtensionLoader &loader) {
 	                          Value::UBIGINT(10000));
 	config.AddExtensionOption("oracle_use_current_schema", "Resolve unqualified table names to current schema first",
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(true));
+	config.AddExtensionOption("oracle_enable_spatial_types",
+	                          "Map SDO_GEOMETRY to GEOMETRY type (requires spatial extension)", LogicalType::BOOLEAN,
+	                          Value::BOOLEAN(true));
 
 	config.storage_extensions["oracle"] = CreateOracleStorageExtension();
 }

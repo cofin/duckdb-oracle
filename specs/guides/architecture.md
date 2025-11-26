@@ -37,6 +37,17 @@ duckdb-oracle/
 - `oracle_attach_wallet` (Scalar Function): sets `TNS_ADMIN` for wallet-based authentication.
 - `oracle_clear_cache` (Scalar Function): clears cached Oracle metadata/connection state held by attached databases.
 
+It also registers configuration options:
+- `oracle_enable_pushdown`
+- `oracle_prefetch_rows` / `oracle_prefetch_memory`
+- `oracle_array_size`
+- `oracle_connection_cache` / `oracle_connection_limit`
+- `oracle_debug_show_queries`
+- `oracle_lazy_schema_loading`
+- `oracle_metadata_object_types` / `oracle_metadata_result_limit`
+- `oracle_use_current_schema`
+- `oracle_enable_spatial_types`
+
 ### Storage Extension (`src/storage/`)
 
 The storage extension allows attaching Oracle databases directly using `ATTACH '...' AS oracle`.
@@ -86,13 +97,31 @@ The storage extension allows attaching Oracle databases directly using `ATTACH '
 | Oracle `SQLT`        | DuckDB Type | Notes |
 |----------------------|-------------|-------|
 | `SQLT_CHR`, `SQLT_AFC`, `SQLT_VCS`, `SQLT_AVC` | `VARCHAR` | |
-| `SQLT_NUM`, `SQLT_VNU` | `BIGINT` if scale 0 and precision ≤18, else `DOUBLE` | Precision >18 coerces to `DOUBLE` for portability |
+| `SQLT_NUM`, `SQLT_VNU` | `BIGINT` if scale 0 and precision ≤18, else `DOUBLE` or `DECIMAL` | |
 | `SQLT_INT`, `SQLT_UIN` | `BIGINT` | |
 | `SQLT_FLT`, `SQLT_BFLOAT`, `SQLT_BDOUBLE`, `SQLT_IBFLOAT`, `SQLT_IBDOUBLE` | `DOUBLE` | |
-| `SQLT_DAT`, `SQLT_ODT`, `SQLT_TIMESTAMP`, `SQLT_TIMESTAMP_TZ`, `SQLT_TIMESTAMP_LTZ` | `TIMESTAMP` (fetched as string today) | |
-| `SQLT_CLOB`, `SQLT_BLOB`, `SQLT_BIN`, `SQLT_LBI`, `SQLT_LNG`, `SQLT_LVC` | `BLOB` | |
-| `SQLT_JSON`, `SQLT_VEC` | `VARCHAR` | |
+| `SQLT_DAT`, `SQLT_ODT`, `SQLT_TIMESTAMP`, `SQLT_TIMESTAMP_TZ`, `SQLT_TIMESTAMP_LTZ` | `TIMESTAMP` | Fetched as string, parsed by DuckDB |
+| `SQLT_BLOB`, `SQLT_BIN`, `SQLT_LBI`, `SQLT_LNG`, `SQLT_LVC` | `BLOB` | |
+| `SQLT_CLOB` | `VARCHAR` | Fetched as string to support proper encoding/collation |
+| `SQLT_JSON` | `VARCHAR` | Fetched via `JSON_SERIALIZE` |
+| `SQLT_VEC` (Vector) | `LIST(FLOAT)` | Fetched via `VECTOR_SERIALIZE` (defaults to true) |
+| `SDO_GEOMETRY` (Spatial) | `GEOMETRY` (User Type) | If `oracle_enable_spatial_types=true`; else `VARCHAR` (WKT) |
 | default/unknown       | `VARCHAR` | fallback |
+
+## Write Path (COPY / INSERT)
+
+The extension supports writing data to Oracle tables using DuckDB's `COPY` facility or `INSERT INTO ... SELECT`.
+
+- **Bind (`OracleWriteBind`)**:
+  - Resolves target table schema/name.
+  - Introspects Oracle column types to ensure correct binding.
+- **Init (`OracleWriteInitGlobal`)**:
+  - Prepares `INSERT` statement with appropriate conversions (e.g., `TO_DATE`, `SDO_UTIL.FROM_WKTGEOMETRY`).
+- **Sink (`OracleWriteSink`)**:
+  - Batches input rows.
+  - Binds parameters using `OCIBindByPos` and `OCIBindArrayOfStruct`.
+  - Executes batch inserts (`OCIStmtExecute` with iteration count).
+  - Commits transaction in `Finalize`.
 
 ## Build & Linking Notes
 

@@ -21,12 +21,9 @@ static string GetConversionExpression(const string &quoted_col, const OracleColu
 		return StringUtil::Format("SDO_UTIL.TO_WKTGEOMETRY(%s)", quoted_col.c_str());
 
 	case OracleTypeCategory::VECTOR:
-		// VECTOR type (Oracle 23ai+): use VECTOR_SERIALIZE if available (23.4+), otherwise TO_CHAR
-		if (version.supports_vector_serialize) {
-			return StringUtil::Format("VECTOR_SERIALIZE(%s)", quoted_col.c_str());
-		}
-		// Fallback for older 23ai versions
-		return StringUtil::Format("TO_CHAR(%s)", quoted_col.c_str());
+		// VECTOR type (Oracle 23ai+): always use VECTOR_SERIALIZE
+		// This handles version detection failures (e.g. no V$INSTANCE access) where TO_CHAR fallback might fail
+		return StringUtil::Format("VECTOR_SERIALIZE(%s)", quoted_col.c_str());
 
 	case OracleTypeCategory::JSON:
 		// JSON type (Oracle 21c+): serialize to string for reliable fetch
@@ -87,8 +84,10 @@ static LogicalType MapOracleColumn(const string &data_type, idx_t precision, idx
 
 	// Spatial geometry type detection
 	if (upper == "SDO_GEOMETRY" || upper == "MDSYS.SDO_GEOMETRY") {
+		if (settings.enable_spatial_types) {
+			return LogicalType::USER("geometry");
+		}
 		// Map to VARCHAR for WKT string representation
-		// TODO: Map to GEOMETRY type after spatial extension integration
 		return LogicalType::VARCHAR;
 	}
 

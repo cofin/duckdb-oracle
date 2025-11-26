@@ -56,13 +56,16 @@ DuckDB Spatial (GEOMETRY) - Native spatial type
 **Function**: `MapOracleColumn()`
 
 ```cpp
-static LogicalType MapOracleColumn(const string &data_type, idx_t precision, idx_t scale, idx_t char_len) {
+static LogicalType MapOracleColumn(const string &data_type, idx_t precision, idx_t scale, idx_t char_len,
+                                   const OracleSettings &settings) {
     auto upper = StringUtil::Upper(data_type);
 
     // Spatial geometry type detection
     if (upper == "SDO_GEOMETRY" || upper == "MDSYS.SDO_GEOMETRY") {
+        if (settings.enable_spatial_types) {
+            return LogicalType::USER("geometry");
+        }
         // Map to VARCHAR for WKT string representation
-        // TODO: Map to GEOMETRY type after spatial extension integration
         return LogicalType::VARCHAR;
     }
 
@@ -72,10 +75,10 @@ static LogicalType MapOracleColumn(const string &data_type, idx_t precision, idx
 
 **How it works**:
 
-- Called during schema introspection (`LoadColumns()`)
-- Receives `data_type` from Oracle `all_tab_columns` view
-- Returns DuckDB `LogicalType` for the column
-- Spatial types mapped to VARCHAR (WKT strings)
+- Called during schema introspection (`LoadColumns()`).
+- Receives `data_type` from Oracle `all_tab_columns` view.
+- Returns `LogicalType::USER("geometry")` if `oracle_enable_spatial_types` is true.
+- DuckDB treats this as a custom type; if the spatial extension is loaded, it acts as a native geometry.
 
 **Oracle type names**:
 
@@ -188,19 +191,19 @@ FROM "SPATIAL_SCHEMA"."PARCELS"
 **Setting**:
 
 ```cpp
-bool enable_spatial_conversion = true;  // Default: enabled
+bool enable_spatial_types = true;  // Default: enabled
 ```
 
 **Usage**:
 
 ```sql
--- Disable spatial conversion
-SET oracle_enable_spatial_conversion = false;
+-- Disable spatial types (fallback to VARCHAR)
+SET oracle_enable_spatial_types = false;
 
 -- Enable in ATTACH
 ATTACH 'user/pass@host:1521/service' AS ora (
     TYPE oracle,
-    enable_spatial_conversion = true
+    enable_spatial_types = true
 );
 ```
 
@@ -486,9 +489,8 @@ When modifying spatial code:
 
 1. **CLOB Support**: Handle large geometries (>4KB WKT)
 2. **WKB Mode**: Binary transfer for 30% performance improvement
-3. **GEOMETRY Type**: Auto-convert when spatial extension loaded
-4. **Spatial Pushdown**: Push spatial predicates to Oracle (SDO_FILTER, SDO_RELATE)
-5. **Advanced Types**: SDO_TOPO_GEOMETRY, SDO_GEORASTER support
+3. **Spatial Pushdown**: Push spatial predicates to Oracle (SDO_FILTER, SDO_RELATE)
+4. **Advanced Types**: SDO_TOPO_GEOMETRY, SDO_GEORASTER support
 
 ### Integration Opportunities
 

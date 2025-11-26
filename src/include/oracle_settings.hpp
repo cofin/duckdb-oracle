@@ -27,6 +27,7 @@ struct OracleSettings {
 	idx_t lob_max_size = 33554432;      // 32MB - Oracle's practical limit for inline LOB fetch
 	bool vector_to_list = true;         // Parse VECTOR JSON to LIST<FLOAT> (vs raw VARCHAR)
 	bool enable_type_conversion = true; // Enable server-side type conversion for problematic types
+	bool enable_spatial_types = true;   // Map SDO_GEOMETRY to GEOMETRY type (requires spatial extension)
 };
 
 } // namespace duckdb

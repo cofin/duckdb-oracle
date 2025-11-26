@@ -14,12 +14,17 @@ SELECT 1;
 query I
 SELECT current_setting('oracle_enable_pushdown');
 ----
-false
+true
 
 query I
 SELECT current_setting('oracle_debug_show_queries');
 ----
 false
+
+query I
+SELECT current_setting('oracle_enable_spatial_types');
+----
+true
 
 # Test ATTACH fails gracefully when Oracle not available
 # Spatial conversion is automatically enabled for SDO_GEOMETRY columns

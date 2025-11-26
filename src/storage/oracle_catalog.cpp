@@ -84,6 +84,8 @@ void OracleCatalogState::ApplyOptions(const unordered_map<string, Value> &option
 			settings.vector_to_list = entry.second.GetValue<bool>();
 		} else if (key == "enable_type_conversion") {
 			settings.enable_type_conversion = entry.second.GetValue<bool>();
+		} else if (key == "enable_spatial_types") {
+			settings.enable_spatial_types = entry.second.GetValue<bool>();
 		}
 	}
 }

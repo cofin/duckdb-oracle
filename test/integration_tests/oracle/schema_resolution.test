@@ -216,6 +216,22 @@ SELECT COUNT(*) FROM ora_cache_test.duckdb_test.schema_test_table1;
 statement ok
 DETACH ora_cache_test;
 
+# Test 18: Test direct table access without schema (catalog.table)
+# This relies on implicit mapping of main schema to current schema
+statement ok
+SET oracle_use_current_schema = true;
+
+statement ok
+ATTACH '' AS ora_implicit (TYPE oracle, SECRET oracle_schema_test);
+
+query I
+SELECT COUNT(*) FROM ora_implicit.schema_test_table2;
+----
+1
+
+statement ok
+DETACH ora_implicit;
+
 # Cleanup: Drop test tables
 query I
 SELECT oracle_execute(oracle_test_conn(),

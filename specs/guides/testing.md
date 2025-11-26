@@ -38,13 +38,18 @@ make debug
 
 ## Test Structure
 
-Tests are located in the `test/sql/` directory. Each `.test` file represents a test case or a group of related test cases.
+Tests are located in the `test/` directory:
+
+- `test/sql/`: Legacy/Unit tests (negative tests, basic checks).
+- `test/integration_tests/`: Full integration tests requiring an Oracle container.
 
 ```
 test/
-└── sql/
-    ├─── manual_verification.md # Instructions for live DB testing
-    └─── test_oracle_query.test # Automated (negative) tests
+├── sql/
+│   └── test_oracle_query.test
+└── integration_tests/
+    ├── oracle/
+    └── test_vectors.test
 ```
 
 ## Writing Tests
