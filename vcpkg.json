@@ -2,6 +2,12 @@
   "dependencies": [
     "openssl"
   ],
+  "overrides": [
+    {
+      "name": "openssl",
+      "version": "3.0.8"
+    }
+  ],
   "builtin-baseline": "5e5d0e1cd7785623065e77eff011afdeec1a3574",
   "vcpkg-configuration": {
     "overlay-ports": [

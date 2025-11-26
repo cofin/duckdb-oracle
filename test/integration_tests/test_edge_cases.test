@@ -1,0 +1,117 @@
+# name: test/integration_tests/test_edge_cases.test
+# description: Test edge cases like NULLs, Empty tables, Large strings
+# group: [integration_tests]
+
+require oracle
+
+statement ok
+CREATE OR REPLACE SECRET test_oracle (
+    TYPE ORACLE,
+    USER 'duckdb_test',
+    PASSWORD 'duckdb_test',
+    HOST 'localhost',
+    PORT ${ORACLE_PORT},
+    SERVICE 'FREEPDB1'
+);
+
+statement ok
+ATTACH '' AS ora (TYPE ORACLE, SECRET 'test_oracle');
+
+# --- NULL Handling ---
+
+statement ok
+SELECT oracle_execute('ora', '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE null_test'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+');
+
+statement ok
+SELECT oracle_execute('ora', '
+    CREATE TABLE null_test (
+        id NUMBER,
+        val_str VARCHAR2(50),
+        val_num NUMBER,
+        val_date DATE
+    )
+');
+
+statement ok
+SELECT oracle_execute('ora', 'INSERT INTO null_test VALUES (1, NULL, NULL, NULL)');
+
+statement ok
+SELECT oracle_execute('ora', 'INSERT INTO null_test VALUES (2, ''Not Null'', 123, TO_DATE(''2024-01-01'', ''YYYY-MM-DD''))');
+
+# Clear cache
+statement ok
+SELECT oracle_clear_cache();
+
+query ITIT
+SELECT id, val_str, val_num, CAST(val_date AS DATE) FROM ora.DUCKDB_TEST.null_test ORDER BY id
+----
+1	NULL	NULL	NULL
+2	Not Null	123	2024-01-01
+
+# --- Empty Table ---
+
+statement ok
+SELECT oracle_execute('ora', '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE empty_test'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+');
+
+statement ok
+SELECT oracle_execute('ora', 'CREATE TABLE empty_test (id NUMBER)');
+
+# Clear cache
+statement ok
+SELECT oracle_clear_cache();
+
+query I
+SELECT * FROM ora.DUCKDB_TEST.empty_test
+----
+
+# --- Large Strings (CLOB/VARCHAR) ---
+
+statement ok
+SELECT oracle_execute('ora', '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE large_text'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+');
+
+statement ok
+SELECT oracle_execute('ora', 'CREATE TABLE large_text (content CLOB)');
+
+# Insert 4000+ chars (use TO_CLOB to avoid VARCHAR2 4000 limit on concat)
+statement ok
+SELECT oracle_execute('ora', 'INSERT INTO large_text VALUES (TO_CLOB(RPAD(''A'', 4000, ''A'')) || ''B'')');
+
+# Clear cache
+statement ok
+SELECT oracle_clear_cache();
+
+# Verify length (4001)
+query I
+SELECT LENGTH(content) FROM ora.DUCKDB_TEST.large_text
+----
+4001
+
+statement ok
+DETACH ora;

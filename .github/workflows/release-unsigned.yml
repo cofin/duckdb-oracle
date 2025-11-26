@@ -21,7 +21,24 @@ jobs:
     outputs:
       version: ${{ steps.get_version.outputs.version }}
       is_prerelease: ${{ steps.get_version.outputs.is_prerelease }}
+      duckdb_version: ${{ steps.get_duckdb_version.outputs.duckdb_version }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Get DuckDB Version
+        id: get_duckdb_version
+        shell: bash
+        run: |
+          cd duckdb
+          # Get the exact tag from the submodule
+          DUCKDB_VERSION=$(git describe --tags --abbrev=0)
+          echo "duckdb_version=$DUCKDB_VERSION" >> $GITHUB_OUTPUT
+          echo "Detected DuckDB version: $DUCKDB_VERSION"
+
       - name: Get Version
         id: get_version
         run: |
@@ -107,8 +124,7 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           # Check if cmake is installed, if not install it
-          if ! command -v cmake &> /dev/null;
-             then
+          if ! command -v cmake &> /dev/null; then
              if [ "${{ runner.os }}" == "Linux" ]; then
                 sudo apt-get install -y cmake
              elif [ "${{ runner.os }}" == "macOS" ]; then
@@ -134,24 +150,25 @@ jobs:
         shell: bash
         run: |
           VERSION=${{ needs.validate-version.outputs.version }}
+          DUCKDB_VERSION=${{ needs.validate-version.outputs.duckdb_version }}
           PLATFORM=${{ matrix.platform }}
           ARCH=${{ matrix.arch }}
           
           mkdir -p deploy
-          cp build/release/extension/oracle/oracle.duckdb_extension deploy/oracle-${VERSION}-${PLATFORM}-${ARCH}.duckdb_extension
+          cp build/release/extension/oracle/oracle.duckdb_extension deploy/oracle-${VERSION}-duckdb-${DUCKDB_VERSION}-${PLATFORM}-${ARCH}.duckdb_extension
           
           # Generate checksum
           cd deploy
           if [ "${{ runner.os }}" == "Windows" ]; then
-            certutil -hashfile oracle-${VERSION}-${PLATFORM}-${ARCH}.duckdb_extension SHA256 > oracle-${VERSION}-${PLATFORM}-${ARCH}.duckdb_extension.sha256
+            certutil -hashfile oracle-${VERSION}-duckdb-${DUCKDB_VERSION}-${PLATFORM}-${ARCH}.duckdb_extension SHA256 > oracle-${VERSION}-duckdb-${DUCKDB_VERSION}-${PLATFORM}-${ARCH}.duckdb_extension.sha256
           else
-            shasum -a 256 oracle-${VERSION}-${PLATFORM}-${ARCH}.duckdb_extension > oracle-${VERSION}-${PLATFORM}-${ARCH}.duckdb_extension.sha256
+            shasum -a 256 oracle-${VERSION}-duckdb-${DUCKDB_VERSION}-${PLATFORM}-${ARCH}.duckdb_extension > oracle-${VERSION}-duckdb-${DUCKDB_VERSION}-${PLATFORM}-${ARCH}.duckdb_extension.sha256
           fi
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: oracle-${{ needs.validate-version.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}
+          name: oracle-${{ needs.validate-version.outputs.version }}-duckdb-${{ needs.validate-version.outputs.duckdb_version }}-${{ matrix.platform }}-${{ matrix.arch }}
           path: deploy/*
 
   create-release:
@@ -168,7 +185,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          pattern: oracle-*
+          pattern: oracle-*-duckdb-${{ needs.validate-version.outputs.duckdb_version }}-*
           merge-multiple: true
 
       - name: List Artifacts
@@ -192,10 +209,10 @@ jobs:
           echo "$NOTES" >> $GITHUB_OUTPUT
           echo "" >> $GITHUB_OUTPUT
           echo "## Installation" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
+          echo "```sql" >> $GITHUB_OUTPUT
           echo "-- Load the extension (unsigned)" >> $GITHUB_OUTPUT
           echo "duckdb -unsigned" >> $GITHUB_OUTPUT
-          echo "LOAD 'path/to/oracle-${{ needs.validate-version.outputs.version }}-linux-x86_64.duckdb_extension';" >> $GITHUB_OUTPUT
+          echo "LOAD 'path/to/oracle-${{ needs.validate-version.outputs.version }}-duckdb-${{ needs.validate-version.outputs.duckdb_version }}-linux-x86_64.duckdb_extension';" >> $GITHUB_OUTPUT
           echo "```" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 

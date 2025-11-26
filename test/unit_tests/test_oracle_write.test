@@ -1,0 +1,25 @@
+# name: test/unit_tests/test_oracle_write.test
+# description: Test Oracle Write (COPY) syntax
+# group: [unit_tests]
+
+require oracle
+
+# Test that the Copy Function is registered and arguments are parsed
+# We expect a connection error, which proves the bind logic ran and tried to connect.
+
+statement error
+COPY (SELECT 1 AS a) TO 'dummy_table' (FORMAT ORACLE, CONNECTION_STRING 'bad_connection_string');
+----
+IO Error: Invalid Oracle connection string
+
+# Test missing table name (if logic allows detecting it before connection)
+# Based on code: result->table_name = target_table; ... if (target_table.empty()) throw ...
+# But COPY TO 'dummy_table' sets target_table to 'dummy_table'.
+# If we omit the destination in SQL, parser might complain first.
+# Let's try to verify options parsing.
+
+statement error
+COPY (SELECT 1 AS a) TO 'dummy_table' (FORMAT ORACLE, CONNECTION_STRING 'bad_connection_string', UNKNOWN_OPTION 'val');
+----
+Unrecognized option for Oracle COPY
+

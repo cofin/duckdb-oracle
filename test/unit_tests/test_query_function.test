@@ -1,0 +1,15 @@
+# name: test/unit_tests/test_query_function.test
+# description: Test a simple query (expecting connection failure in CI)
+# group: [unit_tests]
+
+# tags: [oracle]
+
+# load the extension
+require oracle
+
+# run a query with dummy credentials
+# We expect an IO Error or similar due to missing OCI or connection failure
+statement error
+SELECT * FROM oracle_query('dummy/dummy@//localhost:1521/dummy', 'SELECT 1 FROM DUAL');
+----
+IO Error

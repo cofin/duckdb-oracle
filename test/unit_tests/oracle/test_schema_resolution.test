@@ -1,0 +1,111 @@
+# name: test/unit_tests/oracle/test_schema_resolution.test
+# description: Test schema resolution with oracle_use_current_schema setting (smoke tests)
+# group: [oracle]
+
+require oracle
+
+# Test 1: Verify oracle_use_current_schema setting exists with default
+query I
+SELECT current_setting('oracle_use_current_schema');
+----
+true
+
+# Test 2: Test disabling current schema resolution
+statement ok
+SET oracle_use_current_schema = false;
+
+query I
+SELECT current_setting('oracle_use_current_schema');
+----
+false
+
+# Test 3: Test enabling current schema resolution
+statement ok
+SET oracle_use_current_schema = true;
+
+query I
+SELECT current_setting('oracle_use_current_schema');
+----
+true
+
+# Test 4: Verify schema resolution works with lazy loading enabled
+statement ok
+SET oracle_lazy_schema_loading = true;
+SET oracle_use_current_schema = true;
+
+query II
+SELECT
+    current_setting('oracle_lazy_schema_loading')::BOOLEAN,
+    current_setting('oracle_use_current_schema')::BOOLEAN;
+----
+true	true
+
+# Test 5: Verify schema resolution works with lazy loading disabled
+statement ok
+SET oracle_lazy_schema_loading = false;
+SET oracle_use_current_schema = true;
+
+query II
+SELECT
+    current_setting('oracle_lazy_schema_loading')::BOOLEAN,
+    current_setting('oracle_use_current_schema')::BOOLEAN;
+----
+false	true
+
+# Test 6: Test both schema settings disabled
+statement ok
+SET oracle_lazy_schema_loading = false;
+SET oracle_use_current_schema = false;
+
+query II
+SELECT
+    current_setting('oracle_lazy_schema_loading')::BOOLEAN,
+    current_setting('oracle_use_current_schema')::BOOLEAN;
+----
+false	false
+
+# Test 7: Test combining schema resolution with metadata limits
+statement ok
+SET oracle_use_current_schema = true;
+SET oracle_metadata_result_limit = 1000;
+
+query II
+SELECT
+    current_setting('oracle_use_current_schema')::BOOLEAN,
+    current_setting('oracle_metadata_result_limit')::INTEGER;
+----
+true	1000
+
+# Test 8: Test combining schema resolution with object types filter
+statement ok
+SET oracle_use_current_schema = true;
+SET oracle_metadata_object_types = 'TABLE,VIEW';
+
+query II
+SELECT
+    current_setting('oracle_use_current_schema')::BOOLEAN,
+    current_setting('oracle_metadata_object_types');
+----
+true	TABLE,VIEW
+
+# Test 9: Reset all schema-related settings to defaults
+statement ok
+SET oracle_lazy_schema_loading = true;
+SET oracle_use_current_schema = true;
+SET oracle_metadata_object_types = 'TABLE,VIEW,SYNONYM,MATERIALIZED VIEW';
+SET oracle_metadata_result_limit = 10000;
+
+# Test 10: Verify all settings reset correctly
+query IIII
+SELECT
+    current_setting('oracle_lazy_schema_loading')::BOOLEAN,
+    current_setting('oracle_use_current_schema')::BOOLEAN,
+    current_setting('oracle_metadata_object_types'),
+    current_setting('oracle_metadata_result_limit')::INTEGER;
+----
+true	true	TABLE,VIEW,SYNONYM,MATERIALIZED VIEW	10000
+
+# Note: Integration tests with real Oracle database connections are in:
+# - advanced_schema_resolution_integration.test (current schema detection)
+# - advanced_schema_resolution_priority.test (unqualified name resolution)
+# - advanced_schema_resolution_synonyms.test (synonym resolution in current schema)

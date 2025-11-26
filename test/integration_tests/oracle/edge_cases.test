@@ -1,0 +1,289 @@
+# name: test/integration_tests/oracle/edge_cases.test
+# description: Edge case tests for Oracle extension
+# group: [oracle]
+
+require oracle
+
+# Build connection string from environment
+statement ok
+CREATE OR REPLACE MACRO oracle_test_conn() AS (
+    concat(
+        oracle_env('ORACLE_USER', 'duckdb_test'), '/',
+        oracle_env('ORACLE_PASSWORD', 'duckdb_test'), '@//',
+        oracle_env('ORACLE_HOST', 'localhost'), ':',
+        oracle_env('ORACLE_PORT', '1521'), '/',
+        oracle_env('ORACLE_SERVICE', 'FREEPDB1')
+    )
+);
+
+statement ok
+CREATE SECRET oracle_edge_test (
+    TYPE oracle,
+    HOST oracle_env('ORACLE_HOST', 'localhost'),
+    PORT CAST(oracle_env('ORACLE_PORT', '1521') AS BIGINT),
+    SERVICE oracle_env('ORACLE_SERVICE', 'FREEPDB1'),
+    USER oracle_env('ORACLE_USER', 'duckdb_test'),
+    PASSWORD oracle_env('ORACLE_PASSWORD', 'duckdb_test')
+);
+
+# Test 1: Long SQL Statement with many columns (approaching buffer limits)
+query I
+SELECT oracle_execute(oracle_test_conn(),
+    'CREATE TABLE edge_test_long_sql (
+        id NUMBER,
+        col1 VARCHAR2(100),
+        col2 VARCHAR2(100),
+        col3 VARCHAR2(100),
+        col4 VARCHAR2(100),
+        col5 VARCHAR2(100),
+        col6 VARCHAR2(100),
+        col7 VARCHAR2(100),
+        col8 VARCHAR2(100),
+        col9 VARCHAR2(100),
+        col10 VARCHAR2(100)
+    )');
+----
+<REGEX>:.*executed successfully.*
+
+# Test 4: Special characters in string
+query I
+SELECT oracle_execute(oracle_test_conn(),
+    'INSERT INTO edge_test_long_sql (id, col1) VALUES (1, ''Special: !@#$%^&*()'')');
+----
+<REGEX>:.*executed successfully.*
+
+# Edge Case 3: oracle_execute with quotes in SQL
+query I
+SELECT oracle_execute(oracle_test_conn(),
+    'INSERT INTO edge_test_long_sql (id, col1) VALUES (2, ''She said "hello"'')');
+----
+<REGEX>:.*(1 rows? affected).*
+
+# Edge Case 4: oracle_execute with newlines in SQL
+query I
+SELECT oracle_execute(oracle_test_conn(),
+    'INSERT INTO edge_test_long_sql (id, col1) VALUES (3, ''Line1
+Line2
+Line3'')');
+----
+<REGEX>:.*(1 rows? affected).*
+
+# Edge Case 5: oracle_execute UPDATE with 0 rows affected
+query I
+SELECT oracle_execute(oracle_test_conn(),
+    'UPDATE edge_test_long_sql SET col1 = ''updated'' WHERE id = 999');
+----
+<REGEX>:.*(0 rows? affected).*
+
+# Edge Case 6: oracle_execute DELETE with 0 rows affected
+query I
+SELECT oracle_execute(oracle_test_conn(),
+    'DELETE FROM edge_test_long_sql WHERE id = 999');
+----
+<REGEX>:.*(0 rows? affected).*
+
+# Test 2: Verify table creation
+query I
+SELECT COUNT(*) FROM oracle_query(oracle_test_conn(),
+    'SELECT * FROM edge_test_long_sql');
+----
+3
+
+# Test 3: Drop table
+query I
+SELECT oracle_execute(oracle_test_conn(),
+    'DROP TABLE edge_test_long_sql');
+----
+<REGEX>:.*executed successfully.*
+
+# Edge Case 8: Metadata enumeration with zero tables in schema
+statement ok
+SET oracle_lazy_schema_loading = true;
+SET oracle_metadata_result_limit = 10000;
+
+# This should work even if schema has no tables
+statement ok
+ATTACH '' AS ora_empty (TYPE oracle, SECRET oracle_edge_test);
+
+statement ok
+DETACH ora_empty;
+
+# Edge Case 9: Metadata result limit boundary conditions
+# Test limit = 1 (minimum useful value)
+statement ok
+SET oracle_metadata_result_limit = 1;
+
+statement ok
+ATTACH '' AS ora_limit1 (TYPE oracle, SECRET oracle_edge_test);
+
+# Should still be able to query via on-demand loading
+query I
+SELECT COUNT(*) FROM oracle_query(oracle_test_conn(),
+    'SELECT 1 FROM DUAL');
+----
+1
+
+statement ok
+DETACH ora_limit1;
+
+# Edge Case 10: Empty metadata_object_types string
+statement ok
+SET oracle_metadata_object_types = '';
+SET oracle_metadata_result_limit = 10000;
+
+# This should attach but may enumerate nothing
+statement ok
+ATTACH '' AS ora_empty_types (TYPE oracle, SECRET oracle_edge_test);
+
+statement ok
+DETACH ora_empty_types;
+
+# Edge Case 11: Very large metadata_result_limit
+statement ok
+SET oracle_metadata_result_limit = 999999999;
+SET oracle_metadata_object_types = 'TABLE,VIEW,SYNONYM,MATERIALIZED VIEW';
+
+statement ok
+ATTACH '' AS ora_huge_limit (TYPE oracle, SECRET oracle_edge_test);
+
+statement ok
+DETACH ora_huge_limit;
+
+# Edge Case 12: Schema resolution with non-existent table
+statement ok
+SET oracle_use_current_schema = true;
+SET oracle_lazy_schema_loading = true;
+
+statement ok
+ATTACH '' AS ora_nonexist (TYPE oracle, SECRET oracle_edge_test);
+
+# This should fail with table not found, not crash
+statement error
+SELECT * FROM ora_nonexist.duckdb_test.nonexistent_table_12345;
+----
+
+statement ok
+DETACH ora_nonexist;
+
+# Edge Case 13: oracle_execute with PL/SQL block containing multiple statements
+query I
+SELECT oracle_execute(oracle_test_conn(),
+    'BEGIN
+        EXECUTE IMMEDIATE ''CREATE TABLE edge_multi (id NUMBER)'';
+        EXECUTE IMMEDIATE ''INSERT INTO edge_multi VALUES (1)'';
+        EXECUTE IMMEDIATE ''INSERT INTO edge_multi VALUES (2)'';
+        EXECUTE IMMEDIATE ''INSERT INTO edge_multi VALUES (3)'';
+        COMMIT;
+     END;');
+----
+<REGEX>:.*executed successfully.*
+
+# Verify multi-statement PL/SQL worked
+query I
+SELECT COUNT(*) FROM oracle_query(oracle_test_conn(),
+    'SELECT * FROM edge_multi');
+----
+3
+
+# Cleanup
+query I
+SELECT oracle_execute(oracle_test_conn(),
+    'DROP TABLE edge_multi');
+----
+<REGEX>:.*executed successfully.*
+
+# Edge Case 14: oracle_execute with COMMIT/ROLLBACK
+query I
+SELECT oracle_execute(oracle_test_conn(),
+    'CREATE TABLE edge_txn (id NUMBER)');
+----
+<REGEX>:.*executed successfully.*
+
+query I
+SELECT oracle_execute(oracle_test_conn(),
+    'BEGIN INSERT INTO edge_txn VALUES (1); COMMIT; END;');
+----
+<REGEX>:.*executed successfully.*
+
+query I
+SELECT COUNT(*) FROM oracle_query(oracle_test_conn(),
+    'SELECT * FROM edge_txn');
+----
+1
+
+# Cleanup
+query I
+SELECT oracle_execute(oracle_test_conn(),
+    'DROP TABLE edge_txn');
+----
+<REGEX>:.*executed successfully.*
+
+# Edge Case 15: Rapid attach/detach cycles
+statement ok
+SET oracle_lazy_schema_loading = true;
+
+statement ok
+ATTACH '' AS ora_cycle1 (TYPE oracle, SECRET oracle_edge_test);
+
+statement ok
+DETACH ora_cycle1;
+
+statement ok
+ATTACH '' AS ora_cycle2 (TYPE oracle, SECRET oracle_edge_test);
+
+statement ok
+DETACH ora_cycle2;
+
+statement ok
+ATTACH '' AS ora_cycle3 (TYPE oracle, SECRET oracle_edge_test);
+
+statement ok
+DETACH ora_cycle3;
+
+# Edge Case 16: oracle_clear_cache multiple times
+query I
+SELECT oracle_clear_cache();
+----
+<REGEX>:.*cleared.*
+
+query I
+SELECT oracle_clear_cache();
+----
+<REGEX>:.*cleared.*
+
+query I
+SELECT oracle_clear_cache();
+----
+<REGEX>:.*cleared.*
+
+# Edge Case 17: Switching settings mid-session
+statement ok
+SET oracle_lazy_schema_loading = true;
+
+statement ok
+ATTACH '' AS ora_switch1 (TYPE oracle, SECRET oracle_edge_test);
+
+# Change settings while attached
+statement ok
+SET oracle_lazy_schema_loading = false;
+
+statement ok
+DETACH ora_switch1;
+
+# Attach again with new settings
+statement ok
+ATTACH '' AS ora_switch2 (TYPE oracle, SECRET oracle_edge_test);
+
+statement ok
+DETACH ora_switch2;
+
+# Reset to defaults
+statement ok
+SET oracle_lazy_schema_loading = true;
+SET oracle_metadata_object_types = 'TABLE,VIEW,SYNONYM,MATERIALIZED VIEW';
+SET oracle_metadata_result_limit = 10000;
+SET oracle_use_current_schema = true;
+
+# Cleanup
+statement ok
+DROP SECRET oracle_edge_test;

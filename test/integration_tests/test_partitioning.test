@@ -1,0 +1,128 @@
+# name: test/integration_tests/test_partitioning.test
+# description: Test querying partitioned Oracle tables
+# group: [integration_tests]
+
+require oracle
+
+# Note: This test requires the test runner (scripts/test_integration.sh) 
+# to replace ${ORACLE_PORT} with the actual port.
+
+statement ok
+CREATE OR REPLACE SECRET test_oracle (
+    TYPE ORACLE,
+    USER 'duckdb_test',
+    PASSWORD 'duckdb_test',
+    HOST 'localhost',
+    PORT ${ORACLE_PORT},
+    SERVICE 'FREEPDB1'
+);
+
+statement ok
+ATTACH '' AS ora (TYPE ORACLE, SECRET 'test_oracle');
+
+# Create Partitioned Table (Range)
+statement ok
+SELECT oracle_execute('ora', '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE sales_range'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+');
+
+statement ok
+SELECT oracle_execute('ora', '
+    CREATE TABLE sales_range (
+        sale_id NUMBER,
+        sale_date DATE,
+        amount NUMBER
+    )
+    PARTITION BY RANGE (sale_date) (
+        PARTITION sales_q1_2024 VALUES LESS THAN (TO_DATE(''2024-04-01'', ''YYYY-MM-DD'')),
+        PARTITION sales_q2_2024 VALUES LESS THAN (TO_DATE(''2024-07-01'', ''YYYY-MM-DD'')),
+        PARTITION sales_q3_2024 VALUES LESS THAN (TO_DATE(''2024-10-01'', ''YYYY-MM-DD'')),
+        PARTITION sales_q4_2024 VALUES LESS THAN (TO_DATE(''2025-01-01'', ''YYYY-MM-DD''))
+    )
+');
+
+statement ok
+SELECT oracle_execute('ora', 'INSERT INTO sales_range VALUES (1, TO_DATE(''2024-01-15'', ''YYYY-MM-DD''), 100)');
+
+statement ok
+SELECT oracle_execute('ora', 'INSERT INTO sales_range VALUES (2, TO_DATE(''2024-05-20'', ''YYYY-MM-DD''), 200)');
+
+statement ok
+SELECT oracle_execute('ora', 'INSERT INTO sales_range VALUES (3, TO_DATE(''2024-11-10'', ''YYYY-MM-DD''), 300)');
+
+# Clear cache
+statement ok
+SELECT oracle_clear_cache();
+
+# Verify we can read from the partitioned table transparently
+query III
+SELECT * FROM ora.DUCKDB_TEST.sales_range ORDER BY sale_id
+----
+1	2024-01-15 00:00:00	100
+2	2024-05-20 00:00:00	200
+3	2024-11-10 00:00:00	300
+
+# Verify Pushdown filters work on partition keys (Pruning happens on Oracle side)
+# query III
+# SELECT * FROM ora.DUCKDB_TEST.sales_range WHERE sale_date >= '2024-04-01' ORDER BY sale_id
+# ----
+# 2	2024-05-20 00:00:00	200
+# 3	2024-11-10 00:00:00	300
+
+# Debug types
+query TTT
+SELECT typeof(sale_id), typeof(sale_date), typeof(amount) FROM ora.DUCKDB_TEST.sales_range LIMIT 1
+----
+DOUBLE	TIMESTAMP	DOUBLE
+
+# Create List Partitioned Table
+statement ok
+SELECT oracle_execute('ora', '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE customers_list'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+');
+
+statement ok
+SELECT oracle_execute('ora', '
+    CREATE TABLE customers_list (
+        cust_id NUMBER,
+        region VARCHAR2(20)
+    )
+    PARTITION BY LIST (region) (
+        PARTITION region_east VALUES (''NY'', ''MA''),
+        PARTITION region_west VALUES (''CA'', ''WA''),
+        PARTITION region_south VALUES (''TX'', ''FL'')
+    )
+');
+
+statement ok
+SELECT oracle_execute('ora', 'INSERT INTO customers_list VALUES (1, ''NY'')');
+
+statement ok
+SELECT oracle_execute('ora', 'INSERT INTO customers_list VALUES (2, ''CA'')');
+
+# Clear cache
+statement ok
+SELECT oracle_clear_cache();
+
+query IT
+SELECT * FROM ora.DUCKDB_TEST.customers_list ORDER BY cust_id
+----
+1	NY
+2	CA
+
+statement ok
+DETACH ora;

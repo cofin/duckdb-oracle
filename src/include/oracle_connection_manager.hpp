@@ -27,8 +27,16 @@ struct OracleContext {
 	~OracleContext();
 };
 
+struct OracleConnectionPool {
+	std::mutex lock;
+	std::vector<std::shared_ptr<OracleContext>> idle;
+	idx_t total = 0;
+	idx_t limit = 8;
+	std::condition_variable cv;
+};
+
 struct OracleConnectionHandle {
-	OracleConnectionHandle(const std::string &key, std::shared_ptr<OracleContext> ctx_p, bool return_to_pool_p);
+	OracleConnectionHandle(std::shared_ptr<OracleConnectionPool> pool, std::shared_ptr<OracleContext> ctx);
 	~OracleConnectionHandle();
 
 	std::shared_ptr<OracleContext> Get() {
@@ -36,9 +44,8 @@ struct OracleConnectionHandle {
 	}
 
 private:
-	std::string pool_key;
+	std::shared_ptr<OracleConnectionPool> pool;
 	std::shared_ptr<OracleContext> ctx;
-	bool return_to_pool;
 };
 
 class OracleConnectionManager {
@@ -48,8 +55,6 @@ public:
 	std::shared_ptr<OracleConnectionHandle> Acquire(const std::string &connection_string,
 	                                                const OracleSettings &settings, idx_t wait_timeout_ms = 10000);
 
-	void Release(const std::string &connection_string, std::shared_ptr<OracleContext> ctx);
-
 	void Clear();
 
 	OCIEnv *Env() {
@@ -57,15 +62,8 @@ public:
 	}
 
 private:
-	struct PoolEntry {
-		std::vector<std::shared_ptr<OracleContext>> idle;
-		idx_t total = 0;
-		idx_t limit = 8;
-		std::condition_variable cv;
-	};
-
-	std::mutex pool_mutex;
-	std::unordered_map<std::string, PoolEntry> pools;
+	std::mutex manager_mutex;
+	std::unordered_map<std::string, std::shared_ptr<OracleConnectionPool>> pools;
 	OCIEnv *envhp = nullptr;
 
 	OracleConnectionManager();

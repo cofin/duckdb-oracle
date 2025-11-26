@@ -1,0 +1,103 @@
+# name: test/integration_tests/test_xml_blob.test
+# description: Test XMLType and BLOB/RAW data
+# group: [integration_tests]
+
+require oracle
+
+statement ok
+CREATE OR REPLACE SECRET test_oracle (
+    TYPE ORACLE,
+    USER 'duckdb_test',
+    PASSWORD 'duckdb_test',
+    HOST 'localhost',
+    PORT ${ORACLE_PORT},
+    SERVICE 'FREEPDB1'
+);
+
+statement ok
+ATTACH '' AS ora (TYPE ORACLE, SECRET 'test_oracle');
+
+# --- XMLType ---
+
+statement ok
+SELECT oracle_execute('ora', '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE xml_test'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+');
+
+statement ok
+SELECT oracle_execute('ora', '
+    CREATE TABLE xml_test (
+        id NUMBER,
+        doc XMLTYPE
+    )
+');
+
+statement ok
+SELECT oracle_execute('ora', 'INSERT INTO xml_test VALUES (1, XMLTYPE(''<root><item>A</item></root>''))');
+
+# Clear cache
+statement ok
+SELECT oracle_clear_cache();
+
+# DuckDB maps XMLTYPE to VARCHAR (usually)
+query IT
+SELECT id, replace(replace(replace(CAST(doc AS VARCHAR), chr(10), ''), chr(13), ''), ' ', '') FROM ora.DUCKDB_TEST.xml_test
+----
+1	<root><item>A</item></root>
+
+
+# --- BLOB and RAW ---
+
+statement ok
+SELECT oracle_execute('ora', '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE binary_test'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+');
+
+statement ok
+SELECT oracle_execute('ora', '
+    CREATE TABLE binary_test (
+        id NUMBER,
+        raw_col RAW(10),
+        blob_col BLOB
+    )
+');
+
+# Insert hex data
+# RAW: 'DEADBEEF'
+# BLOB: 'CAFEBABE'
+statement ok
+SELECT oracle_execute('ora', 'INSERT INTO binary_test VALUES (1, ''DEADBEEF'', HEXTORAW(''CAFEBABE''))');
+
+# Clear cache
+statement ok
+SELECT oracle_clear_cache();
+
+# Verify reading RAW and BLOB columns
+# With enable_type_conversion=true and try_native_lobs=true (default), these use native fetch
+# The columns should return as BLOB type in DuckDB
+query I
+SELECT raw_col FROM ora.DUCKDB_TEST.binary_test WHERE id = 1
+----
+\xDE\xAD\xBE\xEF
+
+query I
+SELECT blob_col FROM ora.DUCKDB_TEST.binary_test WHERE id = 1
+----
+\xCA\xFE\xBA\xBE
+
+statement ok
+DETACH ora;

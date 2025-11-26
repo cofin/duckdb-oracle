@@ -1,0 +1,114 @@
+# name: test/integration_tests/test_mixed_columns.test
+# description: Test mixed Oracle column types for buffer alignment (column shift prevention)
+# group: [integration_tests]
+
+require oracle
+
+statement ok
+CREATE OR REPLACE SECRET test_oracle (
+    TYPE ORACLE,
+    USER 'duckdb_test',
+    PASSWORD 'duckdb_test',
+    HOST 'localhost',
+    PORT ${ORACLE_PORT},
+    SERVICE 'FREEPDB1'
+);
+
+statement ok
+ATTACH '' AS ora (TYPE ORACLE, SECRET 'test_oracle');
+
+# Create a table with mixed column types that historically caused buffer alignment issues
+# The specific combination of NUMBER + RAW + DATE + VARCHAR can trigger OCI buffer issues
+
+statement ok
+SELECT oracle_execute('ora', '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE mixed_types'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+');
+
+statement ok
+SELECT oracle_execute('ora', '
+    CREATE TABLE mixed_types (
+        id NUMBER,
+        raw_data RAW(10),
+        created_date DATE,
+        name VARCHAR2(50),
+        amount NUMBER(10,2)
+    )
+');
+
+# Insert test data with distinctive values to detect column shift
+statement ok
+SELECT oracle_execute('ora', '
+    INSERT INTO mixed_types VALUES (
+        1,
+        ''DEADBEEF'',
+        DATE ''2024-01-15'',
+        ''Alice'',
+        123.45
+    )
+');
+
+statement ok
+SELECT oracle_execute('ora', '
+    INSERT INTO mixed_types VALUES (
+        2,
+        ''CAFEBABE'',
+        DATE ''2024-06-30'',
+        ''Bob'',
+        678.90
+    )
+');
+
+# Clear cache to ensure fresh metadata
+statement ok
+SELECT oracle_clear_cache();
+
+# Test individual columns to verify correct data in each
+# If column shift occurs, values would appear in wrong columns
+
+query I
+SELECT id FROM ora.DUCKDB_TEST.mixed_types ORDER BY id
+----
+1
+2
+
+# RAW column should return as BLOB (hex bytes)
+query I
+SELECT raw_data FROM ora.DUCKDB_TEST.mixed_types WHERE id = 1
+----
+\xDE\xAD\xBE\xEF
+
+# Date column should return correct date
+query I
+SELECT CAST(created_date AS DATE) FROM ora.DUCKDB_TEST.mixed_types WHERE id = 1
+----
+2024-01-15
+
+# VARCHAR column should return correct string
+query I
+SELECT name FROM ora.DUCKDB_TEST.mixed_types ORDER BY id
+----
+Alice
+Bob
+
+# NUMBER(10,2) should return correct decimal
+query R
+SELECT amount FROM ora.DUCKDB_TEST.mixed_types WHERE id = 1
+----
+123.45
+
+# Test selecting multiple columns together - the ultimate column shift test
+query ITII
+SELECT id, name, raw_data, CAST(created_date AS DATE) FROM ora.DUCKDB_TEST.mixed_types WHERE id = 2
+----
+2	Bob	\xCA\xFE\xBA\xBE	2024-06-30
+
+statement ok
+DETACH ora;

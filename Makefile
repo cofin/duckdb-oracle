@@ -69,12 +69,11 @@ test_release_internal:
 ifeq ($(UNAME_S),Linux)
 	$(call ensure_libaio)
 endif
-	./build/release/$(TEST_PATH) "test/sql/*"
+	./build/release/$(TEST_PATH) "test/unit_tests/*"
 
 tidy-check:
 	$(OCI_SETUP_SCRIPT)
-	export ORACLE_HOME=$$(find $$(pwd)/oracle_sdk -maxdepth 1 -name "instantclient_*" | head -n1) && \
-	export LD_LIBRARY_PATH=$$ORACLE_HOME:$$LD_LIBRARY_PATH && \
+	. ./oracle_sdk/env.sh && \
 	mkdir -p ./build/tidy && \
 	cmake $(GENERATOR) $(BUILD_FLAGS) $(EXT_DEBUG_FLAGS) -DDISABLE_UNITY=1 -DCLANG_TIDY=1 -S $(DUCKDB_SRCDIR) -B build/tidy && \
 	cp duckdb/.clang-tidy build/tidy/.clang-tidy && \
@@ -82,7 +81,7 @@ tidy-check:
 
 
 # Build (release) then run integration tests against containerized Oracle.
-# Runs both unit tests (test/sql/) and integration tests (test/integration/)
+# Runs both unit tests (test/unit_tests/) and integration tests (test/integration_tests/)
 integration: release
 	SKIP_BUILD=1 ORACLE_IMAGE=$(ORACLE_IMAGE) ./scripts/test_integration.sh
 

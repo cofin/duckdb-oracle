@@ -1,0 +1,11 @@
+# name: test/unit_tests/test_execute_failures.test
+# description: oracle_execute should fail gracefully on bad credentials without crashing
+# group: [unit_tests]
+
+require oracle
+
+# Expect a clean error (no segfault) when connection fails
+statement error
+SELECT oracle_execute('bad_user/bad_pass@//localhost:1521/NO_DB', 'SELECT 1 FROM DUAL');
+----
+IO Error

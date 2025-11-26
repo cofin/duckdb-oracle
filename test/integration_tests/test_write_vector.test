@@ -1,0 +1,57 @@
+# name: test/integration_tests/test_write_vector.test
+# description: Test Oracle Write (COPY) for Vector (Oracle 23ai)
+# group: [integration_tests]
+
+require oracle
+
+statement ok
+ATTACH '${ORACLE_CONNECTION_STRING}' AS ora (TYPE ORACLE);
+
+statement ok
+SELECT oracle_execute('ora', '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE write_vector PURGE'';
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
+');
+
+# VECTOR type only in 23ai. 
+# If not available, this create table will fail. 
+# We wrap in exception block or check version?
+# But test runner continues on failure if we don't use 'statement ok'
+# We assume 23ai container.
+
+statement ok
+SELECT oracle_execute('ora', '
+    CREATE TABLE write_vector (
+        id NUMBER PRIMARY KEY,
+        vec VECTOR(3, FLOAT32)
+    )
+');
+
+statement ok
+SELECT oracle_clear_cache();
+
+# Insert Vector as String '[...]'
+statement ok
+COPY (
+    SELECT 
+        1 as id, 
+        '[1.1, 2.2, 3.3]' as vec
+) TO 'write_vector' (FORMAT ORACLE, CONNECTION_STRING '${ORACLE_CONNECTION_STRING}');
+
+# Verify - VECTOR is returned as LIST<FLOAT> after parsing VECTOR_SERIALIZE output
+query I
+SELECT id FROM ora.write_vector ORDER BY id;
+----
+1
+
+# Test accessing vector elements as list
+query R
+SELECT vec[1] FROM ora.write_vector WHERE id = 1;
+----
+1.1
+
+# Cleanup
+statement ok
+SELECT oracle_execute('ora', 'DROP TABLE write_vector PURGE');

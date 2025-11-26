@@ -1,5 +1,6 @@
 #include "oracle_transaction_manager.hpp"
 #include "oracle_transaction.hpp"
+#include "duckdb/common/exception.hpp"
 
 namespace duckdb {
 
@@ -14,13 +15,23 @@ Transaction &OracleTransactionManager::StartTransaction(ClientContext &context) 
 	return result;
 }
 
-ErrorData OracleTransactionManager::CommitTransaction(ClientContext &, Transaction &) {
-	// read-only; nothing to commit
+ErrorData OracleTransactionManager::CommitTransaction(ClientContext &, Transaction &transaction) {
+	auto &oracle_txn = transaction.Cast<OracleTransaction>();
+	try {
+		oracle_txn.GetConnection().Commit();
+	} catch (Exception &e) {
+		return ErrorData(e);
+	}
 	return ErrorData();
 }
 
-void OracleTransactionManager::RollbackTransaction(Transaction &) {
-	// no-op for read-only
+void OracleTransactionManager::RollbackTransaction(Transaction &transaction) {
+	auto &oracle_txn = transaction.Cast<OracleTransaction>();
+	try {
+		oracle_txn.GetConnection().Rollback();
+	} catch (...) {
+		// Suppress errors on rollback
+	}
 }
 
 void OracleTransactionManager::Checkpoint(ClientContext &, bool) {

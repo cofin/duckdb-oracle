@@ -1,0 +1,149 @@
+# name: test/unit_tests/oracle/test_settings.test
+# description: Test advanced Oracle extension settings (smoke tests - no Oracle required)
+# group: [oracle]
+
+require oracle
+
+# Test 1: Verify oracle_lazy_schema_loading setting exists with default value
+query I
+SELECT current_setting('oracle_lazy_schema_loading');
+----
+true
+
+# Test 2: Test setting oracle_lazy_schema_loading to false
+statement ok
+SET oracle_lazy_schema_loading = false;
+
+query I
+SELECT current_setting('oracle_lazy_schema_loading');
+----
+false
+
+# Test 3: Reset oracle_lazy_schema_loading to default
+statement ok
+SET oracle_lazy_schema_loading = true;
+
+# Test 4: Verify oracle_metadata_object_types setting with default value
+query I
+SELECT current_setting('oracle_metadata_object_types');
+----
+TABLE,VIEW,SYNONYM,MATERIALIZED VIEW
+
+# Test 5: Test setting oracle_metadata_object_types to TABLE only
+statement ok
+SET oracle_metadata_object_types = 'TABLE';
+
+query I
+SELECT current_setting('oracle_metadata_object_types');
+----
+TABLE
+
+# Test 6: Test setting oracle_metadata_object_types to multiple types
+statement ok
+SET oracle_metadata_object_types = 'TABLE,VIEW';
+
+query I
+SELECT current_setting('oracle_metadata_object_types');
+----
+TABLE,VIEW
+
+# Test 7: Reset oracle_metadata_object_types to default
+statement ok
+SET oracle_metadata_object_types = 'TABLE,VIEW,SYNONYM,MATERIALIZED VIEW';
+
+# Test 8: Verify oracle_metadata_result_limit setting with default value
+query I
+SELECT current_setting('oracle_metadata_result_limit');
+----
+10000
+
+# Test 9: Test setting oracle_metadata_result_limit to different value
+statement ok
+SET oracle_metadata_result_limit = 5000;
+
+query I
+SELECT current_setting('oracle_metadata_result_limit');
+----
+5000
+
+# Test 10: Test setting oracle_metadata_result_limit to 0 (unlimited)
+statement ok
+SET oracle_metadata_result_limit = 0;
+
+query I
+SELECT current_setting('oracle_metadata_result_limit');
+----
+0
+
+# Test 11: Reset oracle_metadata_result_limit to default
+statement ok
+SET oracle_metadata_result_limit = 10000;
+
+# Test 12: Verify oracle_use_current_schema setting with default value
+query I
+SELECT current_setting('oracle_use_current_schema');
+----
+true
+
+# Test 13: Test setting oracle_use_current_schema to false
+statement ok
+SET oracle_use_current_schema = false;
+
+query I
+SELECT current_setting('oracle_use_current_schema');
+----
+false
+
+# Test 14: Reset oracle_use_current_schema to default
+statement ok
+SET oracle_use_current_schema = true;
+
+# Test 15: Verify all four advanced settings can be set together
+statement ok
+SET oracle_lazy_schema_loading = false;
+SET oracle_metadata_object_types = 'TABLE,VIEW';
+SET oracle_metadata_result_limit = 1000;
+SET oracle_use_current_schema = false;
+
+# Test 16: Verify all settings were applied
+query IIII
+SELECT
+    current_setting('oracle_lazy_schema_loading')::BOOLEAN,
+    current_setting('oracle_metadata_object_types'),
+    current_setting('oracle_metadata_result_limit')::INTEGER,
+    current_setting('oracle_use_current_schema')::BOOLEAN;
+----
+false	TABLE,VIEW	1000	false
+
+# Test 17: Reset all settings to defaults
+statement ok
+SET oracle_lazy_schema_loading = true;
+SET oracle_metadata_object_types = 'TABLE,VIEW,SYNONYM,MATERIALIZED VIEW';
+SET oracle_metadata_result_limit = 10000;
+SET oracle_use_current_schema = true;
+
+# Test 18: Test setting oracle_metadata_result_limit back to 0 explicitly
+statement ok
+SET oracle_metadata_result_limit = 0;
+
+query I
+SELECT current_setting('oracle_metadata_result_limit');
+----
+0
+
+# Test 19: Test empty string for oracle_metadata_object_types
+statement ok
+SET oracle_metadata_object_types = '';
+
+# Verify empty string was set (result is empty but valid)
+query I
+SELECT LENGTH(current_setting('oracle_metadata_object_types'));
+----
+0
+
+# Test 20: Final reset to defaults for all advanced settings
+statement ok
+SET oracle_lazy_schema_loading = true;
+SET oracle_metadata_object_types = 'TABLE,VIEW,SYNONYM,MATERIALIZED VIEW';
+SET oracle_metadata_result_limit = 10000;
+SET oracle_use_current_schema = true;

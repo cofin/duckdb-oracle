@@ -1,0 +1,87 @@
+# name: test/integration_tests/test_vectors.test
+# description: Test Oracle 23ai Vector data types
+# group: [integration_tests]
+
+require oracle
+
+# Note: This test requires Oracle 23c/23ai. 
+# The standard gvenzl/oracle-free:23-slim image supports this.
+
+statement ok
+CREATE OR REPLACE SECRET test_oracle (
+    TYPE ORACLE,
+    USER 'duckdb_test',
+    PASSWORD 'duckdb_test',
+    HOST 'localhost',
+    PORT ${ORACLE_PORT},
+    SERVICE 'FREEPDB1'
+);
+
+statement ok
+ATTACH '' AS ora (TYPE ORACLE, SECRET 'test_oracle');
+
+# Create table with VECTOR column
+# Vector syntax: VECTOR(dimension, element_type)
+# 23ai default is FLOAT32
+
+statement ok
+SELECT oracle_execute('ora', '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE embeddings'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+');
+
+# Check if VECTOR type is supported by the database before trying to create
+# We do this by trying to create a table and catching the error if it fails due to version
+# However, for integration tests we assume the image is correct.
+
+statement ok
+SELECT oracle_execute('ora', '
+    CREATE TABLE embeddings (
+        id NUMBER,
+        embedding VECTOR(3, FLOAT32)
+    )
+');
+
+statement ok
+SELECT oracle_execute('ora', 'INSERT INTO embeddings VALUES (1, ''[1.1, 2.2, 3.3]'')');
+
+statement ok
+SELECT oracle_execute('ora', 'INSERT INTO embeddings VALUES (2, ''[4.0, 5.0, 6.0]'')');
+
+# Clear cache
+statement ok
+SELECT oracle_clear_cache();
+
+# Read back. DuckDB doesn't have a native VECTOR type that matches exactly 1:1 for transport yet 
+# in the generic sense without array extension, but Oracle extension maps it to...
+# We need to verify what it maps to. Likely it will come back as a String or maybe an Array if implemented.
+# If not explicitly implemented, it might fail or default to string.
+# Let's assume it returns a String representation for now (common fallback) or we check 
+# if the extension handles OCI_TYPE_VECTOR (new in 23c).
+# If the extension doesn't support it explicitly, OCI might error or return unknown.
+
+# If this fails, it means we need to implement VECTOR support in the C++ code.
+# For this test suite, we assume we want to verify behavior.
+
+# Query VECTOR column - returns as LIST<FLOAT> when vector_to_list=true (default)
+# The VECTOR_SERIALIZE function converts to "[1.1, 2.2, 3.3]" format
+query I
+SELECT embedding FROM ora.DUCKDB_TEST.embeddings ORDER BY id
+----
+[1.1, 2.2, 3.3]
+[4.0, 5.0, 6.0]
+
+# Also verify we can access elements as LIST
+query R
+SELECT embedding[1] FROM ora.DUCKDB_TEST.embeddings WHERE id = 1
+----
+1.1
+
+statement ok
+DETACH ora;

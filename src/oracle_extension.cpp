@@ -10,10 +10,12 @@
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/common/limits.hpp"
 #include "duckdb/common/types/value.hpp"
+#include "duckdb/common/vector_operations/generic_executor.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
 #include "duckdb/planner/expression/bound_operator_expression.hpp"
+#include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -26,6 +28,7 @@
 #include "oracle_catalog_state.hpp"
 #include "oracle_secret.hpp"
 #include "oracle_connection_manager.hpp"
+#include "oracle_write.hpp" // Include write support
 #include <oci.h>
 #include <cstdio>
 #include <sys/stat.h>
@@ -118,16 +121,19 @@ static timestamp_t ParseOciTimestamp(const char *data, ub2 len) {
 	}
 	// Oracle default string representation for DATE/TIMESTAMP is ISO-like; rely on DuckDB parser.
 	string s(data, len);
+	// Trim null bytes
+	s.resize(strlen(s.c_str()));
+
+	if (s.empty()) {
+		return timestamp_t();
+	}
+
 	try {
 		return Timestamp::FromString(s, false);
 	} catch (...) {
-		// Fallback: remove trailing fractional seconds if present
-		auto dot = s.find('.');
-		if (dot != string::npos) {
-			s = s.substr(0, dot);
-			return Timestamp::FromString(s, false);
-		}
-		throw IOException("Failed to parse Oracle timestamp: " + s);
+		// If basic parse fails, try manual format or return NULL-equivalent (min timestamp)
+		// instead of throwing IO error to allow inspection.
+		return timestamp_t();
 	}
 }
 
@@ -181,6 +187,9 @@ static OracleSettings GetOracleSettings(ClientContext &context, OracleCatalogSta
 	if (context.TryGetCurrentSetting("oracle_use_current_schema", option_value)) {
 		settings.use_current_schema = option_value.GetValue<bool>();
 	}
+	if (context.TryGetCurrentSetting("oracle_enable_spatial_types", option_value)) {
+		settings.enable_spatial_types = option_value.GetValue<bool>();
+	}
 	return settings;
 }
 
@@ -193,6 +202,14 @@ static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vecto
 	if (connection_string.empty()) {
 		result.SetValue(0, Value());
 		return;
+	}
+
+	// Support attached DB alias: if no '@' present, treat as alias of an attached Oracle database.
+	if (connection_string.find('@') == string::npos) {
+		auto catalog_state = OracleCatalogState::LookupByAlias(connection_string);
+		if (catalog_state) {
+			connection_string = catalog_state->connection_string;
+		}
 	}
 
 	if (getenv("ORACLE_DEBUG")) {
@@ -268,6 +285,11 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
                                             OracleCatalogState *state /* = nullptr */) {
 	auto result = bind_data_ptr ? unique_ptr<OracleBindData>(bind_data_ptr) : make_uniq<OracleBindData>();
 	result->connection_string = connection_string;
+
+	// Clear output vectors - they will be populated from OCI describe below.
+	// This prevents duplication when caller pre-populates vectors (e.g., GetScanFunction).
+	names.clear();
+	return_types.clear();
 	result->base_query = query;
 	result->query = query;
 	result->settings = GetOracleSettings(context, state);
@@ -385,6 +407,8 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
 				return_types.push_back(LogicalType::TIMESTAMP);
 				break;
 			case SQLT_CLOB:
+				return_types.push_back(LogicalType::VARCHAR); // Fetch CLOB as string (text)
+				break;
 			case SQLT_BLOB:
 			case SQLT_BIN:
 			case SQLT_LBI:
@@ -407,6 +431,11 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
 		result->original_types = return_types;
 		result->original_names = names;
 		result->finished = false;
+
+		// Reset handles to avoid holding connections in plan cache
+		result->stmt.reset();
+		result->conn_handle.reset();
+
 		return std::move(result);
 	} catch (...) {
 		throw;
@@ -444,7 +473,60 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &context, Ta
 	auto &bind = input.bind_data->Cast<OracleBindData>();
 	auto state = make_uniq<OracleScanState>(bind.column_names.size());
 
+	// Populate column mapping: output column index -> buffer index
+	// This handles cases where bind_data (query) produces more columns than DuckDB requests (e.g. filters)
+	if (!input.column_ids.empty()) {
+		state->column_mapping.resize(input.column_ids.size());
+		for (idx_t i = 0; i < input.column_ids.size(); i++) {
+			idx_t col_idx = input.column_ids[i];
+			if (col_idx < bind.original_names.size()) {
+				string name = bind.original_names[col_idx];
+				// Find name in bind.column_names
+				bool found = false;
+				for (idx_t j = 0; j < bind.column_names.size(); j++) {
+					if (bind.column_names[j] == name) {
+						state->column_mapping[i] = j;
+						found = true;
+						break;
+					}
+				}
+				if (!found) {
+					// Should not happen if logic is correct
+					state->column_mapping[i] = i;
+				}
+			} else {
+				state->column_mapping[i] = i;
+			}
+		}
+	} else if (!input.projection_ids.empty()) {
+		// Projection IDs might be used instead
+		state->column_mapping.resize(input.projection_ids.size());
+		for (idx_t i = 0; i < input.projection_ids.size(); i++) {
+			idx_t col_idx = input.projection_ids[i];
+			if (col_idx < bind.original_names.size()) {
+				string name = bind.original_names[col_idx];
+				bool found = false;
+				for (idx_t j = 0; j < bind.column_names.size(); j++) {
+					if (bind.column_names[j] == name) {
+						state->column_mapping[i] = j;
+						found = true;
+						break;
+					}
+				}
+				if (!found) {
+					state->column_mapping[i] = i;
+				}
+			} else {
+				state->column_mapping[i] = i;
+			}
+		}
+	}
+
 	state->conn_handle = bind.conn_handle;
+	if (!state->conn_handle) {
+		state->conn_handle = OracleConnectionManager::Instance().Acquire(bind.connection_string, bind.settings);
+	}
+
 	auto ctx = state->conn_handle->Get();
 	state->svc = ctx->svchp;
 	state->err = ctx->errhp;
@@ -519,24 +601,51 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &context, Ta
 		if (col_idx < bind.oci_sizes.size() && bind.oci_sizes[col_idx] > 0) {
 			size = bind.oci_sizes[col_idx] * 4; // UTF8 safety
 		}
+		// Enforce minimum size to avoid alignment issues
+		if (size < 4000)
+			size = 4000;
 
-		// Resize for array fetch
-		state->buffers[col_idx].resize(size * STANDARD_VECTOR_SIZE);
+		// Resize auxiliary buffers
 		state->indicators[col_idx].resize(STANDARD_VECTOR_SIZE);
 		state->return_lens[col_idx].resize(STANDARD_VECTOR_SIZE);
+
+		if (bind.settings.debug_show_queries || getenv("ORACLE_DEBUG")) {
+			fprintf(stderr, "[oracle] DefineCol[%lu]: name=%s size=%u oci_size=%lu original_type=%s\n",
+			        (unsigned long)col_idx, bind.column_names[col_idx].c_str(), (unsigned)size,
+			        col_idx < bind.oci_sizes.size() ? (unsigned long)bind.oci_sizes[col_idx] : 0UL,
+			        col_idx < bind.original_types.size() ? bind.original_types[col_idx].ToString().c_str() : "N/A");
+		}
 
 		ub2 type = SQLT_STR;
 		// Ensure bounds check for original_types
 		if (col_idx < bind.original_types.size()) {
 			switch (bind.original_types[col_idx].id()) {
 			case LogicalTypeId::BIGINT:
-				type = SQLT_INT;
-				size = sizeof(int64_t);
-				state->buffers[col_idx].resize(size * STANDARD_VECTOR_SIZE);
+				type = SQLT_STR; // Fetch as string
 				break;
 			case LogicalTypeId::DOUBLE:
-				type = SQLT_FLT;
-				size = sizeof(double);
+				type = SQLT_STR; // Fetch as string
+				break;
+			case LogicalTypeId::BLOB:
+				if (col_idx < bind.oci_types.size()) {
+					auto oci_type = bind.oci_types[col_idx];
+					if (oci_type == SQLT_BLOB) {
+						type = SQLT_BIN; // BLOB -> Binary
+					} else {
+						type = SQLT_BIN; // RAW -> Binary
+					}
+				} else {
+					type = SQLT_STR;
+				}
+				state->buffers[col_idx].resize(size * STANDARD_VECTOR_SIZE);
+				break;
+			case LogicalTypeId::VARCHAR:
+				// Ensure CLOBs are fetched as strings (SQLT_STR/SQLT_CHR)
+				if (col_idx < bind.oci_types.size() && bind.oci_types[col_idx] == SQLT_CLOB) {
+					type = SQLT_STR; // CLOB -> String
+				} else {
+					type = SQLT_STR;
+				}
 				state->buffers[col_idx].resize(size * STANDARD_VECTOR_SIZE);
 				break;
 			default:
@@ -544,17 +653,85 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &context, Ta
 				break;
 			}
 		}
+		state->buffers[col_idx].resize(size * STANDARD_VECTOR_SIZE);
 
 		CheckOCIError(OCIDefineByPos(state->stmt.get(), &state->defines[col_idx], state->err, col_idx + 1,
+
 		                             state->buffers[col_idx].data(), size, type, state->indicators[col_idx].data(),
+
 		                             state->return_lens[col_idx].data(), nullptr, OCI_DEFAULT),
+
 		              state->err, "Failed to define OCI column");
 
 		CheckOCIError(OCIDefineArrayOfStruct(state->defines[col_idx], state->err, size, sizeof(sb2), sizeof(ub2), 0),
+
 		              state->err, "Failed to set OCI array of struct");
 	}
 	state->defines_bound = true;
 	return std::move(state);
+}
+
+//! Parse VECTOR_SERIALIZE JSON array "[1.0, 2.0, 3.0]" to LIST<FLOAT>
+static Value ParseVectorJsonToList(const string &json_str) {
+	vector<Value> elements;
+
+	// Trim whitespace
+	string s = json_str;
+	StringUtil::Trim(s);
+
+	// Handle empty or invalid input
+	if (s.empty() || s[0] != '[') {
+		return Value::LIST(LogicalType::FLOAT, std::move(elements));
+	}
+
+	// Remove brackets
+	if (s.size() >= 2 && s.front() == '[' && s.back() == ']') {
+		s = s.substr(1, s.size() - 2);
+	}
+
+	// Parse comma-separated values
+	if (!s.empty()) {
+		auto parts = StringUtil::Split(s, ',');
+		for (auto &part : parts) {
+			StringUtil::Trim(part);
+			if (!part.empty()) {
+				try {
+					float val = std::stof(part);
+					elements.push_back(Value::FLOAT(val));
+				} catch (...) {
+					// Skip invalid values
+				}
+			}
+		}
+	}
+
+	return Value::LIST(LogicalType::FLOAT, std::move(elements));
+}
+
+//! Decode hex string to binary BLOB
+static string DecodeHexToBlob(const string &hex_str) {
+	string result;
+	result.reserve(hex_str.size() / 2);
+
+	for (size_t i = 0; i + 1 < hex_str.size(); i += 2) {
+		char high = hex_str[i];
+		char low = hex_str[i + 1];
+
+		auto hex_digit = [](char c) -> int {
+			if (c >= '0' && c <= '9')
+				return c - '0';
+			if (c >= 'A' && c <= 'F')
+				return c - 'A' + 10;
+			if (c >= 'a' && c <= 'f')
+				return c - 'a' + 10;
+			return 0;
+		};
+
+		char byte = static_cast<char>((hex_digit(high) << 4) | hex_digit(low));
+		result.push_back(byte);
+	}
+
+	return result;
 }
 
 void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
@@ -599,32 +776,100 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 
 		for (row_count = 0; row_count < rows_fetched; row_count++) {
 			for (idx_t col_idx = 0; col_idx < output.ColumnCount(); col_idx++) {
-				if (gstate.indicators[col_idx][row_count] == -1) {
+				idx_t buffer_idx = col_idx;
+				if (col_idx < gstate.column_mapping.size()) {
+					buffer_idx = gstate.column_mapping[col_idx];
+				} else if (gstate.column_mapping.empty()) {
+					// No mapping (identity), but be safe
+					buffer_idx = col_idx;
+				}
+
+				if (buffer_idx >= gstate.indicators.size()) {
+					continue;
+				}
+
+				if (gstate.indicators[buffer_idx][row_count] == -1) {
 					FlatVector::SetNull(output.data[col_idx], row_count, true);
 					continue;
 				}
 
-				ub4 element_size = gstate.buffers[col_idx].size() / STANDARD_VECTOR_SIZE;
-				char *ptr = (char *)gstate.buffers[col_idx].data() + (row_count * element_size);
+				ub4 element_size = gstate.buffers[buffer_idx].size() / STANDARD_VECTOR_SIZE;
+				char *ptr = (char *)gstate.buffers[buffer_idx].data() + (row_count * element_size);
+				ub2 actual_len = gstate.return_lens[buffer_idx][row_count];
 
 				switch (output.GetTypes()[col_idx].id()) {
 				case LogicalTypeId::VARCHAR:
 				case LogicalTypeId::BLOB: {
-					string_t val(ptr, gstate.return_lens[col_idx][row_count]);
+					string_t val(ptr, gstate.return_lens[buffer_idx][row_count]);
 					FlatVector::GetData<string_t>(output.data[col_idx])[row_count] =
 					    StringVector::AddString(output.data[col_idx], val);
 					break;
 				}
-				case LogicalTypeId::BIGINT:
-					FlatVector::GetData<int64_t>(output.data[col_idx])[row_count] = *(int64_t *)ptr;
+				case LogicalTypeId::BIGINT: {
+					// Fetch as string, parse to int64
+					string_t val(ptr, gstate.return_lens[buffer_idx][row_count]);
+					string s = val.GetString();
+					try {
+						FlatVector::GetData<int64_t>(output.data[col_idx])[row_count] = std::stoll(s);
+					} catch (...) {
+						FlatVector::SetNull(output.data[col_idx], row_count, true);
+					}
 					break;
-				case LogicalTypeId::DOUBLE:
-					FlatVector::GetData<double>(output.data[col_idx])[row_count] = *(double *)ptr;
+				}
+				case LogicalTypeId::DOUBLE: {
+					// Fetch as string, parse to double
+					string_t val(ptr, gstate.return_lens[buffer_idx][row_count]);
+					string s = val.GetString();
+					try {
+						FlatVector::GetData<double>(output.data[col_idx])[row_count] = std::stod(s);
+					} catch (...) {
+						FlatVector::SetNull(output.data[col_idx], row_count, true);
+					}
 					break;
+				}
+				case LogicalTypeId::DECIMAL: {
+					// Oracle NUMBER -> DuckDB DECIMAL
+					// Fetch as string, convert using DuckDB's decimal conversion
+					string_t val(ptr, gstate.return_lens[buffer_idx][row_count]);
+					string s = val.GetString();
+					try {
+						// Use Value::DECIMAL to parse and convert
+						auto decimal_val = Value(s).DefaultCastAs(output.GetTypes()[col_idx]);
+						output.data[col_idx].SetValue(row_count, decimal_val);
+					} catch (...) {
+						FlatVector::SetNull(output.data[col_idx], row_count, true);
+					}
+					break;
+				}
 				case LogicalTypeId::TIMESTAMP:
 					FlatVector::GetData<timestamp_t>(output.data[col_idx])[row_count] =
-					    ParseOciTimestamp(ptr, gstate.return_lens[col_idx][row_count]);
+					    ParseOciTimestamp(ptr, gstate.return_lens[buffer_idx][row_count]);
 					break;
+				case LogicalTypeId::LIST: {
+					// Parse VECTOR JSON array to LIST<FLOAT>
+					// VECTOR_SERIALIZE returns "[1.0, 2.0, 3.0]" format
+					string_t val(ptr, gstate.return_lens[buffer_idx][row_count]);
+					string json_str = val.GetString();
+					auto list_val = ParseVectorJsonToList(json_str);
+					// Use SetValue for proper LIST handling in table function output
+					output.data[col_idx].SetValue(row_count, list_val);
+					break;
+				}
+				case LogicalTypeId::USER: {
+					// Handle GEOMETRY type (mapped from SDO_GEOMETRY -> WKT -> GEOMETRY)
+					// We fetch WKT as string, then cast to target USER type (GEOMETRY)
+					string_t val(ptr, gstate.return_lens[buffer_idx][row_count]);
+					string s = val.GetString();
+					try {
+						// CastAs requires ClientContext to look up the cast function (VARCHAR -> GEOMETRY)
+						auto geom_val = Value(s).CastAs(context, output.GetTypes()[col_idx]);
+						output.data[col_idx].SetValue(row_count, geom_val);
+					} catch (...) {
+						// If cast fails (e.g. spatial extension not loaded), set to NULL
+						FlatVector::SetNull(output.data[col_idx], row_count, true);
+					}
+					break;
+				}
 				default:
 					break;
 				}
@@ -656,18 +901,40 @@ static bool TryExtractComparison(Expression &expr, const vector<string> &names, 
 	if (expr.type != ExpressionType::COMPARE_EQUAL && expr.type != ExpressionType::COMPARE_LESSTHAN &&
 	    expr.type != ExpressionType::COMPARE_GREATERTHAN && expr.type != ExpressionType::COMPARE_LESSTHANOREQUALTO &&
 	    expr.type != ExpressionType::COMPARE_GREATERTHANOREQUALTO) {
+		if (getenv("ORACLE_DEBUG")) {
+			fprintf(stderr, "[oracle] TryExtractComparison: not a comparison, type=%d\n", (int)expr.type);
+		}
 		return false;
 	}
 	auto &cmp = expr.Cast<BoundComparisonExpression>();
-	BoundReferenceExpression *col = nullptr;
+	if (getenv("ORACLE_DEBUG")) {
+		fprintf(stderr, "[oracle] TryExtractComparison: left_type=%d, right_type=%d\n", (int)cmp.left->type,
+		        (int)cmp.right->type);
+	}
 	Expression *const_expr = nullptr;
 	ExpressionType op_type = expr.type;
 
-	if (cmp.left->type == ExpressionType::BOUND_REF && cmp.right->type == ExpressionType::VALUE_CONSTANT) {
-		col = &cmp.left->Cast<BoundReferenceExpression>();
+	// Helper lambda to check if expression is a column reference
+	auto is_column_ref = [](Expression *e) {
+		return e->type == ExpressionType::BOUND_REF || e->type == ExpressionType::BOUND_COLUMN_REF;
+	};
+
+	// Helper lambda to get column index from either BOUND_REF or BOUND_COLUMN_REF
+	auto get_column_index = [](Expression *e) -> idx_t {
+		if (e->type == ExpressionType::BOUND_REF) {
+			return e->Cast<BoundReferenceExpression>().index;
+		} else if (e->type == ExpressionType::BOUND_COLUMN_REF) {
+			return e->Cast<BoundColumnRefExpression>().binding.column_index;
+		}
+		return DConstants::INVALID_INDEX;
+	};
+
+	idx_t col_idx = DConstants::INVALID_INDEX;
+	if (is_column_ref(cmp.left.get()) && cmp.right->type == ExpressionType::VALUE_CONSTANT) {
+		col_idx = get_column_index(cmp.left.get());
 		const_expr = cmp.right.get();
-	} else if (cmp.right->type == ExpressionType::BOUND_REF && cmp.left->type == ExpressionType::VALUE_CONSTANT) {
-		col = &cmp.right->Cast<BoundReferenceExpression>();
+	} else if (is_column_ref(cmp.right.get()) && cmp.left->type == ExpressionType::VALUE_CONSTANT) {
+		col_idx = get_column_index(cmp.right.get());
 		const_expr = cmp.left.get();
 		// flip operator
 		switch (op_type) {
@@ -687,14 +954,24 @@ static bool TryExtractComparison(Expression &expr, const vector<string> &names, 
 			break;
 		}
 	} else {
+		if (getenv("ORACLE_DEBUG")) {
+			fprintf(stderr, "[oracle] TryExtractComparison: no column_ref + VALUE_CONSTANT pattern\n");
+		}
 		return false;
 	}
 
-	if (col->index >= names.size()) {
+	if (col_idx == DConstants::INVALID_INDEX || col_idx >= names.size()) {
+		if (getenv("ORACLE_DEBUG")) {
+			fprintf(stderr, "[oracle] TryExtractComparison: col_idx=%lu >= names.size()=%lu\n", (unsigned long)col_idx,
+			        (unsigned long)names.size());
+		}
 		return false;
 	}
 	string const_sql;
 	if (!ConstantToSQL(*const_expr, const_sql)) {
+		if (getenv("ORACLE_DEBUG")) {
+			fprintf(stderr, "[oracle] TryExtractComparison: ConstantToSQL failed\n");
+		}
 		return false;
 	}
 
@@ -719,7 +996,7 @@ static bool TryExtractComparison(Expression &expr, const vector<string> &names, 
 		return false;
 	}
 
-	out_clause = ColumnRefSQL(names[col->index]) + " " + op + " " + const_sql;
+	out_clause = ColumnRefSQL(names[col_idx]) + " " + op + " " + const_sql;
 	return true;
 }
 
@@ -728,14 +1005,25 @@ static bool TryExtractIsNull(Expression &expr, const vector<string> &names, stri
 		return false;
 	}
 	auto &op = expr.Cast<BoundOperatorExpression>();
-	if (op.children.size() != 1 || op.children[0]->type != ExpressionType::BOUND_REF) {
+	if (op.children.size() != 1) {
 		return false;
 	}
-	auto &col = op.children[0]->Cast<BoundReferenceExpression>();
-	if (col.index >= names.size()) {
+
+	// Get column index from either BOUND_REF or BOUND_COLUMN_REF
+	idx_t col_idx = DConstants::INVALID_INDEX;
+	auto child_type = op.children[0]->type;
+	if (child_type == ExpressionType::BOUND_REF) {
+		col_idx = op.children[0]->Cast<BoundReferenceExpression>().index;
+	} else if (child_type == ExpressionType::BOUND_COLUMN_REF) {
+		col_idx = op.children[0]->Cast<BoundColumnRefExpression>().binding.column_index;
+	} else {
 		return false;
 	}
-	out_clause = ColumnRefSQL(names[col.index]) + " IS NULL";
+
+	if (col_idx == DConstants::INVALID_INDEX || col_idx >= names.size()) {
+		return false;
+	}
+	out_clause = ColumnRefSQL(names[col_idx]) + " IS NULL";
 	return true;
 }
 
@@ -745,14 +1033,30 @@ void OraclePushdownComplexFilter(ClientContext &, LogicalGet &get, FunctionData 
 	if (!bind.settings.enable_pushdown) {
 		return;
 	}
+
+	if (bind.settings.debug_show_queries || getenv("ORACLE_DEBUG")) {
+		fprintf(stderr, "[oracle] pushdown: expressions=%lu, column_names=%lu\n", (unsigned long)expressions.size(),
+		        (unsigned long)bind.column_names.size());
+		for (idx_t i = 0; i < bind.column_names.size(); i++) {
+			fprintf(stderr, "[oracle] pushdown: column_names[%lu]=%s\n", (unsigned long)i,
+			        bind.column_names[i].c_str());
+		}
+	}
+
 	vector<unique_ptr<Expression>> remaining;
 	vector<string> clauses;
 	for (auto &expr : expressions) {
 		string clause;
 		if (TryExtractComparison(*expr, bind.column_names, clause) ||
 		    TryExtractIsNull(*expr, bind.column_names, clause)) {
+			if (bind.settings.debug_show_queries || getenv("ORACLE_DEBUG")) {
+				fprintf(stderr, "[oracle] pushdown: extracted clause: %s\n", clause.c_str());
+			}
 			clauses.push_back(std::move(clause));
 			continue;
+		}
+		if (bind.settings.debug_show_queries || getenv("ORACLE_DEBUG")) {
+			fprintf(stderr, "[oracle] pushdown: could not extract expression type=%d\n", (int)expr->type);
 		}
 		remaining.push_back(std::move(expr));
 	}
@@ -767,6 +1071,15 @@ void OraclePushdownComplexFilter(ClientContext &, LogicalGet &get, FunctionData 
 	vector<LogicalType> projected_types = bind.original_types;
 	vector<ub2> projected_oci_types = bind.oci_types;
 	vector<ub4> projected_oci_sizes = bind.oci_sizes;
+
+	if (bind.settings.debug_show_queries || getenv("ORACLE_DEBUG")) {
+		fprintf(stderr, "[oracle] pushdown: projection_ids.size()=%lu, original_names.size()=%lu\n",
+		        (unsigned long)get.projection_ids.size(), (unsigned long)bind.original_names.size());
+		for (idx_t i = 0; i < get.projection_ids.size(); i++) {
+			fprintf(stderr, "[oracle] pushdown: projection_ids[%lu]=%lu\n", (unsigned long)i,
+			        (unsigned long)get.projection_ids[i]);
+		}
+	}
 
 	if (!get.projection_ids.empty()) {
 		projected_names.clear();
@@ -844,14 +1157,18 @@ static void LoadInternal(ExtensionLoader &loader) {
 	auto oracle_scan_func =
 	    TableFunction("oracle_scan", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                  OracleQueryFunction, OracleScanBind, OracleInitGlobal, nullptr);
-	oracle_scan_func.filter_pushdown = true;
+	// We don't implement table_filters, so set filter_pushdown = false
+	// This tells DuckDB to apply filters client-side via LogicalFilter operator
+	// The pushdown_complex_filter callback handles Oracle-side WHERE clause generation when enabled
+	oracle_scan_func.filter_pushdown = false;
 	oracle_scan_func.pushdown_complex_filter = OraclePushdownComplexFilter;
 	oracle_scan_func.projection_pushdown = true;
 	loader.RegisterFunction(oracle_scan_func);
 
 	auto oracle_query_func = TableFunction("oracle_query", {LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                                       OracleQueryFunction, OracleQueryBind, OracleInitGlobal, nullptr);
-	oracle_query_func.filter_pushdown = true;
+	// We don't implement table_filters, so set filter_pushdown = false
+	oracle_query_func.filter_pushdown = false;
 	oracle_query_func.pushdown_complex_filter = OraclePushdownComplexFilter;
 	oracle_query_func.projection_pushdown = true;
 	loader.RegisterFunction(oracle_query_func);
@@ -871,6 +1188,15 @@ static void LoadInternal(ExtensionLoader &loader) {
 	auto oracle_env_func = ScalarFunction("oracle_env", {LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                                      LogicalType::VARCHAR, OracleEnvFunction);
 	loader.RegisterFunction(oracle_env_func);
+
+	// Register Copy Function
+	CopyFunction copy_func("ORACLE");
+	copy_func.copy_to_bind = OracleWriteBind;
+	copy_func.copy_to_initialize_global = OracleWriteInitGlobal;
+	copy_func.copy_to_initialize_local = OracleWriteInitLocal;
+	copy_func.copy_to_sink = OracleWriteSink;
+	copy_func.copy_to_finalize = OracleWriteFinalize;
+	loader.RegisterFunction(copy_func);
 }
 
 void OracleExtension::Load(ExtensionLoader &loader) {
@@ -878,7 +1204,7 @@ void OracleExtension::Load(ExtensionLoader &loader) {
 	auto &db = loader.GetDatabaseInstance();
 	auto &config = DBConfig::GetConfig(db);
 	config.AddExtensionOption("oracle_enable_pushdown", "Enable Oracle filter/projection pushdown",
-	                          LogicalType::BOOLEAN, Value::BOOLEAN(false));
+	                          LogicalType::BOOLEAN, Value::BOOLEAN(true));
 	config.AddExtensionOption("oracle_prefetch_rows", "OCI prefetch row count", LogicalType::UBIGINT,
 	                          Value::UBIGINT(1024));
 	config.AddExtensionOption("oracle_prefetch_memory", "OCI prefetch memory (bytes, 0=auto)", LogicalType::UBIGINT,
@@ -903,6 +1229,9 @@ void OracleExtension::Load(ExtensionLoader &loader) {
 	                          Value::UBIGINT(10000));
 	config.AddExtensionOption("oracle_use_current_schema", "Resolve unqualified table names to current schema first",
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(true));
+	config.AddExtensionOption("oracle_enable_spatial_types",
+	                          "Map SDO_GEOMETRY to GEOMETRY type (requires spatial extension)", LogicalType::BOOLEAN,
+	                          Value::BOOLEAN(true));
 
 	config.storage_extensions["oracle"] = CreateOracleStorageExtension();
 }

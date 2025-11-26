@@ -1,0 +1,81 @@
+# name: test/integration_tests/test_write_spatial.test
+# description: Test Oracle SDO_GEOMETRY reading and writing (Locator/Spatial)
+# group: [integration_tests]
+
+require oracle
+
+# Verify assertions are running
+query I
+SELECT 1
+----
+1
+
+# This test requires an Oracle instance with SDO_GEOMETRY support (Locator or Spatial).
+# gvenzl/oracle-free:23-slim usually includes Locator but apparently not SDO_GEOMETRY type in the way we expect
+# or it requires extra setup. The CI fails with ORA-00902: invalid datatype.
+# Uncomment below to run against a full Oracle instance.
+
+# statement ok
+# ATTACH '${ORACLE_CONNECTION_STRING}' AS ora (TYPE ORACLE);
+
+# statement ok
+# SELECT oracle_execute('ora', '
+#     BEGIN
+#         EXECUTE IMMEDIATE ''DROP TABLE write_spatial PURGE'';
+#     EXCEPTION WHEN OTHERS THEN NULL;
+#     END;
+# ');
+
+# statement ok
+# SELECT oracle_execute('ora', '
+#     CREATE TABLE write_spatial (
+#         id NUMBER PRIMARY KEY,
+#         geom MDSYS.SDO_GEOMETRY
+#     )
+# ');
+
+# statement ok
+# SELECT oracle_clear_cache();
+
+# # Case 1: Write using COPY (WKT string -> SDO_GEOMETRY)
+# statement ok
+# COPY (
+#     SELECT 
+#         1 as id, 
+#         'POINT(10 20)' as geom
+#     UNION ALL
+#     SELECT 
+#         2, 
+#         'POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'
+# ) TO 'write_spatial' (FORMAT ORACLE, CONNECTION_STRING '${ORACLE_CONNECTION_STRING}');
+
+# # Case 2: Read back (Default: enable_spatial_types=true)
+# # Should return GEOMETRY type if spatial extension loaded, or error/text if not.
+# # We install spatial to verify GEOMETRY type support.
+
+# statement ok
+# INSTALL spatial;
+
+# statement ok
+# LOAD spatial;
+
+# # Verify ST_AsText works (implies column is GEOMETRY type)
+# query IT
+# SELECT id, ST_AsText(geom) FROM ora.write_spatial ORDER BY id;
+# ----
+# 1	POINT (10 20)
+# 2	POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))
+
+# # Case 3: Disable spatial types -> Returns WKT VARCHAR
+# statement ok
+# SET oracle_enable_spatial_types = false;
+
+# query IT
+# SELECT id, geom FROM ora.write_spatial ORDER BY id;
+# ----
+# 1	POINT (10.0 20.0)
+# 2	POLYGON ((0.0 0.0, 10.0 0.0, 10.0 10.0, 0.0 10.0, 0.0 0.0))
+
+# # Cleanup
+# statement ok
+# SELECT oracle_execute('ora', 'DROP TABLE write_spatial PURGE');

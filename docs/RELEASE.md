@@ -74,18 +74,18 @@ gh workflow run release-unsigned.yml -f version=v0.1.0-test
 ./duckdb -unsigned
 
 # In DuckDB:
-LOAD 'path/to/oracle-v0.1.0-linux-x86_64.duckdb_extension';
+LOAD 'path/to/oracle-v0.1.0-duckdb-v1.1.3-linux-x86_64.duckdb_extension';
 SELECT oracle_query('user/pass@host:1521/service', 'SELECT 1 FROM DUAL');
 ```
 
 ## Artifacts
 
-The release will contain the following artifacts:
+The release will contain the following artifacts, each including the supported DuckDB version in the filename:
 
-- `oracle-vX.Y.Z-linux-x86_64.duckdb_extension`
-- `oracle-vX.Y.Z-linux-aarch64.duckdb_extension`
-- `oracle-vX.Y.Z-macos-arm64.duckdb_extension`
-- `oracle-vX.Y.Z-windows-x86_64.duckdb_extension`
+- `oracle-vX.Y.Z-duckdb-vX.Y.Z-linux-x86_64.duckdb_extension`
+- `oracle-vX.Y.Z-duckdb-vX.Y.Z-linux-aarch64.duckdb_extension`
+- `oracle-vX.Y.Z-duckdb-vX.Y.Z-macos-arm64.duckdb_extension`
+- `oracle-vX.Y.Z-duckdb-vX.Y.Z-windows-x86_64.duckdb_extension`
 
 ## Community Extension Submission
 

@@ -223,10 +223,10 @@ matrix:
 **Owner**: Expert Agent
 **Estimated Time**: 3 hours
 
-- [ ] Create `.github/workflows/duckdb-update-check.yml`
-- [ ] Set up scheduled trigger (daily at 6:00 UTC)
-- [ ] Add manual workflow_dispatch trigger
-- [ ] Define configuration inputs (check prerelease, auto-merge)
+- [x] Create `.github/workflows/duckdb-update-check.yml`
+- [x] Set up scheduled trigger (daily at 6:00 UTC)
+- [x] Add manual workflow_dispatch trigger
+- [x] Define configuration inputs (check prerelease, auto-merge)
 
 **Deliverable**: Workflow skeleton
 
@@ -262,12 +262,12 @@ matrix:
 **Owner**: Expert Agent
 **Estimated Time**: 4 hours
 
-- [ ] Create new branch: `feat/duckdb-v{new_version}`
-- [ ] Update `duckdb_version` in main-distribution-pipeline.yml
-- [ ] Update duckdb submodule to new tag
-- [ ] Update extension-ci-tools version if needed
-- [ ] Commit changes with descriptive message
-- [ ] Push branch to origin
+- [x] Create new branch: `feat/duckdb-v{new_version}`
+- [x] Update `duckdb_version` in main-distribution-pipeline.yml
+- [x] Update duckdb submodule to new tag
+- [x] Update extension-ci-tools version if needed
+- [x] Commit changes with descriptive message
+- [x] Push branch to origin
 
 **Deliverable**: Auto-branch creation logic
 
@@ -282,10 +282,10 @@ matrix:
 **Owner**: Expert Agent
 **Estimated Time**: 2 hours
 
-- [ ] Trigger main-distribution-pipeline.yml on new branch
-- [ ] Wait for workflow completion (with timeout)
-- [ ] Capture workflow status (success/failure)
-- [ ] Collect build logs on failure
+- [x] Trigger main-distribution-pipeline.yml on new branch
+- [x] Wait for workflow completion (with timeout)
+- [x] Capture workflow status (success/failure)
+- [x] Collect build logs on failure
 
 **Deliverable**: Build trigger logic
 
@@ -345,11 +345,11 @@ The extension build or tests failed with DuckDB v{version}.
 
 **Sub-tasks**:
 
-- [ ] Create issue via GitHub API
-- [ ] Use appropriate template based on status
-- [ ] Add labels: `compatibility`, `automated`, `duckdb-version`
-- [ ] Assign to maintainers from CODEOWNERS
-- [ ] Link to test branch and workflow run
+- [x] Create issue via GitHub API
+- [x] Use appropriate template based on status
+- [x] Add labels: `compatibility`, `automated`, `duckdb-version`
+- [x] Assign to maintainers from CODEOWNERS
+- [x] Link to test branch and workflow run
 
 **Deliverable**: Issue creation logic
 
@@ -364,12 +364,12 @@ The extension build or tests failed with DuckDB v{version}.
 **Owner**: Expert Agent
 **Estimated Time**: 3 hours
 
-- [ ] Create `docs/COMPATIBILITY.md` template
-- [ ] Read existing compatibility data (if file exists)
-- [ ] Append new test result
-- [ ] Format as Markdown table
-- [ ] Commit and push update to test branch
-- [ ] Include update in success issue
+- [x] Create `docs/COMPATIBILITY.md` template
+- [x] Read existing compatibility data (if file exists)
+- [x] Append new test result
+- [x] Format as Markdown table
+- [x] Commit and push update to test branch
+- [x] Include update in success issue
 
 **Compatibility Matrix Format**:
 
@@ -398,11 +398,11 @@ Last Updated: {date}
 **Owner**: Expert Agent
 **Estimated Time**: 1 hour
 
-- [ ] Create `.github/duckdb-update-config.yml`
-- [ ] Define configuration schema (see PRD)
-- [ ] Set default values
-- [ ] Document configuration options
-- [ ] Load config in workflow
+- [x] Create `.github/duckdb-update-config.yml`
+- [x] Define configuration schema (see PRD)
+- [x] Set default values
+- [x] Document configuration options
+- [x] Load config in workflow
 
 **Deliverable**: Configuration file
 
@@ -417,13 +417,13 @@ Last Updated: {date}
 **Owner**: Expert Agent
 **Estimated Time**: 3 hours
 
-- [ ] Trigger workflow manually
-- [ ] Simulate new DuckDB version (modify workflow to use test version)
-- [ ] Verify branch creation
-- [ ] Verify build trigger
-- [ ] Verify issue creation
-- [ ] Verify matrix update
-- [ ] Clean up test artifacts
+- [x] Trigger workflow manually
+- [x] Simulate new DuckDB version (modify workflow to use test version)
+- [x] Verify branch creation
+- [x] Verify build trigger
+- [x] Verify issue creation
+- [x] Verify matrix update
+- [x] Clean up test artifacts
 
 **Deliverable**: Validated update workflow
 
@@ -438,11 +438,11 @@ Last Updated: {date}
 **Owner**: Expert Agent
 **Estimated Time**: 2 hours
 
-- [ ] Document update automation in docs/UPDATING.md
-- [ ] Explain how to configure update behavior
-- [ ] Document how to manually trigger checks
-- [ ] Document how to handle failed compatibility tests
-- [ ] Update CLAUDE.md with automation overview
+- [x] Document update automation in docs/UPDATING.md
+- [x] Explain how to configure update behavior
+- [x] Document how to manually trigger checks
+- [x] Document how to handle failed compatibility tests
+- [x] Update CLAUDE.md with automation overview
 
 **Deliverable**: Update automation documentation
 
@@ -467,17 +467,17 @@ Last Updated: {date}
 **Owner**: Expert Agent + Docs & Vision Agent
 **Estimated Time**: 4 hours
 
-- [ ] Review and enhance README.md (already complete)
-- [ ] Create CONTRIBUTING.md
-  - [ ] How to set up development environment
-  - [ ] How to run tests
-  - [ ] Code style guidelines
-  - [ ] PR submission process
-- [ ] Create SECURITY.md
-  - [ ] Security vulnerability reporting process
-  - [ ] Supported versions
-  - [ ] Security update policy
-- [ ] Verify LICENSE file (Apache-2.0)
+- [x] Review and enhance README.md (already complete)
+- [x] Create CONTRIBUTING.md
+  - [x] How to set up development environment
+  - [x] How to run tests
+  - [x] Code style guidelines
+  - [x] PR submission process
+- [x] Create SECURITY.md
+  - [x] Security vulnerability reporting process
+  - [x] Supported versions
+  - [x] Security update policy
+- [x] Verify LICENSE file (Apache-2.0)
 
 **Deliverable**: Complete documentation set
 
@@ -492,10 +492,10 @@ Last Updated: {date}
 **Owner**: Expert Agent
 **Estimated Time**: 30 minutes
 
-- [ ] Create `.github/CODEOWNERS` file
-- [ ] Define ownership for different paths
-- [ ] Add maintainer GitHub usernames
-- [ ] Test with PR to verify auto-assignment
+- [x] Create `.github/CODEOWNERS` file
+- [x] Define ownership for different paths
+- [x] Add maintainer GitHub usernames
+- [x] Test with PR to verify auto-assignment
 
 **Example**:
 
@@ -550,13 +550,13 @@ Last Updated: {date}
 **Owner**: Expert Agent
 **Estimated Time**: 6 hours
 
-- [ ] Run clang-tidy on all source files
-- [ ] Fix any warnings or errors
-- [ ] Run clang-format to ensure consistent style
-- [ ] Review code for DuckDB best practices
-- [ ] Add Doxygen comments to public APIs
-- [ ] Remove any debug code or commented-out sections
-- [ ] Verify no hardcoded credentials or secrets
+- [x] Run clang-tidy on all source files
+- [x] Fix any warnings or errors
+- [x] Run clang-format to ensure consistent style
+- [x] Review code for DuckDB best practices
+- [x] Add Doxygen comments to public APIs
+- [x] Remove any debug code or commented-out sections
+- [x] Verify no hardcoded credentials or secrets
 
 **Deliverable**: Code quality improvements
 
@@ -571,11 +571,11 @@ Last Updated: {date}
 **Owner**: Expert Agent
 **Estimated Time**: 4 hours
 
-- [ ] Trigger main-distribution-pipeline.yml
-- [ ] Verify builds succeed on all platforms
-- [ ] Verify tests pass on all platforms
-- [ ] Document any platform-specific issues
-- [ ] Fix any platform-specific build failures
+- [x] Trigger main-distribution-pipeline.yml
+- [x] Verify builds succeed on all platforms
+- [x] Verify tests pass on all platforms
+- [x] Document any platform-specific issues
+- [x] Fix any platform-specific build failures
 
 **Deliverable**: Multi-platform build verification
 
@@ -590,19 +590,19 @@ Last Updated: {date}
 **Owner**: Expert Agent + Docs & Vision Agent
 **Estimated Time**: 4 hours
 
-- [ ] Create description.yml following schema from PRD
-- [ ] Fill in all required fields
-  - [ ] extension.name, description, version, language, build, license
-  - [ ] extension.maintainers
-  - [ ] extension.excluded_platforms
-  - [ ] repo.github, repo.ref
-- [ ] Write hello_world example
-- [ ] Write extended_description
-- [ ] Document all functions with parameters
-- [ ] Document all settings
-- [ ] Add build.before_build script for Oracle Instant Client
-- [ ] Validate YAML syntax
-- [ ] Review against existing community extension examples
+- [x] Create description.yml following schema from PRD
+- [x] Fill in all required fields
+  - [x] extension.name, description, version, language, build, license
+  - [x] extension.maintainers
+  - [x] extension.excluded_platforms
+  - [x] repo.github, repo.ref
+- [x] Write hello_world example
+- [x] Write extended_description
+- [x] Document all functions with parameters
+- [x] Document all settings
+- [x] Add build.before_build script for Oracle Instant Client
+- [x] Validate YAML syntax
+- [x] Review against existing community extension examples
 
 **Deliverable**: Complete description.yml
 

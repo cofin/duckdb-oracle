@@ -1,0 +1,120 @@
+# name: test/integration_tests/test_views_matviews.test
+# description: Test Oracle Views and Materialized Views
+# group: [integration_tests]
+
+require oracle
+
+statement ok
+CREATE OR REPLACE SECRET test_oracle (
+    TYPE ORACLE,
+    USER 'duckdb_test',
+    PASSWORD 'duckdb_test',
+    HOST 'localhost',
+    PORT ${ORACLE_PORT},
+    SERVICE 'FREEPDB1'
+);
+
+statement ok
+ATTACH '' AS ora (TYPE ORACLE, SECRET 'test_oracle');
+
+# Setup base table
+statement ok
+SELECT oracle_execute('ora', '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE base_table'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+');
+
+statement ok
+SELECT oracle_execute('ora', 'CREATE TABLE base_table (id NUMBER, val VARCHAR2(20))');
+
+statement ok
+SELECT oracle_execute('ora', 'INSERT INTO base_table VALUES (1, ''A'')');
+
+statement ok
+SELECT oracle_execute('ora', 'INSERT INTO base_table VALUES (2, ''B'')');
+
+# Clear cache to ensure new tables are visible
+statement ok
+SELECT oracle_clear_cache();
+
+# --- Standard View ---
+
+statement ok
+SELECT oracle_execute('ora', '
+    CREATE OR REPLACE VIEW view_test AS 
+    SELECT id, val FROM base_table WHERE id > 1
+');
+
+# Clear cache to ensure new view is visible
+statement ok
+SELECT oracle_clear_cache();
+
+# Verify view visibility and content
+query IT
+SELECT * FROM ora.main.view_test
+----
+2	B
+
+query IT
+SELECT * FROM ora.view_test
+----
+2	B
+
+# --- Materialized View ---
+
+statement ok
+SELECT oracle_execute('ora', '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP MATERIALIZED VIEW mv_test'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -12003 THEN -- mview does not exist
+                NULL; -- Ignore error
+            END IF;
+    END;
+');
+
+# Note: Creating MV requires privileges usually granted to 'resource' role or specific grant
+# duckdb_test user should have this.
+statement ok
+SELECT oracle_execute('ora', '
+    CREATE MATERIALIZED VIEW mv_test 
+    BUILD IMMEDIATE 
+    REFRESH COMPLETE ON DEMAND 
+    AS SELECT id, val FROM base_table
+');
+
+# Clear cache to ensure new MV is visible
+statement ok
+SELECT oracle_clear_cache();
+
+# Verify MV visibility and content
+query IT
+SELECT * FROM ora.mv_test ORDER BY id
+----
+1	A
+2	B
+
+# --- Synonym ---
+
+statement ok
+SELECT oracle_execute('ora', 'CREATE OR REPLACE SYNONYM syn_test FOR base_table');
+
+# Clear cache to ensure new synonym is visible
+statement ok
+SELECT oracle_clear_cache();
+
+query IT
+SELECT * FROM ora.syn_test ORDER BY id
+----
+1	A
+2	B
+
+statement ok
+DETACH ora;

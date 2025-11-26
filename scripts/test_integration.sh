@@ -25,7 +25,7 @@ readonly CONTAINER_NAME="duckdb-oracle-test-db"
 readonly DB_PASSWORD="password"
 readonly DB_USER="duckdb_test"
 readonly DB_USER_PWD="duckdb_test"
-readonly SETUP_DIR="$(pwd)/test/integration/init_sql"
+readonly SETUP_DIR="$(pwd)/test/integration_tests/init_sql"
 
 # Flags
 CLEANUP_ENABLED=1
@@ -151,7 +151,7 @@ cleanup() {
   echo "Cleaning up container ${CONTAINER_NAME}..."
   ${RUNTIME} stop "${CONTAINER_NAME}" >/dev/null 2>&1 || true
   ${RUNTIME} rm "${CONTAINER_NAME}" >/dev/null 2>&1 || true
-  rm -f test/sql/test_integration_temp.test
+  rm -f test/unit_tests/test_integration_temp.test
 }
 
 #######################################
@@ -228,7 +228,7 @@ main() {
 
   wait_for_db "${CONTAINER_NAME}"
   # Small grace period to ensure init scripts (user creation) are fully committed
-  sleep 5
+  sleep 15
 
   echo "Running DuckDB integration tests..."
 
@@ -259,26 +259,33 @@ main() {
     echo "SKIP_BUILD=1 set; assuming build artifacts already present."
   fi
   
-  # Run integration tests from test/integration directory
-  if [[ -d "test/integration" && $(find test/integration -name "*.test" | wc -l) -gt 0 ]]; then
-    echo "Running integration test suite from test/integration/..."
+  # Run integration tests from test/integration_tests directory
+  if [[ -d "test/integration_tests" && $(find test/integration_tests -name "*.test" | wc -l) -gt 0 ]]; then
+    echo "Running integration test suite from test/integration_tests/..."
     # Run tests sequentially to avoid OCI connection/resource exhaustion issues
     # This is slower but safer than letting unittest run them in parallel
-    find test/integration -name "*.test" -print0 | while IFS= read -r -d '' test_file; do
+    find test/integration_tests -name "*.test" -print0 | while IFS= read -r -d '' test_file; do
       echo "Running test: ${test_file}"
+      
+      # Create a temporary test file with the port and connection string replaced
+      TEMP_TEST_FILE="test/integration_temp.test"
+      sed -e "s/\${ORACLE_PORT}/${db_port}/g" -e "s|\${ORACLE_CONNECTION_STRING}|${ORACLE_CONNECTION_STRING}|g" "${test_file}" > "${TEMP_TEST_FILE}"
+      
       if command -v timeout >/dev/null 2>&1; then
-        timeout "${INTEGRATION_TEST_TIMEOUT}" ./build/release/test/unittest "${test_file}"
+        timeout "${INTEGRATION_TEST_TIMEOUT}" ./build/release/test/unittest "${TEMP_TEST_FILE}"
       else
-        ./build/release/test/unittest "${test_file}"
+        ./build/release/test/unittest "${TEMP_TEST_FILE}"
       fi
+      
+      rm -f "${TEMP_TEST_FILE}"
     done
     echo "Integration tests completed successfully."
   else
-    echo "No integration tests found in test/integration/"
+    echo "No integration tests found in test/integration_tests/"
     echo "Creating basic smoke test to verify Oracle connection..."
 
     # Create a minimal smoke test to verify the integration script works
-    cat <<EOF > test/sql/test_integration_temp.test
+    cat <<EOF > test/unit_tests/test_integration_temp.test
 # name: test_oracle_integration_smoke
 # description: Basic Oracle integration smoke test
 # group: [oracle_integration]
@@ -292,7 +299,7 @@ SELECT * FROM oracle_query('${ORACLE_CONNECTION_STRING}', 'SELECT 1 FROM DUAL');
 EOF
 
     echo "Executing smoke test..."
-    ./build/release/test/unittest "test/sql/test_integration_temp.test"
+    ./build/release/test/unittest "test/unit_tests/test_integration_temp.test"
     echo "Smoke test completed successfully."
   fi
 }

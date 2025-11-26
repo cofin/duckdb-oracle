@@ -1,0 +1,12 @@
+# Extension maintainers
+*       @cofin
+
+# GitHub workflows
+/.github/   @cofin
+
+# Documentation
+/docs/      @cofin
+
+# Build system
+/CMakeLists.txt @cofin
+/Makefile       @cofin
