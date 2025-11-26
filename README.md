@@ -13,7 +13,7 @@ This extension allows DuckDB to directly read from and write to Oracle databases
 First, download the extension for your platform (e.g., Linux x86_64) from the [GitHub Release](https://github.com/cofin/duckdb-oracle/releases):
 
 ```bash
-wget https://github.com/cofin/duckdb-oracle/releases/download/v0.0.2/oracle-v0.0.2-duckdb-v1.4.1-linux-x86_64.duckdb_extension
+wget https://github.com/cofin/duckdb-oracle/releases/download/v0.0.3/oracle-v0.0.3-duckdb-v1.4.2-linux-x86_64.duckdb_extension
 ```
 
 Then start DuckDB and install the local file:
@@ -23,7 +23,7 @@ Then start DuckDB and install the local file:
 ```
 
 ```sql
-INSTALL 'oracle-v0.0.2-duckdb-v1.4.1-linux-x86_64.duckdb_extension';
+INSTALL 'oracle-v0.0.3-duckdb-v1.4.2-linux-x86_64.duckdb_extension';
 LOAD oracle;
 ```
 
