@@ -8,8 +8,17 @@ This extension allows DuckDB to directly read from and write to Oracle databases
 
 **1. Install & Load**
 
+> **Note**: This extension is currently **unsigned**. You must start DuckDB with `-unsigned` to load it.
+
+```bash
+./duckdb -unsigned
+```
+
+Then install directly from the [GitHub Release](https://github.com/duckdb/duckdb-oracle/releases):
+
 ```sql
-INSTALL oracle;
+-- Example for Linux x86_64 (Adjust version/platform as needed)
+INSTALL 'https://github.com/duckdb/duckdb-oracle/releases/download/v0.0.2/oracle-v0.0.2-duckdb-v1.1.3-linux-x86_64.duckdb_extension';
 LOAD oracle;
 ```
 
