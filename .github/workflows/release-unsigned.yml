@@ -1,18 +1,17 @@
-name: Release Unsigned Extension
+name: Release Extension
 
 on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version tag (e.g. v0.1.0)'
-        required: true
-        type: string
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   validate-version:
@@ -20,8 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.get_version.outputs.version }}
-      is_prerelease: ${{ steps.get_version.outputs.is_prerelease }}
       duckdb_version: ${{ steps.get_duckdb_version.outputs.duckdb_version }}
+      is_prerelease: ${{ steps.get_version.outputs.is_prerelease }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -170,35 +169,48 @@ jobs:
           # Verify version (if we had a version function, we would check it here)
           ./build/release/duckdb -unsigned -c "LOAD 'build/release/extension/oracle/oracle.duckdb_extension'; SELECT * FROM duckdb_extensions() WHERE extension_name='oracle';"
 
-      - name: Rename Artifact
+      - name: Prepare Artifacts
         shell: bash
         run: |
-          VERSION=${{ needs.validate-version.outputs.version }}
           DUCKDB_VERSION=${{ needs.validate-version.outputs.duckdb_version }}
           PLATFORM=${{ matrix.platform }}
           ARCH=${{ matrix.arch }}
           
-          mkdir -p deploy
-          cp build/release/extension/oracle/oracle.duckdb_extension deploy/oracle-${VERSION}-duckdb-${DUCKDB_VERSION}-${PLATFORM}-${ARCH}.duckdb_extension
-          
-          # Generate checksum
-          cd deploy
-          if [ "${{ runner.os }}" == "Windows" ]; then
-            certutil -hashfile oracle-${VERSION}-duckdb-${DUCKDB_VERSION}-${PLATFORM}-${ARCH}.duckdb_extension SHA256 > oracle-${VERSION}-duckdb-${DUCKDB_VERSION}-${PLATFORM}-${ARCH}.duckdb_extension.sha256
+          # Map to DuckDB platform strings
+          if [ "$PLATFORM" == "linux" ] && [ "$ARCH" == "x86_64" ]; then
+            DUCKDB_PLATFORM="linux_amd64"
+          elif [ "$PLATFORM" == "linux" ] && [ "$ARCH" == "aarch64" ]; then
+            DUCKDB_PLATFORM="linux_arm64"
+          elif [ "$PLATFORM" == "macos" ] && [ "$ARCH" == "arm64" ]; then
+            DUCKDB_PLATFORM="osx_arm64"
+          elif [ "$PLATFORM" == "windows" ] && [ "$ARCH" == "x86_64" ]; then
+            DUCKDB_PLATFORM="windows_amd64"
           else
-            shasum -a 256 oracle-${VERSION}-duckdb-${DUCKDB_VERSION}-${PLATFORM}-${ARCH}.duckdb_extension > oracle-${VERSION}-duckdb-${DUCKDB_VERSION}-${PLATFORM}-${ARCH}.duckdb_extension.sha256
+            echo "Unknown platform/arch combination: $PLATFORM / $ARCH"
+            exit 1
           fi
+          
+          # Create directory structure for custom repository
+          # v<duckdb_version>/<platform>/oracle.duckdb_extension.gz
+          mkdir -p deploy/${DUCKDB_VERSION}/${DUCKDB_PLATFORM}
+          
+          # Compress extension
+          gzip -c build/release/extension/oracle/oracle.duckdb_extension > deploy/${DUCKDB_VERSION}/${DUCKDB_PLATFORM}/oracle.duckdb_extension.gz
+          
+          # Also copy uncompressed for release attachment (optional, but good for manual use)
+          cp build/release/extension/oracle/oracle.duckdb_extension deploy/oracle.duckdb_extension
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: oracle-${{ needs.validate-version.outputs.version }}-duckdb-${{ needs.validate-version.outputs.duckdb_version }}-${{ matrix.platform }}-${{ matrix.arch }}
+          name: oracle-${{ matrix.platform }}-${{ matrix.arch }}
           path: deploy/*
 
-  create-release:
-    name: Create Release
+  deploy-gh-pages:
+    name: Deploy to GitHub Pages
     needs: [validate-version, build-matrix]
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -209,11 +221,44 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          pattern: oracle-*-duckdb-${{ needs.validate-version.outputs.duckdb_version }}-*
           merge-multiple: true
 
-      - name: List Artifacts
-        run: ls -R artifacts
+      - name: Prepare Deployment
+        run: |
+          mkdir -p deploy_content
+          
+          # Move v* directories (e.g., v1.1.3/linux_amd64/...) to deploy_content
+          mv artifacts/v* deploy_content/
+          
+          # We don't need the flat copies for Pages, so we ignore them (they stay in artifacts/)
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./deploy_content
+          keep_files: true # Important: Keep existing versions (e.g., v1.1.2) on the branch
+          destination_dir: ./
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
+          commit_message: "Deploy extension version ${{ needs.validate-version.outputs.version }}"
+
+  create-release:
+    name: Create Release
+    needs: [validate-version, build-matrix]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
 
       - name: Generate Release Notes
         id: release_notes
@@ -234,9 +279,9 @@ jobs:
           echo "" >> $GITHUB_OUTPUT
           echo "## Installation" >> $GITHUB_OUTPUT
           echo "```sql" >> $GITHUB_OUTPUT
-          echo "-- Load the extension (unsigned)" >> $GITHUB_OUTPUT
-          echo "duckdb -unsigned" >> $GITHUB_OUTPUT
-          echo "LOAD 'path/to/oracle-${{ needs.validate-version.outputs.version }}-duckdb-${{ needs.validate-version.outputs.duckdb_version }}-linux-x86_64.duckdb_extension';" >> $GITHUB_OUTPUT
+          echo "SET custom_extension_repository = 'https://cofin.github.io/duckdb-oracle';" >> $GITHUB_OUTPUT
+          echo "INSTALL oracle;" >> $GITHUB_OUTPUT
+          echo "LOAD oracle;" >> $GITHUB_OUTPUT
           echo "```" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
@@ -248,4 +293,4 @@ jobs:
           body: ${{ steps.release_notes.outputs.notes }}
           draft: false
           prerelease: ${{ needs.validate-version.outputs.is_prerelease }}
-          files: artifacts/*
+          files: artifacts/*.duckdb_extension

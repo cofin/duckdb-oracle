@@ -1,0 +1,47 @@
+name: Auto Tag Release
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  auto-tag:
+    runs-on: ubuntu-latest
+    if: startsWith(github.event.head_commit.message, 'feat: Upgrade DuckDB to v')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract Version
+        id: extract_version
+        run: |
+          MESSAGE="${{ github.event.head_commit.message }}"
+          if [[ "$MESSAGE" =~ feat:\ Upgrade\ DuckDB\ to\ v([0-9.]+) ]]; then
+            VERSION="${BASH_REMATCH[1]}"
+            echo "Found version: $VERSION"
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "No version found in commit message"
+            exit 1
+          fi
+
+      - name: Create Tag
+        env:
+          VERSION: ${{ steps.extract_version.outputs.version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="v${VERSION}"
+          
+          if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+            echo "Tag $TAG_NAME already exists. Skipping."
+            exit 0
+          fi
+          
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          
+          git tag -a "$TAG_NAME" -m "Release $TAG_NAME"
+          git push origin "$TAG_NAME"
