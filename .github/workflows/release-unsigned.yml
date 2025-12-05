@@ -175,7 +175,7 @@ jobs:
           DUCKDB_VERSION=${{ needs.validate-version.outputs.duckdb_version }}
           PLATFORM=${{ matrix.platform }}
           ARCH=${{ matrix.arch }}
-          
+
           # Map to DuckDB platform strings
           if [ "$PLATFORM" == "linux" ] && [ "$ARCH" == "x86_64" ]; then
             DUCKDB_PLATFORM="linux_amd64"
@@ -189,16 +189,22 @@ jobs:
             echo "Unknown platform/arch combination: $PLATFORM / $ARCH"
             exit 1
           fi
-          
-          # Create directory structure for custom repository
+
+          # Create directory structure for custom repository (GitHub Pages)
           # v<duckdb_version>/<platform>/oracle.duckdb_extension.gz
           mkdir -p deploy/${DUCKDB_VERSION}/${DUCKDB_PLATFORM}
-          
-          # Compress extension
+
+          # Compress extension for GitHub Pages deployment
           gzip -c build/release/extension/oracle/oracle.duckdb_extension > deploy/${DUCKDB_VERSION}/${DUCKDB_PLATFORM}/oracle.duckdb_extension.gz
-          
-          # Also copy uncompressed for release attachment (optional, but good for manual use)
-          cp build/release/extension/oracle/oracle.duckdb_extension deploy/oracle.duckdb_extension
+
+          # Create release directory with platform-specific filename
+          # This prevents overwrites when artifacts are merged
+          mkdir -p deploy/release
+          cp build/release/extension/oracle/oracle.duckdb_extension deploy/release/oracle-${DUCKDB_PLATFORM}.duckdb_extension
+
+          # Generate checksum for this platform's artifact
+          cd deploy/release
+          sha256sum oracle-${DUCKDB_PLATFORM}.duckdb_extension > oracle-${DUCKDB_PLATFORM}.sha256
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -260,29 +266,80 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      - name: Validate Artifacts
+        id: validate
+        run: |
+          echo "=== Artifact Structure ==="
+          find artifacts -type f -name "*.duckdb_extension" -o -name "*.sha256" | sort
+          echo ""
+
+          # Count platform-specific extension files
+          EXPECTED_COUNT=4  # linux_amd64, linux_arm64, osx_arm64, windows_amd64
+          ACTUAL_COUNT=$(find artifacts/release -name "*.duckdb_extension" 2>/dev/null | wc -l)
+
+          echo "Expected artifacts: $EXPECTED_COUNT"
+          echo "Found artifacts: $ACTUAL_COUNT"
+
+          if [ "$ACTUAL_COUNT" -lt "$EXPECTED_COUNT" ]; then
+            echo "::warning::Expected $EXPECTED_COUNT platform artifacts, found $ACTUAL_COUNT"
+            echo "Contents of artifacts directory:"
+            ls -laR artifacts/
+          fi
+
+          # Merge all SHA256 checksums into single file
+          echo "=== Generating Combined Checksums ==="
+          cat artifacts/release/*.sha256 > artifacts/release/SHA256SUMS.txt
+          cat artifacts/release/SHA256SUMS.txt
+
       - name: Generate Release Notes
         id: release_notes
         run: |
+          VERSION=${{ needs.validate-version.outputs.version }}
+          DUCKDB_VERSION=${{ needs.validate-version.outputs.duckdb_version }}
+
           # Get previous tag
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-          
-          if [ -z "$PREV_TAG" ]; then
-            echo "No previous tag found. generating notes from start."
-            NOTES=$(git log --pretty=format:"- %h %s")
-          else
-            NOTES=$(git log --pretty=format:"- %h %s" ${PREV_TAG}..HEAD)
-          fi
-          
+
           echo "notes<<EOF" >> $GITHUB_OUTPUT
-          echo "## Changes" >> $GITHUB_OUTPUT
-          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "## DuckDB Oracle Extension $VERSION" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "Built for DuckDB $DUCKDB_VERSION" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "## Platform Downloads" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "| Platform | Architecture | File |" >> $GITHUB_OUTPUT
+          echo "|----------|--------------|------|" >> $GITHUB_OUTPUT
+          echo "| Linux | x86_64 (AMD64) | \`oracle-linux_amd64.duckdb_extension\` |" >> $GITHUB_OUTPUT
+          echo "| Linux | ARM64 | \`oracle-linux_arm64.duckdb_extension\` |" >> $GITHUB_OUTPUT
+          echo "| macOS | ARM64 (Apple Silicon) | \`oracle-osx_arm64.duckdb_extension\` |" >> $GITHUB_OUTPUT
+          echo "| Windows | x86_64 (AMD64) | \`oracle-windows_amd64.duckdb_extension\` |" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "## Verify Download" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "\`\`\`bash" >> $GITHUB_OUTPUT
+          echo "# Download SHA256SUMS.txt and verify" >> $GITHUB_OUTPUT
+          echo "sha256sum -c SHA256SUMS.txt" >> $GITHUB_OUTPUT
+          echo "\`\`\`" >> $GITHUB_OUTPUT
           echo "" >> $GITHUB_OUTPUT
           echo "## Installation" >> $GITHUB_OUTPUT
-          echo "```sql" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "\`\`\`sql" >> $GITHUB_OUTPUT
+          echo "-- Install from custom repository" >> $GITHUB_OUTPUT
           echo "SET custom_extension_repository = 'https://cofin.github.io/duckdb-oracle';" >> $GITHUB_OUTPUT
           echo "INSTALL oracle;" >> $GITHUB_OUTPUT
           echo "LOAD oracle;" >> $GITHUB_OUTPUT
-          echo "```" >> $GITHUB_OUTPUT
+          echo "\`\`\`" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "## Changes" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+
+          if [ -z "$PREV_TAG" ]; then
+            git log --pretty=format:"- %h %s" >> $GITHUB_OUTPUT
+          else
+            git log --pretty=format:"- %h %s" ${PREV_TAG}..HEAD >> $GITHUB_OUTPUT
+          fi
+
+          echo "" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create Release
@@ -293,4 +350,6 @@ jobs:
           body: ${{ steps.release_notes.outputs.notes }}
           draft: false
           prerelease: ${{ needs.validate-version.outputs.is_prerelease }}
-          files: artifacts/*.duckdb_extension
+          files: |
+            artifacts/release/*.duckdb_extension
+            artifacts/release/SHA256SUMS.txt
