@@ -200,11 +200,11 @@ jobs:
           # Create release directory with platform-specific filename
           # This prevents overwrites when artifacts are merged
           mkdir -p deploy/release
-          cp build/release/extension/oracle/oracle.duckdb_extension deploy/release/oracle-${DUCKDB_PLATFORM}.duckdb_extension
+          cp "build/release/extension/oracle/oracle.duckdb_extension" "deploy/release/oracle-${DUCKDB_PLATFORM}.duckdb_extension"
 
           # Generate checksum for this platform's artifact
           cd deploy/release
-          sha256sum oracle-${DUCKDB_PLATFORM}.duckdb_extension > oracle-${DUCKDB_PLATFORM}.sha256
+          sha256sum "oracle-${DUCKDB_PLATFORM}.duckdb_extension" > "oracle-${DUCKDB_PLATFORM}.sha256"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -274,6 +274,7 @@ jobs:
           echo ""
 
           # Count platform-specific extension files
+          # NOTE: Update this count if adding new platforms to the build matrix
           EXPECTED_COUNT=4  # linux_amd64, linux_arm64, osx_arm64, windows_amd64
           ACTUAL_COUNT=$(find artifacts/release -name "*.duckdb_extension" 2>/dev/null | wc -l)
 
