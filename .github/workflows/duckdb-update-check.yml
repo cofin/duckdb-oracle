@@ -25,6 +25,9 @@ jobs:
         with:
           fetch-depth: 0
           submodules: true
+          # Use PAT for checkout to enable pushing workflow file changes
+          # GITHUB_TOKEN cannot modify files in .github/workflows/
+          token: ${{ secrets.WORKFLOW_UPDATE_TOKEN }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -120,7 +123,8 @@ jobs:
         id: update
         env:
           NEW_VERSION: ${{ steps.check.outputs.new_version }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Use PAT for git operations involving workflow files
+          GITHUB_TOKEN: ${{ secrets.WORKFLOW_UPDATE_TOKEN }}
         run: |
           BRANCH_NAME="feat/duckdb-v${NEW_VERSION}"
           
@@ -160,7 +164,8 @@ jobs:
         env:
           NEW_VERSION: ${{ steps.check.outputs.new_version }}
           BRANCH_NAME: ${{ steps.update.outputs.branch_name }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Use PAT for PR creation to ensure workflow file changes are accepted
+          GITHUB_TOKEN: ${{ secrets.WORKFLOW_UPDATE_TOKEN }}
         run: |
           PR_URL=$(gh pr create \
             --title "feat: Upgrade DuckDB to v${NEW_VERSION}" \
