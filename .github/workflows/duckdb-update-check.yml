@@ -40,7 +40,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Create a python script to check versions
-          cat <<EOF > check_version.py
+          cat <<PYTHON_SCRIPT > check_version.py
           import os
           import re
           import sys
@@ -95,9 +95,25 @@ jobs:
               print(f"::set-output name=update_available::true")
           else:
               print(f"::set-output name=update_available::false")
-          EOF
+          PYTHON_SCRIPT
           
           python check_version.py
+
+      - name: Close Stale PRs
+        if: steps.check.outputs.update_available == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Find existing PRs with the 'duckdb-update' label
+          STALE_PRS=$(gh pr list --label "duckdb-update" --state open --json number,headRefName --jq '.[]')
+          
+          if [ ! -z "$STALE_PRS" ]; then
+            echo "Found stale PRs. Closing them..."
+            echo "$STALE_PRS" | jq -r '.number' | while read -r pr_number; do
+              echo "Closing PR #$pr_number"
+              gh pr close "$pr_number" --delete-branch --comment "Closing in favor of newer DuckDB version."
+            done
+          fi
 
       - name: Create Branch and Update
         if: steps.check.outputs.update_available == 'true'
@@ -108,7 +124,7 @@ jobs:
         run: |
           BRANCH_NAME="feat/duckdb-v${NEW_VERSION}"
           
-          # Check if branch already exists
+          # Check if branch already exists (it shouldn't if we just closed stale PRs, but good safety)
           if git ls-remote --exit-code --heads origin "$BRANCH_NAME"; then
             echo "Branch $BRANCH_NAME already exists. Skipping."
             echo "branch_created=false" >> $GITHUB_OUTPUT
@@ -133,7 +149,7 @@ jobs:
           # For now we keep existing version to avoid breakage
           
           git add duckdb .github/workflows/main-distribution-pipeline.yml
-          git commit -m "feat: update DuckDB to v${NEW_VERSION}"
+          git commit -m "feat: Upgrade DuckDB to v${NEW_VERSION}"
           git push origin "$BRANCH_NAME"
           
           echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
@@ -146,10 +162,16 @@ jobs:
           BRANCH_NAME: ${{ steps.update.outputs.branch_name }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh pr create \
+          PR_URL=$(gh pr create \
             --title "feat: Upgrade DuckDB to v${NEW_VERSION}" \
             --body "This PR updates the DuckDB submodule and CI configuration to version v${NEW_VERSION}. \n\n This triggered a compatibility build. Please review the CI results." \
             --base main \
             --head "$BRANCH_NAME" \
             --label "duckdb-update" \
-            --label "automated"
+            --label "automated")
+            
+          echo "Created PR: $PR_URL"
+          
+          # Enable auto-merge
+          # This requires "Allow auto-merge" to be enabled in repo settings
+          gh pr merge "$PR_URL" --auto --merge --delete-branch
