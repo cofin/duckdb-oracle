@@ -3,7 +3,7 @@
 ## Phase 1: DuckDB Version Update (v1.4.3)
 - [x] Task: Update DuckDB submodule to the target version tag. 40359d2
     - [ ] Sub-task: Execute `git submodule update --remote --merge` or specifically checkout `v1.4.3` in the `duckdb` directory.
-- [ ] Task: Update version strings in project configuration files.
+- [x] Task: Update version strings in project configuration files. f9daa9f
     - [ ] Sub-task: Update `duckdb_version` in `.github/workflows/main-distribution-pipeline.yml`.
     - [ ] Sub-task: Check and update `extension_config.cmake` if version-specific flags are needed.
 - [ ] Task: Verify the build with the new DuckDB version.
