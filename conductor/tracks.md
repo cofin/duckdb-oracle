@@ -4,5 +4,10 @@ This file tracks all major tracks for the project. Each track has its own detail
 
 ---
 
-## [ ] Track: Enhance stability and robustness of Oracle Write support (INSERT/COPY)
+## [~] Track: Enhance stability and robustness of Oracle Write support (INSERT/COPY)
 *Link: [./conductor/tracks/oracle_write_robustness_20251224/](./conductor/tracks/oracle_write_robustness_20251224/)*
+
+---
+
+## [~] Track: DuckDB Version Update & Auto-Release Fix
+*Link: [./conductor/tracks/duckdb_version_update_20251224/](./conductor/tracks/duckdb_version_update_20251224/)*
