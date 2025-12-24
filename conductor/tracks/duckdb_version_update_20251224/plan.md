@@ -1,6 +1,6 @@
 # Plan: DuckDB Version Update & Auto-Release Fix
 
-## Phase 1: DuckDB Version Update (v1.4.3)
+## Phase 1: DuckDB Version Update (v1.4.3) [checkpoint: d293e18]
 - [x] Task: Update DuckDB submodule to the target version tag. 40359d2
     - [ ] Sub-task: Execute `git submodule update --remote --merge` or specifically checkout `v1.4.3` in the `duckdb` directory.
 - [x] Task: Update version strings in project configuration files. f9daa9f
@@ -11,7 +11,7 @@
 - [x] Task: Run the existing test suite to ensure no regressions.
     - [ ] Sub-task: Execute `make test`.
     - [ ] Sub-task: Execute `make integration` (requires Oracle container).
-- [ ] Task: Conductor - User Manual Verification 'Phase 1: DuckDB Version Update (v1.4.3)' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 1: DuckDB Version Update (v1.4.3)' (Protocol in workflow.md)
 
 ## Phase 2: Auto-Release Workflow Fix
 - [ ] Task: Modify `.github/workflows/duckdb-update-check.yml` to support force-updating existing branches.
