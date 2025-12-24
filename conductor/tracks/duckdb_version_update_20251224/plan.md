@@ -8,7 +8,7 @@
     - [ ] Sub-task: Check and update `extension_config.cmake` if version-specific flags are needed.
 - [x] Task: Verify the build with the new DuckDB version.
     - [ ] Sub-task: Execute `make clean && make release`.
-- [ ] Task: Run the existing test suite to ensure no regressions.
+- [x] Task: Run the existing test suite to ensure no regressions.
     - [ ] Sub-task: Execute `make test`.
     - [ ] Sub-task: Execute `make integration` (requires Oracle container).
 - [ ] Task: Conductor - User Manual Verification 'Phase 1: DuckDB Version Update (v1.4.3)' (Protocol in workflow.md)
