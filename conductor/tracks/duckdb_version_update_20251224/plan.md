@@ -6,7 +6,7 @@
 - [x] Task: Update version strings in project configuration files. f9daa9f
     - [ ] Sub-task: Update `duckdb_version` in `.github/workflows/main-distribution-pipeline.yml`.
     - [ ] Sub-task: Check and update `extension_config.cmake` if version-specific flags are needed.
-- [ ] Task: Verify the build with the new DuckDB version.
+- [x] Task: Verify the build with the new DuckDB version.
     - [ ] Sub-task: Execute `make clean && make release`.
 - [ ] Task: Run the existing test suite to ensure no regressions.
     - [ ] Sub-task: Execute `make test`.
