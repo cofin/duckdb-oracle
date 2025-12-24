@@ -14,7 +14,7 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 1: DuckDB Version Update (v1.4.3)' (Protocol in workflow.md)
 
 ## Phase 2: Auto-Release Workflow Fix
-- [ ] Task: Modify `.github/workflows/duckdb-update-check.yml` to support force-updating existing branches.
+- [x] Task: Modify `.github/workflows/duckdb-update-check.yml` to support force-updating existing branches. b2dcdc7
     - [ ] Sub-task: Update the git logic to check if the branch exists, and if so, reset it to `origin/main` before applying changes.
 - [ ] Task: Ensure the workflow creates or updates a Pull Request even if the branch already existed.
     - [ ] Sub-task: Refine the `gh pr create` logic to handle existing PRs or create a new one if it's missing but the branch is present.
