@@ -21,8 +21,8 @@
 - [x] Task: (Optional) Test the workflow fix using a dry-run or manual trigger if possible.
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Auto-Release Workflow Fix' (Protocol in workflow.md)
 
-## Phase 3: Final Validation and Quality Gate
+## Phase 3: Final Validation and Quality Gate [checkpoint: 59b6e5b]
 - [x] Task: Ensure all CI checks pass on the version update PR.
 - [x] Task: Verify that all public APIs are documented (Doxygen style).
 - [x] Task: Run `make tidy-check` to ensure code quality standards are met.
-- [ ] Task: Conductor - User Manual Verification 'Phase 3: Final Validation and Quality Gate' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 3: Final Validation and Quality Gate' (Protocol in workflow.md)
