@@ -94,10 +94,12 @@ jobs:
           print(f"Latest version: {latest}")
           
           if latest > semantic_version.Version(current):
-              print(f"::set-output name=new_version::{latest}")
-              print(f"::set-output name=update_available::true")
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
+                  print(f"new_version={latest}", file=fh)
+                  print(f"update_available=true", file=fh)
           else:
-              print(f"::set-output name=update_available::false")
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
+                  print(f"update_available=false", file=fh)
           PYTHON_SCRIPT
           
           python check_version.py
