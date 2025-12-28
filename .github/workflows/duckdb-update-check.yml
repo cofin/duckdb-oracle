@@ -94,10 +94,12 @@ jobs:
           print(f"Latest version: {latest}")
           
           if latest > semantic_version.Version(current):
-              print(f"::set-output name=new_version::{latest}")
-              print(f"::set-output name=update_available::true")
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
+                  print(f"new_version={latest}", file=fh)
+                  print(f"update_available=true", file=fh)
           else:
-              print(f"::set-output name=update_available::false")
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
+                  print(f"update_available=false", file=fh)
           PYTHON_SCRIPT
           
           python check_version.py
@@ -128,17 +130,22 @@ jobs:
         run: |
           BRANCH_NAME="feat/duckdb-v${NEW_VERSION}"
           
-          # Check if branch already exists (it shouldn't if we just closed stale PRs, but good safety)
-          if git ls-remote --exit-code --heads origin "$BRANCH_NAME"; then
-            echo "Branch $BRANCH_NAME already exists. Skipping."
-            echo "branch_created=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
           
-          git checkout -b "$BRANCH_NAME"
+          # Check if branch already exists
+          if git ls-remote --exit-code --heads origin "$BRANCH_NAME"; then
+            echo "Branch $BRANCH_NAME already exists. Updating..."
+            git fetch origin "$BRANCH_NAME"
+            git checkout "$BRANCH_NAME"
+            # Reset to main to ensure a clean slate
+            git fetch origin main
+            git reset --hard origin/main
+          else
+            echo "Creating new branch $BRANCH_NAME..."
+            git fetch origin main
+            git checkout -b "$BRANCH_NAME" origin/main
+          fi
           
           # Update submodule
           cd duckdb
@@ -149,12 +156,11 @@ jobs:
           # Update workflow file
           sed -i "s/duckdb_version: v[0-9.]*/duckdb_version: v${NEW_VERSION}/g" .github/workflows/main-distribution-pipeline.yml
           
-          # Update ci tools (if needed - usually good to check latest)
-          # For now we keep existing version to avoid breakage
-          
           git add duckdb .github/workflows/main-distribution-pipeline.yml
           git commit -m "feat: Upgrade DuckDB to v${NEW_VERSION}"
-          git push origin "$BRANCH_NAME"
+          
+          # Force push to overwrite if it existed
+          git push origin "$BRANCH_NAME" --force
           
           echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
           echo "branch_created=true" >> $GITHUB_OUTPUT
@@ -167,16 +173,25 @@ jobs:
           # Use PAT for PR creation to ensure workflow file changes are accepted
           GITHUB_TOKEN: ${{ secrets.WORKFLOW_UPDATE_TOKEN }}
         run: |
-          PR_URL=$(gh pr create \
-            --title "feat: Upgrade DuckDB to v${NEW_VERSION}" \
-            --body "This PR updates the DuckDB submodule and CI configuration to version v${NEW_VERSION}. \n\n This triggered a compatibility build. Please review the CI results." \
-            --base main \
-            --head "$BRANCH_NAME" \
-            --label "duckdb-update" \
-            --label "automated")
-            
-          echo "Created PR: $PR_URL"
+          # Check if PR exists
+          EXISTING_PR=$(gh pr list --head "$BRANCH_NAME" --json url --jq '.[0].url')
+          
+          if [ -z "$EXISTING_PR" ]; then
+            PR_URL=$(gh pr create \
+              --title "feat: Upgrade DuckDB to v${NEW_VERSION}" \
+              --body "This PR updates the DuckDB submodule and CI configuration to version v${NEW_VERSION}. \n\n This triggered a compatibility build. Please review the CI results." \
+              --base main \
+              --head "$BRANCH_NAME" \
+              --label "duckdb-update" \
+              --label "automated")
+            echo "Created PR: $PR_URL"
+            EXISTING_PR="$PR_URL"
+          else
+            echo "PR already exists: $EXISTING_PR"
+            # Comment on existing PR to notify of update
+            gh pr comment "$EXISTING_PR" --body "Force-updated branch with fresh changes for v${NEW_VERSION}."
+          fi
           
           # Enable auto-merge
           # This requires "Allow auto-merge" to be enabled in repo settings
-          gh pr merge "$PR_URL" --auto --merge --delete-branch
+          gh pr merge "$EXISTING_PR" --auto --merge --delete-branch
