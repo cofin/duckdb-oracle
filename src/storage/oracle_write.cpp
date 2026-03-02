@@ -89,6 +89,37 @@ unique_ptr<FunctionData> OracleWriteBind(ClientContext &context, CopyFunctionBin
 	result->column_names = names;
 	result->column_types = sql_types;
 	result->oracle_types.resize(names.size(), "VARCHAR2"); // Default
+	result->bind_types.resize(names.size(), SQLT_CHR); // Default
+
+	// Set bind_types based on DuckDB LogicalType
+	for (idx_t i = 0; i < sql_types.size(); i++) {
+		switch (sql_types[i].id()) {
+		case LogicalTypeId::TINYINT:
+		case LogicalTypeId::SMALLINT:
+		case LogicalTypeId::INTEGER:
+		case LogicalTypeId::BIGINT:
+			result->bind_types[i] = SQLT_INT;
+			break;
+		case LogicalTypeId::FLOAT:
+		case LogicalTypeId::DOUBLE:
+			result->bind_types[i] = SQLT_BDOUBLE;
+			break;
+		case LogicalTypeId::DATE:
+		case LogicalTypeId::TIMESTAMP:
+		case LogicalTypeId::TIMESTAMP_TZ:
+		case LogicalTypeId::TIMESTAMP_SEC:
+		case LogicalTypeId::TIMESTAMP_MS:
+		case LogicalTypeId::TIMESTAMP_NS:
+			result->bind_types[i] = SQLT_ODT;
+			break;
+		case LogicalTypeId::BLOB:
+			result->bind_types[i] = SQLT_BIN;
+			break;
+		default:
+			result->bind_types[i] = SQLT_CHR;
+			break;
+		}
+	}
 
 	// Introspect Oracle table to get actual types
 	if (!result->connection_string.empty()) {
@@ -255,7 +286,9 @@ unique_ptr<GlobalFunctionData> OracleWriteInitGlobal(ClientContext &context, Fun
 		string type = StringUtil::Upper(data.oracle_types[i]);
 		string placeholder = ":" + std::to_string(i + 1);
 
-		if (type == "DATE") {
+		if (data.bind_types[i] == SQLT_ODT) {
+			sql += placeholder;
+		} else if (type == "DATE") {
 			sql += "TO_DATE(" + placeholder + ", 'YYYY-MM-DD HH24:MI:SS')";
 		} else if (type.find("TIMESTAMP") != string::npos) {
 			sql += "TO_TIMESTAMP(" + placeholder + ", 'YYYY-MM-DD HH24:MI:SS.FF')";
