@@ -21,6 +21,7 @@ struct OracleWriteBindData : public FunctionData {
 
 	// Oracle metadata for smart binding
 	vector<string> oracle_types; // e.g., "NUMBER", "BLOB", "SDO_GEOMETRY"
+	vector<ub2> bind_types;      // OCI bind type (e.g., SQLT_INT)
 
 public:
 	unique_ptr<FunctionData> Copy() const override {
@@ -32,6 +33,7 @@ public:
 		result->column_names = column_names;
 		result->column_types = column_types;
 		result->oracle_types = oracle_types;
+		result->bind_types = bind_types;
 		return std::move(result);
 	}
 
@@ -55,14 +57,14 @@ public:
 	OracleWriteLocalState(std::shared_ptr<OracleConnectionHandle> conn, OCIStmt *stmthp);
 	~OracleWriteLocalState() override;
 
-	void Sink(DataChunk &chunk, const vector<string> &oracle_types);
+	void Sink(DataChunk &chunk, const vector<string> &oracle_types, const vector<ub2> &bind_types);
 	void Flush();
 
 	friend void OracleWriteSink(ExecutionContext &context, FunctionData &bind_data, GlobalFunctionData &gstate,
 	                            LocalFunctionData &lstate, DataChunk &input);
 
 private:
-	void BindColumn(Vector &col, idx_t col_idx, idx_t count);
+	void BindColumn(Vector &col, idx_t col_idx, idx_t count, ub2 bind_type);
 	void ExecuteBatch(idx_t count);
 
 	std::shared_ptr<OracleConnectionHandle> connection;
