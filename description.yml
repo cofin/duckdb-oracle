@@ -1,0 +1,170 @@
+extension:
+  name: oracle
+  description: Native Oracle database extension for DuckDB enabling read and write access to Oracle tables via OCI.
+  version: 1.0.0
+  language: C++
+  build: cmake
+  license: Apache-2.0
+  excluded_platforms: "wasm_mvp;wasm_eh;wasm_threads;osx_amd64"
+
+  maintainers:
+    - cofin
+
+repo:
+  github: cofin/duckdb-oracle
+  ref: v1.0.0
+
+docs:
+  hello_world: |
+    -- Attach Oracle database
+    ATTACH 'user/password@//host:1521/service' AS ora (TYPE oracle);
+
+    -- Query Oracle table
+    SELECT * FROM ora.HR.EMPLOYEES WHERE employee_id = 101;
+
+    -- Use table function
+    SELECT * FROM oracle_scan('user/pass@host:1521/service', 'HR', 'EMPLOYEES');
+
+    -- Write data to Oracle table
+    COPY (SELECT * FROM my_table) TO 'target_table' (FORMAT ORACLE, CONNECTION_STRING 'user/pass@host:1521/service');
+
+  extended_description: |
+    This extension provides native Oracle connectivity through Oracle Call Interface (OCI).
+
+    Features:
+    - High performance read and write access to Oracle tables via ATTACH syntax and COPY
+    - Table and query functions (oracle_scan, oracle_query)
+    - Oracle Wallet support for Autonomous Database
+    - Secret Manager integration for credential management
+    - Filter pushdown optimization
+    - OCI Array Binding and Direct Path Loads for fast writes
+    - Configurable fetch parameters for performance tuning
+
+    Platform Support:
+    Requires Oracle Instant Client runtime. Supports Linux (x86_64, arm64), macOS (arm64),
+    and Windows (x86_64). WebAssembly platforms not supported due to native library requirements.
+
+    Use Cases:
+    - Analytics on Oracle data without ETL
+    - Data lake queries combining Oracle with Parquet/CSV
+    - High-throughput ingestion to Oracle from DuckDB sources
+    - Oracle database migration and testing
+
+  functions:
+    - name: oracle_query
+      parameters:
+        - name: connection_string
+          type: VARCHAR
+        - name: query
+          type: VARCHAR
+      description: Execute arbitrary SQL query against Oracle database returning a result set.
+
+    - name: oracle_scan
+      parameters:
+        - name: connection_string
+          type: VARCHAR
+        - name: schema_name
+          type: VARCHAR
+        - name: table_name
+          type: VARCHAR
+      description: Scan an Oracle table (equivalent to SELECT * FROM schema.table).
+
+    - name: oracle_attach_wallet
+      parameters:
+        - name: wallet_path
+          type: VARCHAR
+      description: Set TNS_ADMIN for Oracle Wallet (Autonomous Database support).
+
+    - name: oracle_clear_cache
+      description: Clear cached Oracle metadata and connections.
+
+    - name: oracle_execute
+      parameters:
+        - name: connection_string
+          type: VARCHAR
+        - name: query
+          type: VARCHAR
+      description: Execute arbitrary SQL without expecting a result set.
+
+    - name: oracle_env
+      parameters:
+        - name: key
+          type: VARCHAR
+        - name: default_value
+          type: VARCHAR
+      description: Retrieve the value of an environment variable.
+
+  settings:
+    - name: oracle_enable_pushdown
+      type: BOOLEAN
+      default: true
+      description: Enable Oracle filter/projection pushdown
+
+    - name: oracle_prefetch_rows
+      type: UBIGINT
+      default: 1024
+      description: OCI prefetch row count
+
+    - name: oracle_prefetch_memory
+      type: UBIGINT
+      default: 0
+      description: OCI prefetch memory (bytes, 0=auto)
+
+    - name: oracle_array_size
+      type: UBIGINT
+      default: 256
+      description: Rows fetched per OCI iteration (used for tuning)
+
+    - name: oracle_connection_cache
+      type: BOOLEAN
+      default: true
+      description: Reuse Oracle connections when possible
+
+    - name: oracle_connection_limit
+      type: UBIGINT
+      default: 8
+      description: Maximum cached Oracle connections
+
+    - name: oracle_debug_show_queries
+      type: BOOLEAN
+      default: false
+      description: Log generated Oracle SQL for debugging
+
+    - name: oracle_lazy_schema_loading
+      type: BOOLEAN
+      default: true
+      description: Load only current schema by default
+
+    - name: oracle_metadata_object_types
+      type: VARCHAR
+      default: "TABLE,VIEW,SYNONYM,MATERIALIZED VIEW"
+      description: Object types to enumerate (TABLE,VIEW,SYNONYM,MATERIALIZED VIEW)
+
+    - name: oracle_metadata_result_limit
+      type: UBIGINT
+      default: 10000
+      description: Maximum rows returned from metadata queries (0=unlimited)
+
+    - name: oracle_use_current_schema
+      type: BOOLEAN
+      default: true
+      description: Resolve unqualified table names to current schema first
+
+    - name: oracle_enable_spatial_types
+      type: BOOLEAN
+      default: true
+      description: Map SDO_GEOMETRY to GEOMETRY type (requires spatial extension)
+
+build:
+  before_build: |
+    if [ "$(uname)" = "Linux" ]; then
+      ./scripts/setup_oci_linux.sh
+    elif [ "$(uname)" = "Darwin" ]; then
+      ./scripts/setup_oci_macos.sh
+    elif [ "$OS" = "Windows_NT" ]; then
+      pwsh -ExecutionPolicy Bypass -File ./scripts/setup_oci_windows.ps1
+    fi
+    export ORACLE_HOME=$(find $(pwd)/oracle_sdk -maxdepth 1 -name "instantclient_*" | head -n1)
+
+  cmake_flags: "-DCMAKE_BUILD_TYPE=Release"
+  test_command: "make test"
