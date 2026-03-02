@@ -1,3 +1,6 @@
+#include "duckdb/common/types/timestamp.hpp"
+#include "duckdb/common/types/time.hpp"
+#include "duckdb/common/types/date.hpp"
 #include "oracle_write.hpp"
 #include "oracle_connection_manager.hpp"
 #include "duckdb/common/exception.hpp"
@@ -332,10 +335,10 @@ void OracleWriteSink(ExecutionContext &context, FunctionData &bind_data, GlobalF
 		lstate = OracleWriteLocalState(gstate.connection, gstate.stmthp);
 	}
 
-	lstate.Sink(input, data.oracle_types);
+	lstate.Sink(input, data.oracle_types, data.bind_types);
 }
 
-void OracleWriteLocalState::Sink(DataChunk &chunk, const vector<string> &oracle_types) {
+void OracleWriteLocalState::Sink(DataChunk &chunk, const vector<string> &oracle_types, const vector<ub2> &bind_types) {
 	idx_t count = chunk.size();
 	if (count == 0) {
 		return;
@@ -349,29 +352,36 @@ void OracleWriteLocalState::Sink(DataChunk &chunk, const vector<string> &oracle_
 			chunk.data[col_idx].Flatten(count);
 		}
 
-		auto &validity = FlatVector::Validity(chunk.data[col_idx]);
-		size_t max_len = 0;
+		ub2 bind_type = bind_types[col_idx];
+		if (bind_type == SQLT_INT || bind_type == SQLT_BDOUBLE) {
+			required_sizes[col_idx] = 8;
+		} else if (bind_type == SQLT_ODT) {
+			required_sizes[col_idx] = 7; // OCIDate
+		} else {
+			auto &validity = FlatVector::Validity(chunk.data[col_idx]);
+			size_t max_len = 0;
 
-		for (idx_t i = 0; i < count; i++) {
-			if (validity.RowIsValid(i)) {
-				Value val = chunk.data[col_idx].GetValue(i);
-				string s;
-				if (val.type().id() == LogicalTypeId::BLOB) {
-					s = StringValue::Get(val);
-				} else {
-					s = val.ToString();
-				}
-				if (s.size() > max_len) {
-					max_len = s.size();
+			for (idx_t i = 0; i < count; i++) {
+				if (validity.RowIsValid(i)) {
+					Value val = chunk.data[col_idx].GetValue(i);
+					string s;
+					if (val.type().id() == LogicalTypeId::BLOB) {
+						s = StringValue::Get(val);
+					} else {
+						s = val.ToString();
+					}
+					if (s.size() > max_len) {
+						max_len = s.size();
+					}
 				}
 			}
-		}
 
-		if (max_len > required_sizes[col_idx]) {
-			required_sizes[col_idx] = max_len + 32;
+			if (max_len > required_sizes[col_idx]) {
+				required_sizes[col_idx] = max_len + 32;
+			}
+			// Align
+			required_sizes[col_idx] = (required_sizes[col_idx] + 3) & ~3;
 		}
-		// Align
-		required_sizes[col_idx] = (required_sizes[col_idx] + 3) & ~3;
 	}
 
 	// Check if rebind needed
@@ -406,14 +416,7 @@ void OracleWriteLocalState::Sink(DataChunk &chunk, const vector<string> &oracle_
 		}
 
 		for (idx_t col_idx = 0; col_idx < chunk.ColumnCount(); col_idx++) {
-			string type = StringUtil::Upper(oracle_types[col_idx]);
-			ub2 bind_type = SQLT_CHR; // Use SQLT_CHR (VARCHAR2) instead of SQLT_STR for length-based binding
-
-			if (type == "BLOB" || type == "RAW") {
-				bind_type = SQLT_LBI;
-			} else if (type == "CLOB") {
-				bind_type = SQLT_LNG;
-			}
+			ub2 bind_type = bind_types[col_idx];
 
 			auto ctx = connection->Get();
 			CheckOCIError(OCIBindByPos(stmthp, &binds[col_idx], ctx->errhp, col_idx + 1, bind_buffers[col_idx].data(),
@@ -433,13 +436,13 @@ void OracleWriteLocalState::Sink(DataChunk &chunk, const vector<string> &oracle_
 	}
 
 	for (idx_t col_idx = 0; col_idx < chunk.ColumnCount(); col_idx++) {
-		BindColumn(chunk.data[col_idx], col_idx, count);
+		BindColumn(chunk.data[col_idx], col_idx, count, bind_types[col_idx]);
 	}
 
 	ExecuteBatch(count);
 }
 
-void OracleWriteLocalState::BindColumn(Vector &col, idx_t col_idx, idx_t count) {
+void OracleWriteLocalState::BindColumn(Vector &col, idx_t col_idx, idx_t count, ub2 bind_type) {
 	auto &validity = FlatVector::Validity(col);
 	auto &bind_buffer = bind_buffers[col_idx];
 	auto &indicators = indicator_buffers[col_idx];
@@ -452,35 +455,66 @@ void OracleWriteLocalState::BindColumn(Vector &col, idx_t col_idx, idx_t count) 
 			lengths[i] = 0;
 		} else {
 			indicators[i] = 0;
-			Value val = col.GetValue(i);
-			string str_val;
 
-			if (val.type().id() == LogicalTypeId::BLOB) {
-				str_val = StringValue::Get(val);
-			} else if (val.type().id() == LogicalTypeId::TIMESTAMP || val.type().id() == LogicalTypeId::DATE) {
-				// Default timestamp format matches Oracle's standard if we use TO_TIMESTAMP
-				// But DuckDB timestamp format is 'YYYY-MM-DD HH:MM:SS.MS'
-				// Oracle default input might expect T separator or not.
-				// But we use TO_DATE/TO_TIMESTAMP in SQL with format model.
-				// DuckDB::ToString() -> "2023-01-01 12:00:00.123"
-				// SQL -> TO_TIMESTAMP(:1, 'YYYY-MM-DD HH24:MI:SS.FF')
-				// This matches perfectly.
-				str_val = val.ToString();
+			if (bind_type == SQLT_INT) {
+				int64_t val = col.GetValue(i).GetValue<int64_t>();
+				memcpy(bind_buffer.data() + (i * element_size), &val, sizeof(int64_t));
+				lengths[i] = sizeof(int64_t);
+			} else if (bind_type == SQLT_BDOUBLE) {
+				double val = col.GetValue(i).GetValue<double>();
+				memcpy(bind_buffer.data() + (i * element_size), &val, sizeof(double));
+				lengths[i] = sizeof(double);
+			} else if (bind_type == SQLT_ODT) {
+				Value val = col.GetValue(i);
+				OCIDate date;
+				memset(&date, 0, sizeof(OCIDate));
+				
+				if (val.type().id() == LogicalTypeId::DATE) {
+					date_t duck_date = val.GetValueUnsafe<date_t>();
+					int32_t year, month, day;
+					Date::Convert(duck_date, year, month, day);
+					date.OCIDateYYYY = year;
+					date.OCIDateMM = month;
+					date.OCIDateDD = day;
+					date.OCIDateTime.OCITimeHH = 0;
+					date.OCIDateTime.OCITimeMI = 0;
+					date.OCIDateTime.OCITimeSS = 0;
+				} else {
+					timestamp_t duck_ts = val.GetValueUnsafe<timestamp_t>();
+					date_t duck_date;
+					dtime_t duck_time;
+					Timestamp::Convert(duck_ts, duck_date, duck_time);
+					int32_t year, month, day;
+					Date::Convert(duck_date, year, month, day);
+					int32_t hour, min, sec, micros;
+					Time::Convert(duck_time, hour, min, sec, micros);
+					
+					date.OCIDateYYYY = year;
+					date.OCIDateMM = month;
+					date.OCIDateDD = day;
+					date.OCIDateTime.OCITimeHH = hour;
+					date.OCIDateTime.OCITimeMI = min;
+					date.OCIDateTime.OCITimeSS = sec;
+				}
+				memcpy(bind_buffer.data() + (i * element_size), &date, sizeof(OCIDate));
+				lengths[i] = sizeof(OCIDate);
 			} else {
-				str_val = val.ToString();
-			}
+				Value val = col.GetValue(i);
+				string str_val;
 
-			if (getenv("ORACLE_DEBUG")) {
-				fprintf(stderr, "[oracle] BindColumn: col=%lu row=%lu type=%s str='%s'\n", (unsigned long)col_idx,
-				        (unsigned long)i, val.type().ToString().c_str(), str_val.c_str());
-			}
+				if (val.type().id() == LogicalTypeId::BLOB) {
+					str_val = StringValue::Get(val);
+				} else {
+					str_val = val.ToString();
+				}
 
-			if (str_val.size() > element_size) {
-				throw IOException("Value too large for buffer");
-			}
+				if (str_val.size() > element_size) {
+					throw IOException("Value too large for buffer");
+				}
 
-			memcpy(bind_buffer.data() + (i * element_size), str_val.c_str(), str_val.size());
-			lengths[i] = static_cast<ub2>(str_val.size());
+				memcpy(bind_buffer.data() + (i * element_size), str_val.c_str(), str_val.size());
+				lengths[i] = static_cast<ub2>(str_val.size());
+			}
 		}
 	}
 }
