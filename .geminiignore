@@ -61,3 +61,6 @@ sdk.zip
 test/unit_tests/test_integration_temp.test
 test/integration_tests/temp_running_test.test
 test/integration_temp.test
+
+# Allow Gemini to access Flow specification files
+!.agent/
