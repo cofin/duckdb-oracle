@@ -85,7 +85,7 @@ static LogicalType MapOracleColumn(const string &data_type, idx_t precision, idx
 	// Spatial geometry type detection
 	if (upper == "SDO_GEOMETRY" || upper == "MDSYS.SDO_GEOMETRY") {
 		if (settings.enable_spatial_types) {
-			return LogicalType::USER("geometry");
+			return LogicalType::GEOMETRY();
 		}
 		// Map to VARCHAR for WKT string representation
 		return LogicalType::VARCHAR;

@@ -855,9 +855,9 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 					output.data[col_idx].SetValue(row_count, list_val);
 					break;
 				}
-				case LogicalTypeId::USER: {
+				case LogicalTypeId::GEOMETRY: {
 					// Handle GEOMETRY type (mapped from SDO_GEOMETRY -> WKT -> GEOMETRY)
-					// We fetch WKT as string, then cast to target USER type (GEOMETRY)
+					// We fetch WKT as string, then cast to built-in GEOMETRY type
 					string_t val(ptr, gstate.return_lens[buffer_idx][row_count]);
 					string s = val.GetString();
 					try {
@@ -1233,7 +1233,7 @@ void OracleExtension::Load(ExtensionLoader &loader) {
 	                          "Map SDO_GEOMETRY to GEOMETRY type (requires spatial extension)", LogicalType::BOOLEAN,
 	                          Value::BOOLEAN(true));
 
-	config.storage_extensions["oracle"] = CreateOracleStorageExtension();
+	StorageExtension::Register(config, "oracle", CreateOracleStorageExtension());
 }
 
 std::string OracleExtension::Name() {
