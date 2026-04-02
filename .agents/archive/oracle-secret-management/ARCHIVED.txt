@@ -1,0 +1,32 @@
+Archived on 2025-11-22
+Feature: Oracle Secret Management Integration
+Status: Complete
+Branch: feature/oracle-secret-management
+
+Implementation Details:
+- Secret Manager integration for Oracle credentials
+- CREATE SECRET (TYPE oracle, ...) support
+- Named and default secret support
+- Full backward compatibility maintained
+- Platform support: Linux (amd64/arm64), macOS (Intel/ARM64), Windows (amd64)
+
+Test Results:
+- All 29 test assertions passing across 7 test files
+- Zero compiler warnings
+- Clean build on all platforms
+
+Files Modified:
+- src/oracle_secret.cpp (new)
+- src/include/oracle_secret.hpp (new)
+- src/oracle_extension.cpp (updated)
+- src/storage/oracle_storage_extension.cpp (updated)
+- CMakeLists.txt (updated)
+- README.md (updated)
+- CLAUDE.md (updated with new pattern)
+
+Documentation:
+- README.md updated with secret management examples
+- CLAUDE.md updated with Secret Manager integration pattern
+- Platform setup scripts added for macOS and Windows
+
+Ready for PR to main branch.

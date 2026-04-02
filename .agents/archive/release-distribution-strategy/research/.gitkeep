@@ -1,0 +1,11 @@
+# Research Directory
+
+This directory contains research findings and reference materials for the release and distribution strategy.
+
+## Contents
+
+- DuckDB community extension examples
+- GitHub Actions workflow research
+- Oracle Instant Client distribution notes
+- Platform-specific build considerations
+- Version compatibility analysis

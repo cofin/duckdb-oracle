@@ -34,3 +34,4 @@ test/integration_temp.test
 .agent/
 .beads
 .geminiignore
+.cache/

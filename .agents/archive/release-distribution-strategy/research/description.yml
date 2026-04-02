@@ -1,0 +1,105 @@
+extension:
+  name: oracle
+  description: Native Oracle database extension for DuckDB enabling read-only access to Oracle tables
+  version: 0.1.0
+  language: C++
+  build: cmake
+  license: Apache-2.0
+  excluded_platforms: "wasm_mvp;wasm_eh;wasm_threads;osx_amd64"
+
+  maintainers:
+    - cofin
+
+repo:
+  github: cofin/duckdb-oracle
+  ref: v0.1.0
+
+docs:
+  hello_world: |
+    -- Attach Oracle database
+    ATTACH 'user/password@//host:1521/service' AS ora (TYPE oracle);
+
+    -- Query Oracle table
+    SELECT * FROM ora.HR.EMPLOYEES WHERE employee_id = 101;
+
+    -- Use table function
+    SELECT * FROM oracle_scan('user/pass@host:1521/service', 'HR', 'EMPLOYEES');
+
+  extended_description: |
+    This extension provides native Oracle connectivity through Oracle Call Interface (OCI).
+
+    Features:
+    - Read-only access to Oracle tables via ATTACH syntax
+    - Table and query functions (oracle_scan, oracle_query)
+    - Oracle Wallet support for Autonomous Database
+    - Secret Manager integration for credential management
+    - Filter pushdown optimization
+    - Configurable fetch parameters for performance tuning
+
+    Platform Support:
+    Requires Oracle Instant Client runtime. Supports Linux (x86_64, arm64), macOS (arm64),
+    and Windows (x86_64). WebAssembly platforms not supported due to native library requirements.
+
+    Use Cases:
+    - Analytics on Oracle data without ETL
+    - Data lake queries combining Oracle with Parquet/CSV
+    - Cross-database joins (Oracle + PostgreSQL + S3)
+    - Oracle database migration and testing
+
+  functions:
+    - name: oracle_query
+      parameters:
+        - name: connection_string
+          type: VARCHAR
+        - name: query
+          type: VARCHAR
+      description: Execute arbitrary SQL query against Oracle database
+
+    - name: oracle_scan
+      parameters:
+        - name: connection_string
+          type: VARCHAR
+        - name: schema_name
+          type: VARCHAR
+        - name: table_name
+          type: VARCHAR
+      description: Scan an Oracle table (equivalent to SELECT * FROM schema.table)
+
+    - name: oracle_attach_wallet
+      parameters:
+        - name: wallet_path
+          type: VARCHAR
+      description: Set TNS_ADMIN for Oracle Wallet (Autonomous Database support)
+
+    - name: oracle_clear_cache
+      description: Clear cached Oracle metadata and connections
+
+  settings:
+    - name: oracle_enable_pushdown
+      type: BOOLEAN
+      default: false
+      description: Push filters to Oracle WHERE clause
+
+    - name: oracle_prefetch_rows
+      type: INTEGER
+      default: 200
+      description: OCI prefetch rows per round-trip
+
+    - name: oracle_array_size
+      type: INTEGER
+      default: 256
+      description: Rows fetched per OCI iteration
+
+build:
+  before_build: |
+    if [ "$(uname)" = "Linux" ]; then
+      ./scripts/setup_oci_linux.sh
+    elif [ "$(uname)" = "Darwin" ]; then
+      ./scripts/setup_oci_macos.sh
+    elif [ "$OS" = "Windows_NT" ]; then
+      pwsh -ExecutionPolicy Bypass -File ./scripts/setup_oci_windows.ps1
+    fi
+    export ORACLE_HOME=$(find $(pwd)/oracle_sdk -maxdepth 1 -name "instantclient_*" | head -n1)
+
+  cmake_flags: "-DCMAKE_BUILD_TYPE=Release"
+  test_command: "make test"
