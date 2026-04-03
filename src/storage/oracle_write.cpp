@@ -92,7 +92,7 @@ unique_ptr<FunctionData> OracleWriteBind(ClientContext &context, CopyFunctionBin
 	result->column_names = names;
 	result->column_types = sql_types;
 	result->oracle_types.resize(names.size(), "VARCHAR2"); // Default
-	result->bind_types.resize(names.size(), SQLT_CHR); // Default
+	result->bind_types.resize(names.size(), SQLT_CHR);     // Default
 
 	// Set bind_types based on DuckDB LogicalType
 	for (idx_t i = 0; i < sql_types.size(); i++) {
@@ -468,7 +468,7 @@ void OracleWriteLocalState::BindColumn(Vector &col, idx_t col_idx, idx_t count, 
 				Value val = col.GetValue(i);
 				OCIDate date;
 				memset(&date, 0, sizeof(OCIDate));
-				
+
 				if (val.type().id() == LogicalTypeId::DATE) {
 					date_t duck_date = val.GetValueUnsafe<date_t>();
 					int32_t year, month, day;
@@ -488,7 +488,7 @@ void OracleWriteLocalState::BindColumn(Vector &col, idx_t col_idx, idx_t count, 
 					Date::Convert(duck_date, year, month, day);
 					int32_t hour, min, sec, micros;
 					Time::Convert(duck_time, hour, min, sec, micros);
-					
+
 					date.OCIDateYYYY = year;
 					date.OCIDateMM = month;
 					date.OCIDateDD = day;

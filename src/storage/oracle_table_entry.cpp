@@ -4,6 +4,7 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/value.hpp"
+#include "duckdb/common/types/geometry_crs.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/parser/constraints/list.hpp"
@@ -69,7 +70,7 @@ static string GetConversionExpression(const string &quoted_col, const OracleColu
 }
 
 static LogicalType MapOracleColumn(const string &data_type, idx_t precision, idx_t scale, idx_t char_len,
-                                   const OracleSettings &settings) {
+                                   const OracleSettings &settings, idx_t srid = 0) {
 	auto upper = StringUtil::Upper(data_type);
 
 	// VECTOR type (Oracle 23ai+) - map to LIST<FLOAT> or VARCHAR based on setting
@@ -85,6 +86,9 @@ static LogicalType MapOracleColumn(const string &data_type, idx_t precision, idx
 	// Spatial geometry type detection
 	if (upper == "SDO_GEOMETRY" || upper == "MDSYS.SDO_GEOMETRY") {
 		if (settings.enable_spatial_types) {
+			if (srid > 0) {
+				return LogicalType::GEOMETRY("EPSG:" + std::to_string(srid));
+			}
 			return LogicalType::GEOMETRY();
 		}
 		// Map to VARCHAR for WKT string representation
@@ -129,6 +133,37 @@ static LogicalType MapOracleColumn(const string &data_type, idx_t precision, idx
 	return LogicalType::VARCHAR;
 }
 
+//! Query ALL_SDO_GEOM_METADATA for SRID values of spatial columns in a table
+//! Returns a map of uppercase column_name -> SRID (0 if not found or query fails)
+static unordered_map<string, idx_t> LoadSpatialSRIDs(OracleCatalogState &state, const string &schema,
+                                                     const string &table) {
+	unordered_map<string, idx_t> srid_map;
+	try {
+		auto query = StringUtil::Format("SELECT COLUMN_NAME, SRID FROM ALL_SDO_GEOM_METADATA "
+		                                "WHERE OWNER = UPPER(%s) AND TABLE_NAME = UPPER(%s)",
+		                                Value(schema).ToSQLString().c_str(), Value(table).ToSQLString().c_str());
+		auto result = state.Query(query);
+		for (auto &row : result.rows) {
+			if (row.size() < 2) {
+				continue;
+			}
+			auto col_name = StringUtil::Upper(row[0]);
+			idx_t srid = 0;
+			if (!row[1].empty()) {
+				try {
+					srid = static_cast<idx_t>(std::stoll(row[1]));
+				} catch (...) {
+					srid = 0;
+				}
+			}
+			srid_map[col_name] = srid;
+		}
+	} catch (...) {
+		// Permission denied, view doesn't exist, or other error — no CRS info available
+	}
+	return srid_map;
+}
+
 static void LoadColumns(OracleCatalogState &state, const string &schema, const string &table,
                         vector<ColumnDefinition> &columns, vector<OracleColumnMetadata> &metadata) {
 	auto query = StringUtil::Format("SELECT column_name, data_type, data_length, data_precision, data_scale, nullable "
@@ -136,6 +171,25 @@ static void LoadColumns(OracleCatalogState &state, const string &schema, const s
 	                                "ORDER BY column_id",
 	                                Value(schema).ToSQLString().c_str(), Value(table).ToSQLString().c_str());
 	auto result = state.Query(query);
+
+	// Check if any spatial columns exist before querying SRID metadata
+	bool has_spatial = false;
+	for (auto &row : result.rows) {
+		if (row.size() >= 2) {
+			auto upper = StringUtil::Upper(row[1]);
+			if (upper == "SDO_GEOMETRY" || upper == "MDSYS.SDO_GEOMETRY") {
+				has_spatial = true;
+				break;
+			}
+		}
+	}
+
+	// Only query SRID metadata if spatial columns exist
+	unordered_map<string, idx_t> srid_map;
+	if (has_spatial) {
+		srid_map = LoadSpatialSRIDs(state, schema, table);
+	}
+
 	for (auto &row : result.rows) {
 		if (row.size() < 6) {
 			continue;
@@ -155,14 +209,21 @@ static void LoadColumns(OracleCatalogState &state, const string &schema, const s
 		idx_t data_len = parse_idx(row[2]);
 		idx_t precision = parse_idx(row[3]);
 		idx_t scale = parse_idx(row[4]);
-		auto nullable = row[5] == "Y";
 
-		auto logical = MapOracleColumn(data_type, precision, scale, data_len, state.settings);
+		// Build metadata with SRID if available
+		OracleColumnMetadata meta(col_name, data_type);
+		if (meta.is_spatial()) {
+			auto it = srid_map.find(StringUtil::Upper(col_name));
+			if (it != srid_map.end()) {
+				meta.srid = it->second;
+			}
+		}
+
+		auto logical = MapOracleColumn(data_type, precision, scale, data_len, state.settings, meta.srid);
 		ColumnDefinition col_def(col_name, logical);
 		columns.push_back(std::move(col_def));
 
-		// Store original Oracle type metadata
-		metadata.emplace_back(col_name, data_type);
+		metadata.push_back(std::move(meta));
 	}
 }
 
