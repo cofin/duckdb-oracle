@@ -47,7 +47,7 @@
 
 ## CI/CD Patterns
 
-- DuckDB version and CI tools version must match exactly (currently v1.4.4)
+- DuckDB version and CI tools version must match exactly (currently v1.5.1)
 - `GITHUB_TOKEN` cannot modify workflow files — need PAT with `workflows` permission for CI changes
 - Multi-platform builds: Linux x86_64/aarch64, macOS arm64, Windows x86_64
 - Excluded: WebAssembly (no OCI), macOS Intel (no Instant Client)
