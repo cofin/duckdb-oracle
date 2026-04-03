@@ -513,9 +513,6 @@ void OracleWriteLocalState::ExecuteBatch(idx_t count) {
 	    ctx->errhp, "OCIStmtExecute Insert");
 }
 
-void OracleWriteLocalState::Flush() {
-}
-
 void OracleWriteFinalize(ClientContext &context, FunctionData &bind_data, GlobalFunctionData &gstate_p) {
 	auto &gstate = gstate_p.Cast<OracleWriteGlobalState>();
 	if (gstate.connection) {

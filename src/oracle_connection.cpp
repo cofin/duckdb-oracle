@@ -133,12 +133,4 @@ std::string OracleResult::GetString(idx_t row, idx_t col) const {
 	return rows[row][col];
 }
 
-int64_t OracleResult::GetInt64(idx_t row, idx_t col) const {
-	return std::stoll(GetString(row, col));
-}
-
-double OracleResult::GetDouble(idx_t row, idx_t col) const {
-	return std::stod(GetString(row, col));
-}
-
 } // namespace duckdb

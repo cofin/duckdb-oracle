@@ -58,7 +58,6 @@ public:
 	~OracleWriteLocalState() override;
 
 	void Sink(DataChunk &chunk, const vector<string> &oracle_types, const vector<ub2> &bind_types);
-	void Flush();
 
 	friend void OracleWriteSink(ExecutionContext &context, FunctionData &bind_data, GlobalFunctionData &gstate,
 	                            LocalFunctionData &lstate, DataChunk &input);
