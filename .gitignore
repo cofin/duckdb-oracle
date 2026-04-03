@@ -22,9 +22,6 @@ specs
 AGENT.md
 CLAUDE.md
 GEMINI.md
-specs/active/*/tmp
-# Agent telemetry logs
-specs/guides/telemetry/*.jsonl
 oracle_sdk/
 basic.zip
 sdk.zip
@@ -32,6 +29,8 @@ test/unit_tests/test_integration_temp.test
 test/integration_tests/temp_running_test.test
 test/integration_temp.test
 .agent/
+.agents/
+.beads/
 .beads
 .geminiignore
 .cache/
