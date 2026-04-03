@@ -95,9 +95,9 @@ static LogicalType MapOracleColumn(const string &data_type, idx_t precision, idx
 		return LogicalType::VARCHAR;
 	}
 
-	// JSON type (Oracle 21c+) - always VARCHAR (JSON_SERIALIZE output)
+	// JSON type (Oracle 21c+) - use DuckDB's JSON type for native semantics
 	if (upper == "JSON") {
-		return LogicalType::VARCHAR;
+		return LogicalType::JSON();
 	}
 
 	// XML type - always VARCHAR (XMLSERIALIZE output)
