@@ -212,7 +212,7 @@ static void LoadColumns(OracleCatalogState &state, const string &schema, const s
 
 		// Build metadata with SRID if available
 		OracleColumnMetadata meta(col_name, data_type);
-		if (meta.is_spatial()) {
+		if (meta.category == OracleTypeCategory::SPATIAL) {
 			auto it = srid_map.find(StringUtil::Upper(col_name));
 			if (it != srid_map.end()) {
 				meta.srid = it->second;

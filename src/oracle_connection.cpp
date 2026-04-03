@@ -1,24 +1,11 @@
 #include "oracle_connection.hpp"
+#include "oracle_utils.hpp"
 #include "duckdb/common/string_util.hpp"
 #include <cstring>
 #include <functional>
 #include <cstdio>
 
 namespace duckdb {
-
-// Static helper for error checking (duplicated from manager, but we need it here for query exec)
-static void CheckOCIError(sword status, OCIError *errhp, const std::string &msg) {
-	if (status == OCI_SUCCESS || status == OCI_SUCCESS_WITH_INFO) {
-		return;
-	}
-	text errbuf[512];
-	sb4 errcode = 0;
-	if (errhp) {
-		OCIErrorGet((dvoid *)errhp, (ub4)1, (text *)NULL, &errcode, errbuf, (ub4)sizeof(errbuf), OCI_HTYPE_ERROR);
-		throw IOException(msg + ": " + std::string((char *)errbuf));
-	}
-	throw IOException(msg + ": (No Error Handle)");
-}
 
 OracleConnection::OracleConnection() {
 }

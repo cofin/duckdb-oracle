@@ -70,11 +70,6 @@ struct OracleColumnMetadata {
 		}
 	}
 
-	//! Convenience method for backward compatibility
-	bool is_spatial() const {
-		return category == OracleTypeCategory::SPATIAL;
-	}
-
 	//! Check if this column type needs query rewriting for reliable fetch
 	//! @param version Oracle version info for version-specific decisions
 	//! @param try_native_lobs If false, always use hex conversion for LOB/RAW (safer)
