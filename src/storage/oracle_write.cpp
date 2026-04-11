@@ -95,12 +95,14 @@ unique_ptr<FunctionData> OracleWriteBind(ClientContext &context, CopyFunctionBin
 			result->bind_types[i] = SQLT_BDOUBLE;
 			break;
 		case LogicalTypeId::DATE:
+			result->bind_types[i] = SQLT_ODT;
+			break;
 		case LogicalTypeId::TIMESTAMP:
 		case LogicalTypeId::TIMESTAMP_TZ:
 		case LogicalTypeId::TIMESTAMP_SEC:
 		case LogicalTypeId::TIMESTAMP_MS:
 		case LogicalTypeId::TIMESTAMP_NS:
-			result->bind_types[i] = SQLT_ODT;
+			result->bind_types[i] = SQLT_CHR;
 			break;
 		case LogicalTypeId::BLOB:
 			result->bind_types[i] = SQLT_BIN;
