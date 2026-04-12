@@ -4,6 +4,8 @@
 
 require oracle
 
+require json
+
 statement ok
 CREATE OR REPLACE SECRET test_oracle (
     TYPE ORACLE,
