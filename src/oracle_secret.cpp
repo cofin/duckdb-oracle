@@ -1,15 +1,7 @@
 #include "oracle_secret.hpp"
+#include "oracle_utils.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include <cstdlib>
-
-#ifdef _WIN32
-static int setenv(const char *name, const char *value, int overwrite) {
-	if (!overwrite && getenv(name) != nullptr) {
-		return 0;
-	}
-	return _putenv_s(name, value);
-}
-#endif
 
 namespace duckdb {
 

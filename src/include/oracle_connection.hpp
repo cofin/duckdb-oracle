@@ -14,8 +14,6 @@ struct OracleResult {
 	std::vector<std::vector<std::string>> rows;
 
 	std::string GetString(idx_t row, idx_t col) const;
-	int64_t GetInt64(idx_t row, idx_t col) const;
-	double GetDouble(idx_t row, idx_t col) const;
 };
 
 class OracleConnection {

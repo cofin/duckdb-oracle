@@ -1,0 +1,79 @@
+# name: test/integration_tests/oracle/write.test
+# description: Integration tests for Oracle write (INSERT/COPY) support
+# group: [oracle]
+
+require oracle
+
+# Build connection string from environment
+statement ok
+CREATE OR REPLACE MACRO oracle_test_conn() AS (
+    concat(
+        oracle_env('ORACLE_USER', 'duckdb_test'), '/',
+        oracle_env('ORACLE_PASSWORD', 'duckdb_test'), '@//',
+        oracle_env('ORACLE_HOST', 'localhost'), ':',
+        oracle_env('ORACLE_PORT', '1521'), '/',
+        oracle_env('ORACLE_SERVICE', 'FREEPDB1')
+    )
+);
+
+statement ok
+CREATE OR REPLACE SECRET test_oracle (
+    TYPE ORACLE,
+    USER oracle_env('ORACLE_USER', 'duckdb_test'),
+    PASSWORD oracle_env('ORACLE_PASSWORD', 'duckdb_test'),
+    HOST oracle_env('ORACLE_HOST', 'localhost'),
+    PORT CAST(oracle_env('ORACLE_PORT', '1521') AS INTEGER),
+    SERVICE oracle_env('ORACLE_SERVICE', 'FREEPDB1')
+);
+
+statement ok
+ATTACH '' AS ora (TYPE ORACLE, SECRET 'test_oracle')
+
+# Set up test table
+statement ok
+SELECT oracle_execute(oracle_test_conn(), '
+    BEGIN
+       EXECUTE IMMEDIATE ''DROP TABLE test_write_types'';
+    EXCEPTION
+       WHEN OTHERS THEN
+          IF SQLCODE != -942 THEN
+             RAISE;
+          END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), '
+    CREATE TABLE test_write_types (
+        id NUMBER PRIMARY KEY,
+        int_col NUMBER(10),
+        float_col FLOAT,
+        double_col BINARY_DOUBLE,
+        date_col DATE,
+        ts_col TIMESTAMP,
+        blob_col BLOB,
+        str_col VARCHAR2(100)
+    )
+')
+
+# Insert data utilizing duckdb insert -> oracle copy logic
+statement ok
+INSERT INTO ora.test_write_types (id, int_col, float_col, double_col, date_col, ts_col, blob_col, str_col)
+VALUES (1, 42, 3.14, 2.718, '2023-01-01'::DATE, '2023-01-01 12:34:56.789'::TIMESTAMP, '\xAB\xCD\xEF'::BLOB, 'hello world');
+
+# Fetch and verify data
+query TTTTTTTT
+SELECT * FROM ora.test_write_types ORDER BY id;
+----
+1.0
+42
+3.14
+2.718
+2023-01-01 00:00:00
+2023-01-01 12:34:56.789
+\xAB\xCD\xEF
+hello world
+
+# Clean up
+statement ok
+SELECT oracle_execute(oracle_test_conn(), 'DROP TABLE test_write_types')

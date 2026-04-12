@@ -1,21 +1,9 @@
 #include "oracle_connection_manager.hpp"
+#include "oracle_utils.hpp"
 #include "duckdb/common/string_util.hpp"
 #include <cstdio>
 
 namespace duckdb {
-
-static void CheckOCIError(sword status, OCIError *errhp, const std::string &msg) {
-	if (status != OCI_SUCCESS && status != OCI_SUCCESS_WITH_INFO) {
-		text errbuf[512];
-		sb4 errcode = 0;
-		if (errhp) {
-			OCIErrorGet((dvoid *)errhp, (ub4)1, (text *)NULL, &errcode, errbuf, (ub4)sizeof(errbuf), OCI_HTYPE_ERROR);
-			throw IOException(msg + ": " + std::string((char *)errbuf));
-		} else {
-			throw IOException(msg + ": (No Error Handle)");
-		}
-	}
-}
 
 static void ParseOracleConnectionString(const std::string &connection_string, std::string &user, std::string &password,
                                         std::string &db) {

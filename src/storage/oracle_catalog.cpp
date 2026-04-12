@@ -77,9 +77,6 @@ void OracleCatalogState::ApplyOptions(const unordered_map<string, Value> &option
 			settings.use_current_schema = entry.second.GetValue<bool>();
 		} else if (key == "try_native_lobs") {
 			settings.try_native_lobs = entry.second.GetValue<bool>();
-		} else if (key == "lob_max_size") {
-			auto val = entry.second.GetValue<int64_t>();
-			settings.lob_max_size = val <= 0 ? 0 : static_cast<idx_t>(val);
 		} else if (key == "vector_to_list") {
 			settings.vector_to_list = entry.second.GetValue<bool>();
 		} else if (key == "enable_type_conversion") {

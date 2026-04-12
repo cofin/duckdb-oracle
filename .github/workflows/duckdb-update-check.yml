@@ -1,8 +1,8 @@
 name: DuckDB Update Check
 
 on:
-  schedule:
-    - cron: '0 6 * * *' # Run daily at 6:00 UTC
+#  schedule:
+#    - cron: '0 6 * * *' # Run daily at 6:00 UTC
   workflow_dispatch:
     inputs:
       check_prerelease:
@@ -155,6 +155,8 @@ jobs:
           
           # Update workflow file
           sed -i "s/duckdb_version: v[0-9.]*/duckdb_version: v${NEW_VERSION}/g" .github/workflows/main-distribution-pipeline.yml
+          sed -i "s/ci_tools_version: v[0-9.]*/ci_tools_version: v${NEW_VERSION}/g" .github/workflows/main-distribution-pipeline.yml
+          sed -i "s/@v[0-9.]*/@v${NEW_VERSION}/g" .github/workflows/main-distribution-pipeline.yml
           
           git add duckdb .github/workflows/main-distribution-pipeline.yml
           git commit -m "feat: Upgrade DuckDB to v${NEW_VERSION}"

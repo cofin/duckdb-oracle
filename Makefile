@@ -16,7 +16,7 @@ include extension-ci-tools/makefiles/duckdb_extension.Makefile
 
 ORACLE_IMAGE ?= gvenzl/oracle-free:23-slim
 
-.PHONY: configure_ci tidy-check integration help clean-all test_release_internal
+.PHONY: configure_ci tidy-check integration help clean-all test_release_internal lint
 
 # Detect OS for Oracle Instant Client setup
 UNAME_S := $(shell uname -s)
@@ -85,12 +85,15 @@ tidy-check:
 integration: release
 	SKIP_BUILD=1 ORACLE_IMAGE=$(ORACLE_IMAGE) ./scripts/test_integration.sh
 
+lint: format-check tidy-check
+
 help:
 	@printf "Available targets:\n"
 	@printf "  release          Build the extension in release mode (from ci tools)\n"
 	@printf "  debug            Build the extension in debug mode (from ci tools)\n"
 	@printf "  test             Run unit tests only (smoke tests, no Oracle container required)\n"
 	@printf "  integration      Run full test suite with Oracle container (uses ORACLE_IMAGE=%s)\n" "$(ORACLE_IMAGE)"
+	@printf "  lint             Run format-check and tidy-check\n"
 	@printf "  configure_ci     Install OCI prerequisites for CI/local env\n"
 	@printf "  clean-all        Remove all build directories to allow switching generators (e.g., Ninja)\n"
 

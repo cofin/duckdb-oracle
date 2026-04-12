@@ -16,22 +16,21 @@ test_connection.test
 vcpkg
 
 # Gemini Agent System
-specs/archive/
-.gemini/mcp-tools.txt
-.gemini/mcp-strategy.md
-!specs/active/.gitkeep
-!specs/archive/.gitkeep
-!specs/guides/
-!specs/guides/**/*.md
-!specs/guides/**/*.yaml
-!specs/template-spec/
-!specs/template-spec/**/*.md
-specs/active/*/tmp
-# Agent telemetry logs
-specs/guides/telemetry/*.jsonl
+specs
+.gemini
+.claude
+AGENT.md
+CLAUDE.md
+GEMINI.md
 oracle_sdk/
 basic.zip
 sdk.zip
 test/unit_tests/test_integration_temp.test
 test/integration_tests/temp_running_test.test
 test/integration_temp.test
+.agent/
+.agents/
+.beads/
+.beads
+.geminiignore
+.cache/

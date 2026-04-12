@@ -36,15 +36,11 @@
 // OpenSSL linked through vcpkg
 #include <openssl/opensslv.h>
 
+#include "oracle_utils.hpp"
+
 #ifdef _WIN32
 #include <direct.h>
 #define S_ISDIR(mode) (((mode)&_S_IFDIR) == _S_IFDIR)
-static int setenv(const char *name, const char *value, int overwrite) {
-	if (!overwrite && getenv(name) != nullptr) {
-		return 0;
-	}
-	return _putenv_s(name, value);
-}
 #endif
 
 #ifndef SQLT_JSON
@@ -100,19 +96,6 @@ unique_ptr<FunctionData> OracleBindData::Copy() const {
 bool OracleBindData::Equals(const FunctionData &other) const {
 	auto &other_bind_data = (const OracleBindData &)other;
 	return query == other_bind_data.query && connection_string == other_bind_data.connection_string;
-}
-
-static void CheckOCIError(sword status, OCIError *errhp, const string &msg) {
-	if (status != OCI_SUCCESS && status != OCI_SUCCESS_WITH_INFO) {
-		text errbuf[512];
-		sb4 errcode = 0;
-		if (errhp) {
-			OCIErrorGet((dvoid *)errhp, (ub4)1, (text *)NULL, &errcode, errbuf, (ub4)sizeof(errbuf), OCI_HTYPE_ERROR);
-			throw IOException(msg + ": " + string((char *)errbuf));
-		} else {
-			throw IOException(msg + ": (No Error Handle)");
-		}
-	}
 }
 
 static timestamp_t ParseOciTimestamp(const char *data, ub2 len) {
@@ -708,32 +691,6 @@ static Value ParseVectorJsonToList(const string &json_str) {
 	return Value::LIST(LogicalType::FLOAT, std::move(elements));
 }
 
-//! Decode hex string to binary BLOB
-static string DecodeHexToBlob(const string &hex_str) {
-	string result;
-	result.reserve(hex_str.size() / 2);
-
-	for (size_t i = 0; i + 1 < hex_str.size(); i += 2) {
-		char high = hex_str[i];
-		char low = hex_str[i + 1];
-
-		auto hex_digit = [](char c) -> int {
-			if (c >= '0' && c <= '9')
-				return c - '0';
-			if (c >= 'A' && c <= 'F')
-				return c - 'A' + 10;
-			if (c >= 'a' && c <= 'f')
-				return c - 'a' + 10;
-			return 0;
-		};
-
-		char byte = static_cast<char>((hex_digit(high) << 4) | hex_digit(low));
-		result.push_back(byte);
-	}
-
-	return result;
-}
-
 void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto &bind_data = (OracleBindData &)*data.bind_data;
 	auto &gstate = data.global_state->Cast<OracleScanState>();
@@ -855,9 +812,9 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 					output.data[col_idx].SetValue(row_count, list_val);
 					break;
 				}
-				case LogicalTypeId::USER: {
+				case LogicalTypeId::GEOMETRY: {
 					// Handle GEOMETRY type (mapped from SDO_GEOMETRY -> WKT -> GEOMETRY)
-					// We fetch WKT as string, then cast to target USER type (GEOMETRY)
+					// We fetch WKT as string, then cast to built-in GEOMETRY type
 					string_t val(ptr, gstate.return_lens[buffer_idx][row_count]);
 					string s = val.GetString();
 					try {
@@ -1233,7 +1190,7 @@ void OracleExtension::Load(ExtensionLoader &loader) {
 	                          "Map SDO_GEOMETRY to GEOMETRY type (requires spatial extension)", LogicalType::BOOLEAN,
 	                          Value::BOOLEAN(true));
 
-	config.storage_extensions["oracle"] = CreateOracleStorageExtension();
+	StorageExtension::Register(config, "oracle", CreateOracleStorageExtension());
 }
 
 std::string OracleExtension::Name() {

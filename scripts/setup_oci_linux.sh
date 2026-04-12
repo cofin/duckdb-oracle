@@ -109,6 +109,14 @@ if ! [ -f /usr/lib/${LIBAIO_ARCH}/libaio.so.1 ] && ! [ -f /lib/${LIBAIO_ARCH}/li
         echo "Warning: no supported package manager found; continuing without installing libaio."
     fi
 
+    # Install C++ stdlib headers needed by clang-tidy (make lint / make tidy-check)
+    if command -v apt-get >/dev/null 2>&1; then
+        if ! dpkg -s libstdc++-14-dev >/dev/null 2>&1; then
+            echo "Installing libstdc++-14-dev for clang-tidy..."
+            $SUDO apt-get install -y --no-install-recommends libstdc++-14-dev || true
+        fi
+    fi
+
     # Handle Ubuntu 24.04 libaio1t64 -> libaio.so.1 symlink
     if [ -f /usr/lib/${LIBAIO_ARCH}/libaio.so.1t64 ] && [ ! -f /usr/lib/${LIBAIO_ARCH}/libaio.so.1 ]; then
         $SUDO ln -sf /usr/lib/${LIBAIO_ARCH}/libaio.so.1t64 /usr/lib/${LIBAIO_ARCH}/libaio.so.1

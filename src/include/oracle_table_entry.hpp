@@ -27,6 +27,7 @@ struct OracleColumnMetadata {
 	string oracle_data_type;
 	OracleTypeCategory category;
 	bool needs_server_conversion; // Determined at runtime based on type category
+	idx_t srid = 0;               // Oracle SRID from ALL_SDO_GEOM_METADATA (0 = no CRS)
 
 	OracleColumnMetadata(const string &name, const string &data_type) : column_name(name), oracle_data_type(data_type) {
 		auto upper = StringUtil::Upper(data_type);
@@ -67,11 +68,6 @@ struct OracleColumnMetadata {
 			category = OracleTypeCategory::UNKNOWN;
 			needs_server_conversion = false;
 		}
-	}
-
-	//! Convenience method for backward compatibility
-	bool is_spatial() const {
-		return category == OracleTypeCategory::SPATIAL;
 	}
 
 	//! Check if this column type needs query rewriting for reliable fetch
