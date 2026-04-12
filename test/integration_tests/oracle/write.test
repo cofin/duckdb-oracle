@@ -62,7 +62,7 @@ INSERT INTO ora.test_write_types (id, int_col, float_col, double_col, date_col, 
 VALUES (1, 42, 3.14, 2.718, '2023-01-01'::DATE, '2023-01-01 12:34:56.789'::TIMESTAMP, '\xAB\xCD\xEF'::BLOB, 'hello world');
 
 # Fetch and verify data
-query IRRRTTBS
+query TTTTTTTT
 SELECT * FROM ora.test_write_types ORDER BY id;
 ----
 1
