@@ -5,6 +5,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v1.0.0)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -32,9 +37,18 @@ jobs:
         id: get_duckdb_version
         shell: bash
         run: |
-          cd duckdb
-          # Get the exact tag from the submodule
-          DUCKDB_VERSION=$(git describe --tags --abbrev=0)
+          # Try submodule tag first, fall back to parsing the CI workflow
+          DUCKDB_VERSION=""
+          if [ -d "duckdb" ]; then
+            DUCKDB_VERSION=$(cd duckdb && git describe --tags --abbrev=0 2>/dev/null || true)
+          fi
+          if [ -z "$DUCKDB_VERSION" ]; then
+            DUCKDB_VERSION=$(grep 'duckdb_version:' .github/workflows/main-distribution-pipeline.yml | head -1 | awk '{print $2}')
+          fi
+          if [ -z "$DUCKDB_VERSION" ]; then
+            echo "::error::Could not determine DuckDB version from submodule or workflow file"
+            exit 1
+          fi
           echo "duckdb_version=$DUCKDB_VERSION" >> $GITHUB_OUTPUT
           echo "Detected DuckDB version: $DUCKDB_VERSION"
 
@@ -220,7 +234,7 @@ jobs:
     name: Deploy to GitHub Pages
     needs: [validate-version, build-matrix]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -257,7 +271,7 @@ jobs:
     name: Create Release
     needs: [validate-version, build-matrix]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
