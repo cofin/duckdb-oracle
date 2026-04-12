@@ -17,7 +17,17 @@ CREATE OR REPLACE MACRO oracle_test_conn() AS (
 );
 
 statement ok
-ATTACH (oracle_test_conn()) AS ora (TYPE oracle)
+CREATE OR REPLACE SECRET test_oracle (
+    TYPE ORACLE,
+    USER oracle_env('ORACLE_USER', 'duckdb_test'),
+    PASSWORD oracle_env('ORACLE_PASSWORD', 'duckdb_test'),
+    HOST oracle_env('ORACLE_HOST', 'localhost'),
+    PORT CAST(oracle_env('ORACLE_PORT', '1521') AS INTEGER),
+    SERVICE oracle_env('ORACLE_SERVICE', 'FREEPDB1')
+);
+
+statement ok
+ATTACH '' AS ora (TYPE ORACLE, SECRET 'test_oracle')
 
 # Set up test table
 statement ok
