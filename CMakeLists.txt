@@ -63,6 +63,7 @@ set(EXTENSION_SOURCES
     src/storage/oracle_transaction.cpp
     src/storage/oracle_transaction_manager.cpp
     src/storage/oracle_write.cpp
+    src/storage/oracle_insert.cpp
 )
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})

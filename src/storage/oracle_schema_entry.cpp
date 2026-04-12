@@ -11,7 +11,12 @@
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/transaction/duck_transaction_manager.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
+#include "duckdb/planner/operator/logical_insert.hpp"
+#include "duckdb/planner/operator/logical_delete.hpp"
+#include "duckdb/planner/operator/logical_update.hpp"
+#include "duckdb/execution/physical_plan_generator.hpp"
 #include "oracle_catalog_state.hpp"
+#include "oracle_insert.hpp"
 #include <memory>
 #include "oracle_table_entry.hpp"
 
@@ -153,6 +158,43 @@ public:
 
 	shared_ptr<OracleCatalogState> GetState() {
 		return state;
+	}
+
+	PhysicalOperator &PlanInsert(ClientContext &context, PhysicalPlanGenerator &planner, LogicalInsert &op,
+	                             optional_ptr<PhysicalOperator> plan) override {
+		// Use the table name directly — schema resolution happens in the write init
+		string insert_table_name = op.table.name;
+
+		// Get column names and types from the table entry
+		vector<string> col_names;
+		vector<LogicalType> col_types;
+		for (auto &col : op.table.GetColumns().Physical()) {
+			col_names.push_back(col.Name());
+			col_types.push_back(col.Type());
+		}
+
+		// Handle partial column inserts (column_index_map)
+		if (!op.column_index_map.empty()) {
+			plan = planner.ResolveDefaultsProjection(op, *plan);
+		}
+
+		auto &insert = planner.Make<PhysicalOracleInsert>(op.types, std::move(insert_table_name),
+		                                                  state->connection_string, std::move(col_names),
+		                                                  std::move(col_types), op.estimated_cardinality);
+		if (plan) {
+			insert.children.push_back(*plan);
+		}
+		return insert;
+	}
+
+	PhysicalOperator &PlanDelete(ClientContext &context, PhysicalPlanGenerator &planner, LogicalDelete &op,
+	                             PhysicalOperator &plan) override {
+		throw NotImplementedException("DELETE is not supported for Oracle attached databases");
+	}
+
+	PhysicalOperator &PlanUpdate(ClientContext &context, PhysicalPlanGenerator &planner, LogicalUpdate &op,
+	                             PhysicalOperator &plan) override {
+		throw NotImplementedException("UPDATE is not supported for Oracle attached databases");
 	}
 
 private:
