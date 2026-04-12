@@ -1,8 +1,8 @@
 name: DuckDB Update Check
 
 on:
-#  schedule:
-#    - cron: '0 6 * * *' # Run daily at 6:00 UTC
+  schedule:
+    - cron: '0 6 * * *' # Run daily at 6:00 UTC
   workflow_dispatch:
     inputs:
       check_prerelease:
@@ -158,7 +158,22 @@ jobs:
           sed -i "s/ci_tools_version: v[0-9.]*/ci_tools_version: v${NEW_VERSION}/g" .github/workflows/main-distribution-pipeline.yml
           sed -i "s/@v[0-9.]*/@v${NEW_VERSION}/g" .github/workflows/main-distribution-pipeline.yml
           
-          git add duckdb .github/workflows/main-distribution-pipeline.yml
+          # Bump extension patch version in description.yml so auto-tag creates a new release
+          CURRENT_EXT_VERSION=$(grep '^  version:' description.yml | awk '{print $2}')
+          if [ -z "$CURRENT_EXT_VERSION" ]; then
+            echo "::error::Could not read extension version from description.yml -- cannot bump version for release"
+            exit 1
+          fi
+          if [[ ! "$CURRENT_EXT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Cannot bump version: '$CURRENT_EXT_VERSION' is not a simple X.Y.Z semver"
+            exit 1
+          fi
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_EXT_VERSION"
+          NEW_EXT_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+          sed -i "s/^  version: ${CURRENT_EXT_VERSION}/  version: ${NEW_EXT_VERSION}/" description.yml
+          echo "Bumped extension version: ${CURRENT_EXT_VERSION} -> ${NEW_EXT_VERSION}"
+
+          git add duckdb .github/workflows/main-distribution-pipeline.yml description.yml
           git commit -m "feat: Upgrade DuckDB to v${NEW_VERSION}"
           
           # Force push to overwrite if it existed
