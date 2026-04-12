@@ -178,9 +178,9 @@ public:
 			plan = planner.ResolveDefaultsProjection(op, *plan);
 		}
 
-		auto &insert = planner.Make<PhysicalOracleInsert>(op.types, std::move(insert_table_name),
-		                                                  state->connection_string, std::move(col_names),
-		                                                  std::move(col_types), op.estimated_cardinality);
+		auto &insert =
+		    planner.Make<PhysicalOracleInsert>(op.types, std::move(insert_table_name), state->connection_string,
+		                                       std::move(col_names), std::move(col_types), op.estimated_cardinality);
 		if (plan) {
 			insert.children.push_back(*plan);
 		}

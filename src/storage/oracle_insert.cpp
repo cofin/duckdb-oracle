@@ -94,9 +94,8 @@ unique_ptr<GlobalSinkState> PhysicalOracleInsert::GetGlobalSinkState(ClientConte
 			OracleConnection temp_conn;
 			temp_conn.Connect(connection_string);
 
-			string schema_filter = bind_data->schema_name.empty()
-			                           ? "owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')"
-			                           : "owner = upper('" + bind_data->schema_name + "')";
+			string schema_filter = bind_data->schema_name.empty() ? "owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')"
+			                                                      : "owner = upper('" + bind_data->schema_name + "')";
 			string table_filter = "(table_name = '" + bind_data->object_name + "' OR table_name = upper('" +
 			                      bind_data->object_name + "'))";
 
@@ -187,8 +186,7 @@ unique_ptr<LocalSinkState> PhysicalOracleInsert::GetLocalSinkState(ExecutionCont
 	return make_uniq<OracleInsertLocalState>();
 }
 
-SinkResultType PhysicalOracleInsert::Sink(ExecutionContext &context, DataChunk &chunk,
-                                          OperatorSinkInput &input) const {
+SinkResultType PhysicalOracleInsert::Sink(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const {
 	auto &gstate = input.global_state.Cast<OracleInsertGlobalState>();
 	auto &lstate = input.local_state.Cast<OracleInsertLocalState>();
 
@@ -199,8 +197,7 @@ SinkResultType PhysicalOracleInsert::Sink(ExecutionContext &context, DataChunk &
 	return SinkResultType::NEED_MORE_INPUT;
 }
 
-SinkCombineResultType PhysicalOracleInsert::Combine(ExecutionContext &context,
-                                                    OperatorSinkCombineInput &input) const {
+SinkCombineResultType PhysicalOracleInsert::Combine(ExecutionContext &context, OperatorSinkCombineInput &input) const {
 	return SinkCombineResultType::FINISHED;
 }
 
