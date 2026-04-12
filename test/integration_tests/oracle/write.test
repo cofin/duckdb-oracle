@@ -65,11 +65,11 @@ VALUES (1, 42, 3.14, 2.718, '2023-01-01'::DATE, '2023-01-01 12:34:56.789'::TIMES
 query TTTTTTTT
 SELECT * FROM ora.test_write_types ORDER BY id;
 ----
-1
+1.0
 42
 3.14
 2.718
-2023-01-01
+2023-01-01 00:00:00
 2023-01-01 12:34:56.789
 \xAB\xCD\xEF
 hello world
