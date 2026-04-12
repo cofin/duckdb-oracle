@@ -462,7 +462,7 @@ void OracleWriteLocalState::BindColumn(Vector &col, idx_t col_idx, idx_t count, 
 					date_t duck_date = val.GetValueUnsafe<date_t>();
 					int32_t year, month, day;
 					Date::Convert(duck_date, year, month, day);
-					date.OCIDateYYYY = year;
+					date.OCIDateYYYY = static_cast<sb2>(year);
 					date.OCIDateMM = month;
 					date.OCIDateDD = day;
 					date.OCIDateTime.OCITimeHH = 0;
@@ -478,7 +478,7 @@ void OracleWriteLocalState::BindColumn(Vector &col, idx_t col_idx, idx_t count, 
 					int32_t hour, min, sec, micros;
 					Time::Convert(duck_time, hour, min, sec, micros);
 
-					date.OCIDateYYYY = year;
+					date.OCIDateYYYY = static_cast<sb2>(year);
 					date.OCIDateMM = month;
 					date.OCIDateDD = day;
 					date.OCIDateTime.OCITimeHH = hour;

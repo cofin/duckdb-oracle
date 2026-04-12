@@ -51,7 +51,7 @@ statement ok
 SELECT oracle_clear_cache();
 
 # Verify JSON columns are mapped to JSON type (not VARCHAR)
-query IJ
+query IT
 SELECT id, data FROM ora.json_docs ORDER BY id
 ----
 1	{"name":"Alice","age":30}
