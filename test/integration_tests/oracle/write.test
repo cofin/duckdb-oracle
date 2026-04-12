@@ -1,14 +1,27 @@
 # name: test/integration_tests/oracle/write.test
+# description: Integration tests for Oracle write (INSERT/COPY) support
 # group: [oracle]
 
 require oracle
 
+# Build connection string from environment
 statement ok
-ATTACH 'TEST_USER/test_password@localhost:1521/FREEPDB1' AS ora (TYPE oracle)
+CREATE OR REPLACE MACRO oracle_test_conn() AS (
+    concat(
+        oracle_env('ORACLE_USER', 'duckdb_test'), '/',
+        oracle_env('ORACLE_PASSWORD', 'duckdb_test'), '@//',
+        oracle_env('ORACLE_HOST', 'localhost'), ':',
+        oracle_env('ORACLE_PORT', '1521'), '/',
+        oracle_env('ORACLE_SERVICE', 'FREEPDB1')
+    )
+);
+
+statement ok
+ATTACH (oracle_test_conn()) AS ora (TYPE oracle)
 
 # Set up test table
 statement ok
-SELECT oracle_execute('TEST_USER/test_password@localhost:1521/FREEPDB1', '
+SELECT oracle_execute(oracle_test_conn(), '
     BEGIN
        EXECUTE IMMEDIATE ''DROP TABLE test_write_types'';
     EXCEPTION
@@ -20,7 +33,7 @@ SELECT oracle_execute('TEST_USER/test_password@localhost:1521/FREEPDB1', '
 ')
 
 statement ok
-SELECT oracle_execute('TEST_USER/test_password@localhost:1521/FREEPDB1', '
+SELECT oracle_execute(oracle_test_conn(), '
     CREATE TABLE test_write_types (
         id NUMBER PRIMARY KEY,
         int_col NUMBER(10),
@@ -35,7 +48,7 @@ SELECT oracle_execute('TEST_USER/test_password@localhost:1521/FREEPDB1', '
 
 # Insert data utilizing duckdb insert -> oracle copy logic
 statement ok
-INSERT INTO ora.test_write_types (id, int_col, float_col, double_col, date_col, ts_col, blob_col, str_col) 
+INSERT INTO ora.test_write_types (id, int_col, float_col, double_col, date_col, ts_col, blob_col, str_col)
 VALUES (1, 42, 3.14, 2.718, '2023-01-01'::DATE, '2023-01-01 12:34:56.789'::TIMESTAMP, '\xAB\xCD\xEF'::BLOB, 'hello world');
 
 # Fetch and verify data
@@ -53,4 +66,4 @@ hello world
 
 # Clean up
 statement ok
-SELECT oracle_execute('TEST_USER/test_password@localhost:1521/FREEPDB1', 'DROP TABLE test_write_types')
+SELECT oracle_execute(oracle_test_conn(), 'DROP TABLE test_write_types')
