@@ -4,14 +4,11 @@
 #include "oracle_write.hpp"
 #include "oracle_utils.hpp"
 #include "oracle_connection_manager.hpp"
-#include "oracle_connection_resolver.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
-#include "oracle_connection.hpp" // For OracleConnection wrapper
 #include <cstdio>
 #include <cstring>
-#include <unordered_map>
 
 namespace duckdb {
 
@@ -21,222 +18,6 @@ void RejectOracleWriteInExplicitTransaction(ClientContext &context) {
 		                            "transaction block; commit or rollback the DuckDB transaction before writing to "
 		                            "Oracle");
 	}
-}
-
-//--- Bind Data ---
-
-unique_ptr<FunctionData> OracleWriteBind(ClientContext &context, CopyFunctionBindInput &input,
-                                         const vector<string> &names, const vector<LogicalType> &sql_types) {
-	RejectOracleWriteInExplicitTransaction(context);
-
-	auto result = make_uniq<OracleWriteBindData>();
-
-	// Target table name passed as "file path" or via TABLE option
-	string target_table = input.info.file_path;
-
-	auto &options = input.info.options;
-	for (auto &op : options) {
-		string key = StringUtil::Lower(op.first);
-		if (key != "connection_string" && key != "table") {
-			throw BinderException("Unrecognized option for Oracle COPY: %s", op.first);
-		}
-	}
-
-	auto conn_it = options.find("connection_string");
-	if (conn_it == options.end()) {
-		// Try uppercase if not found (DuckDB might preserve case in options map?)
-		// Actually we just iterate and find.
-		for (auto &op : options) {
-			if (StringUtil::Lower(op.first) == "connection_string") {
-				conn_it = options.find(op.first);
-				break;
-			}
-		}
-	}
-
-	if (conn_it != options.end()) {
-		auto resolved = ResolveOracleConnection(context, conn_it->second.front().ToString());
-		result->connection_string = resolved.connection_string;
-		result->wallet_path = resolved.wallet_path;
-		result->settings = resolved.settings;
-	}
-
-	// Check for TABLE option override
-	auto table_it = options.find("table");
-	if (table_it == options.end()) {
-		for (auto &op : options) {
-			if (StringUtil::Lower(op.first) == "table") {
-				table_it = options.find(op.first);
-				break;
-			}
-		}
-	}
-
-	if (table_it != options.end()) {
-		target_table = table_it->second.front().ToString();
-	}
-
-	if (target_table.empty()) {
-		throw BinderException("Oracle COPY TO requires a table name (use TO 'table' or TABLE 'table')");
-	}
-
-	result->table_name = target_table;
-
-	// Parse schema.table
-	auto parts = StringUtil::Split(target_table, ".");
-	if (parts.size() == 2) {
-		result->schema_name = parts[0];
-		result->object_name = parts[1];
-	} else {
-		result->object_name = target_table;
-	}
-
-	result->column_names = names;
-	result->column_types = sql_types;
-	result->oracle_types.resize(names.size(), "VARCHAR2"); // Default
-	result->bind_types.resize(names.size(), SQLT_CHR);     // Default
-
-	// Set bind_types based on DuckDB LogicalType
-	for (idx_t i = 0; i < sql_types.size(); i++) {
-		switch (sql_types[i].id()) {
-		case LogicalTypeId::TINYINT:
-		case LogicalTypeId::SMALLINT:
-		case LogicalTypeId::INTEGER:
-		case LogicalTypeId::BIGINT:
-			result->bind_types[i] = SQLT_INT;
-			break;
-		case LogicalTypeId::FLOAT:
-		case LogicalTypeId::DOUBLE:
-			result->bind_types[i] = SQLT_BDOUBLE;
-			break;
-		case LogicalTypeId::DATE:
-			result->bind_types[i] = SQLT_ODT;
-			break;
-		case LogicalTypeId::TIMESTAMP:
-		case LogicalTypeId::TIMESTAMP_TZ:
-		case LogicalTypeId::TIMESTAMP_SEC:
-		case LogicalTypeId::TIMESTAMP_MS:
-		case LogicalTypeId::TIMESTAMP_NS:
-			result->bind_types[i] = SQLT_CHR;
-			break;
-		case LogicalTypeId::BLOB:
-			result->bind_types[i] = SQLT_BIN;
-			break;
-		default:
-			result->bind_types[i] = SQLT_CHR;
-			break;
-		}
-	}
-
-	// Introspect Oracle table to get actual types
-	if (!result->connection_string.empty()) {
-		try {
-			// Use temporary connection logic to avoid catalog state dependency if simple string
-			OracleConnection temp_conn;
-			temp_conn.Connect(result->connection_string, result->wallet_path, result->settings);
-
-			// Try to find table metadata
-			string schema_filter = result->schema_name.empty() ? "owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')"
-			                                                   : "owner = upper('" + result->schema_name + "')";
-
-			// Handle case sensitivity: try exact match or upper case match
-			string table_filter =
-			    "(table_name = '" + result->object_name + "' OR table_name = upper('" + result->object_name + "'))";
-
-			string query = "SELECT owner, table_name, column_name, data_type FROM all_tab_columns WHERE " +
-			               schema_filter + " AND " + table_filter + " ORDER BY owner, table_name, column_id";
-
-			auto query_res = temp_conn.Query(query);
-
-			// Map column names to types
-			// We might get multiple tables if we are unlucky (e.g. "abc" and "ABC" both exist).
-			// We prioritize exact match if found, otherwise upper match.
-			// Actually, for simplicity, we'll just take the first table found, but prefer the one matching our casing
-			// logic? Let's iterate and pick the 'best' table name.
-
-			string best_table_name;
-			string best_owner;
-			bool found_exact = false;
-
-			std::unordered_map<string, string> col_type_map; // Name -> Type
-			std::unordered_map<string, string> col_name_map; // UpperName -> ActualName
-
-			for (auto &row : query_res.rows) {
-				if (row.size() < 4) {
-					continue;
-				}
-				const string &owner = row[0];
-				const string &table = row[1];
-				const string &col = row[2];
-				const string &type = row[3];
-
-				if (best_table_name.empty()) {
-					best_table_name = table;
-					best_owner = owner;
-				}
-
-				if (table != best_table_name) {
-					if (table == result->object_name && !found_exact) {
-						best_table_name = table;
-						best_owner = owner;
-						col_type_map.clear();
-						col_name_map.clear();
-						found_exact = true;
-					} else if (found_exact) {
-						continue;
-					}
-				}
-
-				if (table == result->object_name) {
-					found_exact = true;
-				}
-
-				if (table == best_table_name) {
-					col_type_map[col] = type;
-					col_name_map[StringUtil::Upper(col)] = col;
-				}
-			}
-
-			if (!best_table_name.empty()) {
-				result->object_name = best_table_name;
-				if (result->schema_name.empty()) {
-					result->schema_name = best_owner;
-				}
-			}
-
-			// Update result->oracle_types and column_names based on DuckDB column names
-			for (idx_t i = 0; i < names.size(); i++) {
-				string col_upper = StringUtil::Upper(names[i]);
-
-				// Try to find mapping
-				string actual_name;
-				if (col_name_map.count(col_upper)) {
-					actual_name = col_name_map[col_upper];
-				} else {
-					// If not found (maybe exact match required for mixed case that conflicts?)
-					// Or just column doesn't exist.
-					// Try exact match lookup in type map (if we didn't map it via upper)
-					if (col_type_map.count(names[i])) {
-						actual_name = names[i];
-					}
-				}
-
-				if (!actual_name.empty()) {
-					result->column_names[i] = actual_name; // Update to correct casing
-					if (col_type_map.count(actual_name)) {
-						result->oracle_types[i] = col_type_map[actual_name];
-					}
-				}
-			}
-		} catch (std::exception &e) {
-			// If metadata fetch fails, we proceed with defaults but log if debug
-			if (getenv("ORACLE_DEBUG")) {
-				fprintf(stderr, "Warning: Failed to fetch metadata in Bind: %s\n", e.what());
-			}
-		}
-	}
-
-	return std::move(result);
 }
 
 //--- Global State ---
@@ -273,11 +54,8 @@ void OracleWriteGlobalState::RollbackUncommitted() noexcept {
 	}
 }
 
-unique_ptr<GlobalFunctionData> OracleWriteInitGlobal(ClientContext &context, FunctionData &bind_data,
-                                                     const string &file_path) {
+unique_ptr<OracleWriteGlobalState> OracleWriteInitGlobal(ClientContext &context, OracleWriteBindData &data) {
 	RejectOracleWriteInExplicitTransaction(context);
-
-	auto &data = bind_data.Cast<OracleWriteBindData>();
 
 	// Acquire connection
 	auto conn = OracleConnectionManager::Instance().Acquire(data.connection_string, data.wallet_path, data.settings);
@@ -334,19 +112,11 @@ OracleWriteLocalState::OracleWriteLocalState(std::shared_ptr<OracleConnectionHan
 OracleWriteLocalState::~OracleWriteLocalState() {
 }
 
-unique_ptr<LocalFunctionData> OracleWriteInitLocal(ExecutionContext &context, FunctionData &bind_data) {
-	return make_uniq<OracleWriteLocalState>(nullptr, nullptr);
-}
-
 //--- Sink ---
 
-void OracleWriteSink(ExecutionContext &context, FunctionData &bind_data, GlobalFunctionData &gstate_p,
-                     LocalFunctionData &lstate_p, DataChunk &input) {
+void OracleWriteSink(ExecutionContext &context, OracleWriteBindData &data, OracleWriteGlobalState &gstate,
+                     OracleWriteLocalState &lstate, DataChunk &input) {
 	RejectOracleWriteInExplicitTransaction(context.client);
-
-	auto &gstate = gstate_p.Cast<OracleWriteGlobalState>();
-	auto &lstate = lstate_p.Cast<OracleWriteLocalState>();
-	auto &data = bind_data.Cast<OracleWriteBindData>();
 
 	if (!lstate.connection) {
 		lstate = OracleWriteLocalState(gstate.connection, gstate.stmthp.get());
@@ -556,8 +326,7 @@ void OracleWriteLocalState::ExecuteBatch(idx_t count) {
 	CheckOCIError(status, ctx->errhp, "OCIStmtExecute Insert");
 }
 
-void OracleWriteFinalize(ClientContext &context, FunctionData &bind_data, GlobalFunctionData &gstate_p) {
-	auto &gstate = gstate_p.Cast<OracleWriteGlobalState>();
+void OracleWriteFinalize(OracleWriteGlobalState &gstate) {
 	if (gstate.connection && gstate.ShouldCommit()) {
 		auto ctx = gstate.connection->Get();
 		try {

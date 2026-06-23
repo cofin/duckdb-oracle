@@ -1,5 +1,5 @@
 # name: test/integration_tests/test_write_vector.test
-# description: Test Oracle Write (COPY) for Vector (Oracle 23ai)
+# description: Test Oracle Write (attached INSERT) for Vector (Oracle 23ai)
 # group: [integration_tests]
 
 require oracle
@@ -34,11 +34,10 @@ SELECT oracle_clear_cache();
 
 # Insert Vector as String '[...]'
 statement ok
-COPY (
-    SELECT 
+INSERT INTO ora.write_vector (id, vec)
+SELECT
         1 as id, 
         '[1.1, 2.2, 3.3]' as vec
-) TO 'write_vector' (FORMAT ORACLE, CONNECTION_STRING '${ORACLE_CONNECTION_STRING}');
 
 # Verify - VECTOR is returned as LIST<FLOAT> after parsing VECTOR_SERIALIZE output
 query I

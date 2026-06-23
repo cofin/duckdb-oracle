@@ -1,5 +1,5 @@
 # name: test/integration_tests/oracle/write.test
-# description: Integration tests for Oracle write (INSERT/COPY) support
+# description: Integration tests for Oracle attached INSERT write support
 # group: [oracle]
 
 require oracle
@@ -48,7 +48,7 @@ SELECT oracle_execute(oracle_test_conn(), '
     )
 ')
 
-# Insert data utilizing duckdb insert -> oracle copy logic
+# Insert data through the attached Oracle table
 statement ok
 INSERT INTO ora.test_write_types (id, int_col, float_col, double_col, date_col, ts_col, blob_col, str_col)
 VALUES (1, 42, 3.14, 2.718, '2023-01-01'::DATE, '2023-01-01 12:34:56.789'::TIMESTAMP, '\xAB\xCD\xEF'::BLOB, 'hello world');

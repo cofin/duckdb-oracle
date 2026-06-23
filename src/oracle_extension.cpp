@@ -28,7 +28,6 @@
 #include "oracle_connection_resolver.hpp"
 #include "oracle_secret.hpp"
 #include "oracle_connection_manager.hpp"
-#include "oracle_write.hpp" // Include write support
 #include <oci.h>
 #include <cstdio>
 #include <sys/stat.h>
@@ -1062,15 +1061,6 @@ static void LoadInternal(ExtensionLoader &loader) {
 	auto oracle_execute_func = ScalarFunction("oracle_execute", {LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                                          LogicalType::VARCHAR, OracleExecuteFunction);
 	loader.RegisterFunction(oracle_execute_func);
-
-	// Register Copy Function
-	CopyFunction copy_func("ORACLE");
-	copy_func.copy_to_bind = OracleWriteBind;
-	copy_func.copy_to_initialize_global = OracleWriteInitGlobal;
-	copy_func.copy_to_initialize_local = OracleWriteInitLocal;
-	copy_func.copy_to_sink = OracleWriteSink;
-	copy_func.copy_to_finalize = OracleWriteFinalize;
-	loader.RegisterFunction(copy_func);
 }
 
 void OracleExtension::Load(ExtensionLoader &loader) {

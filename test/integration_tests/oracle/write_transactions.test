@@ -83,10 +83,8 @@ statement ok
 BEGIN TRANSACTION;
 
 statement error
-COPY (SELECT 10000 AS id, 10000 AS value_col) TO 'write_txn_behavior' (
-    FORMAT ORACLE,
-    CONNECTION_STRING '${ORACLE_CONNECTION_STRING}'
-);
+INSERT INTO ora.write_txn_behavior
+SELECT 10000 AS id, 10000 AS value_col;
 ----
 <REGEX>:.*Oracle writes are statement-atomic.*explicit DuckDB transaction block.*
 

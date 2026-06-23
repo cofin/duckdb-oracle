@@ -1,5 +1,5 @@
 # name: test/integration_tests/test_write_basic.test
-# description: Test Oracle Write (COPY) for basic types
+# description: Test Oracle Write (attached INSERT) for basic types
 # group: [integration_tests]
 
 require oracle
@@ -34,21 +34,19 @@ SELECT oracle_execute('ora', '
 statement ok
 SELECT oracle_clear_cache();
 
-# Insert using COPY
-# Note: We select from DuckDB values
+# Insert using attached INSERT from DuckDB values
 statement ok
-COPY (
-    SELECT 
+INSERT INTO ora.write_basic (id, val_str, val_int, val_dbl, val_date, val_ts)
+SELECT
         1 as id, 
         'hello' as val_str, 
         123 as val_int, 
         123.45 as val_dbl, 
         TIMESTAMP '2023-01-01 10:00:00' as val_date,
         TIMESTAMP '2023-01-01 10:00:00.123' as val_ts
-    UNION ALL
-    SELECT 
+UNION ALL
+SELECT
         2, 'world', 456, 67.89, TIMESTAMP '2023-02-01 11:00:00', TIMESTAMP '2023-02-01 11:00:00.456'
-) TO 'write_basic' (FORMAT ORACLE, CONNECTION_STRING '${ORACLE_CONNECTION_STRING}');
 
 # Verify data
 # Column types: id(NUMBER->DOUBLE), val_str(VARCHAR), val_int(NUMBER(10)->BIGINT), val_dbl(NUMBER(10,5)->DOUBLE), val_date(DATE->TIMESTAMP), val_ts(TIMESTAMP)

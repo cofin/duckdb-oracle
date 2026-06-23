@@ -10,12 +10,12 @@ namespace duckdb {
 //--- State classes ---
 
 struct OracleInsertGlobalState : public GlobalSinkState {
-	OracleInsertGlobalState(unique_ptr<OracleWriteBindData> bind_data_p, unique_ptr<GlobalFunctionData> gstate_p)
+	OracleInsertGlobalState(unique_ptr<OracleWriteBindData> bind_data_p, unique_ptr<OracleWriteGlobalState> gstate_p)
 	    : bind_data(std::move(bind_data_p)), gstate(std::move(gstate_p)), insert_count(0) {
 	}
 
 	unique_ptr<OracleWriteBindData> bind_data;
-	unique_ptr<GlobalFunctionData> gstate;
+	unique_ptr<OracleWriteGlobalState> gstate;
 	idx_t insert_count;
 };
 
@@ -23,7 +23,7 @@ struct OracleInsertLocalState : public LocalSinkState {
 	OracleInsertLocalState() : lstate(make_uniq<OracleWriteLocalState>(nullptr, nullptr)) {
 	}
 
-	unique_ptr<LocalFunctionData> lstate;
+	unique_ptr<OracleWriteLocalState> lstate;
 };
 
 //--- PhysicalOracleInsert ---
@@ -39,7 +39,7 @@ PhysicalOracleInsert::PhysicalOracleInsert(PhysicalPlan &physical_plan, vector<L
 }
 
 unique_ptr<GlobalSinkState> PhysicalOracleInsert::GetGlobalSinkState(ClientContext &context) const {
-	// Build OracleWriteBindData directly (bypass CopyFunctionBindInput)
+	// Build OracleWriteBindData for the attached-table INSERT path.
 	auto bind_data = make_uniq<OracleWriteBindData>();
 	bind_data->table_name = table_name;
 	bind_data->connection_string = connection_string;
@@ -180,8 +180,8 @@ unique_ptr<GlobalSinkState> PhysicalOracleInsert::GetGlobalSinkState(ClientConte
 		}
 	}
 
-	// Initialize global write state (reuses OracleWriteInitGlobal logic)
-	auto gstate = OracleWriteInitGlobal(context, *bind_data, bind_data->table_name);
+	// Initialize global write state.
+	auto gstate = OracleWriteInitGlobal(context, *bind_data);
 
 	return make_uniq<OracleInsertGlobalState>(std::move(bind_data), std::move(gstate));
 }
@@ -210,7 +210,7 @@ SinkFinalizeType PhysicalOracleInsert::Finalize(Pipeline &pipeline, Event &event
 	auto &gstate = input.global_state.Cast<OracleInsertGlobalState>();
 
 	// Commit the transaction
-	OracleWriteFinalize(context, *gstate.bind_data, *gstate.gstate);
+	OracleWriteFinalize(*gstate.gstate);
 
 	return SinkFinalizeType::READY;
 }

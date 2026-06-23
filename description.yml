@@ -26,18 +26,18 @@ docs:
     SELECT * FROM oracle_scan('user/pass@host:1521/service', 'HR', 'EMPLOYEES');
 
     -- Write data to Oracle table
-    COPY (SELECT * FROM my_table) TO 'target_table' (FORMAT ORACLE, CONNECTION_STRING 'user/pass@host:1521/service');
+    INSERT INTO ora.target_table SELECT * FROM my_table;
 
   extended_description: |
     This extension provides native Oracle connectivity through Oracle Call Interface (OCI).
 
     Features:
-    - High performance read and write access to Oracle tables via ATTACH syntax and COPY
+    - High performance read and write access to Oracle tables via ATTACH syntax
     - Table and query functions (oracle_scan, oracle_query)
     - Oracle Wallet support for Autonomous Database
     - Secret Manager integration for credential management
     - Filter pushdown optimization
-    - OCI Array Binding and Direct Path Loads for fast writes
+    - OCI Array Binding for fast writes
     - Configurable fetch parameters for performance tuning
 
     Platform Support:

@@ -58,14 +58,11 @@ JOIN local_departments d ON e.department_id = d.id;
 SELECT id, ST_Area(geom) FROM ora.gis_parcels;
 ```
 
-**4. Write (Insert/Copy)**
+**4. Write**
 
 ```sql
 -- Insert from DuckDB query
 INSERT INTO ora.target_table SELECT * FROM source_parquet_file;
-
--- Copy to Oracle
-COPY (SELECT * FROM my_table) TO 'target_table' (FORMAT ORACLE, SECRET my_oracle);
 ```
 
 ## Features

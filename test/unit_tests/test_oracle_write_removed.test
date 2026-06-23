@@ -1,0 +1,10 @@
+# name: test/unit_tests/test_oracle_write_removed.test
+# description: Oracle writes are exposed through attached INSERT, not COPY FORMAT ORACLE
+# group: [unit_tests]
+
+require oracle
+
+statement error
+COPY (SELECT 1 AS a) TO 'dummy_table' (FORMAT ORACLE);
+----
+<REGEX>:.*Copy Function with name oracle does not exist.*
