@@ -16,7 +16,7 @@ include extension-ci-tools/makefiles/duckdb_extension.Makefile
 
 ORACLE_IMAGE ?= gvenzl/oracle-free:23-slim
 
-.PHONY: configure_ci configure_oci tidy-check integration help clean-all ensure-libaio lint bump-version bump-prerelease bump-duckdb
+.PHONY: configure_ci configure_oci tidy-check integration help clean-all ensure-libaio lint bump-version bump-prerelease bump-duckdb test-unit
 
 # Detect OS for Oracle Instant Client setup
 UNAME_S := $(shell uname -s)
@@ -71,7 +71,8 @@ endif
 # libaio first. Scope ci-tools' own test_release_internal recipe to unit tests via
 # TESTS_BASE_DIRECTORY (a recipe variable, expanded at run time) and add libaio as
 # a prerequisite — no recipe override, so make does not warn.
-TESTS_BASE_DIRECTORY = "test/unit_tests/"
+TESTS_BASE_DIRECTORY = test/unit_tests/
+test-unit: test
 test_release_internal: ensure-libaio
 ensure-libaio:
 ifeq ($(UNAME_S),Linux)
