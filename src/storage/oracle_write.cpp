@@ -246,8 +246,21 @@ OracleWriteGlobalState::OracleWriteGlobalState(std::shared_ptr<OracleConnectionH
 }
 
 OracleWriteGlobalState::~OracleWriteGlobalState() {
+	RollbackUncommitted();
 	if (stmthp) {
 		OCIHandleFree(stmthp, OCI_HTYPE_STMT);
+	}
+}
+
+void OracleWriteGlobalState::RollbackUncommitted() noexcept {
+	if (!connection || !has_uncommitted_work || committed) {
+		return;
+	}
+	auto ctx = connection->Get();
+	auto status = OCITransRollback(ctx->svchp, ctx->errhp, OCI_DEFAULT);
+	has_uncommitted_work = false;
+	if (status != OCI_SUCCESS) {
+		connection->MarkUnusable();
 	}
 }
 
@@ -326,6 +339,10 @@ void OracleWriteSink(ExecutionContext &context, FunctionData &bind_data, GlobalF
 		lstate = OracleWriteLocalState(gstate.connection, gstate.stmthp);
 	}
 
+	auto input_size = input.size();
+	if (input_size > 0) {
+		gstate.MarkUncommittedWork();
+	}
 	lstate.Sink(input, data.oracle_types, data.bind_types);
 }
 
@@ -522,6 +539,7 @@ void OracleWriteFinalize(ClientContext &context, FunctionData &bind_data, Global
 	if (gstate.connection) {
 		auto ctx = gstate.connection->Get();
 		CheckOCIError(OCITransCommit(ctx->svchp, ctx->errhp, OCI_DEFAULT), ctx->errhp, "OCITransCommit");
+		gstate.MarkCommitted();
 	}
 }
 

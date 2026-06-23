@@ -8,10 +8,6 @@ namespace duckdb {
 
 namespace {
 
-static std::string MakePoolKey(const std::string &connection_string, const std::string &wallet_path) {
-	return std::to_string(wallet_path.size()) + ":" + wallet_path + connection_string;
-}
-
 static std::mutex &WalletEnvLock() {
 	static std::mutex lock;
 	return lock;
@@ -93,15 +89,25 @@ OracleContext::~OracleContext() {
 }
 
 OracleConnectionHandle::OracleConnectionHandle(std::shared_ptr<OracleConnectionPool> pool_p,
-                                               std::shared_ptr<OracleContext> ctx_p)
-    : pool(std::move(pool_p)), ctx(std::move(ctx_p)) {
+                                               std::shared_ptr<OracleContext> ctx_p, idx_t pool_generation_p)
+    : pool(std::move(pool_p)), ctx(std::move(ctx_p)), pool_generation(pool_generation_p) {
 }
 
 OracleConnectionHandle::~OracleConnectionHandle() {
 	if (pool && ctx) {
-		std::lock_guard<std::mutex> lock(pool->lock);
-		pool->idle.push_back(std::move(ctx));
-		pool->cv.notify_one();
+		std::shared_ptr<OracleContext> ctx_to_close;
+		{
+			std::lock_guard<std::mutex> lock(pool->lock);
+			if (unusable || pool->stale || pool_generation != pool->generation || pool->total > pool->limit) {
+				if (pool->total > 0) {
+					pool->total--;
+				}
+				ctx_to_close = std::move(ctx);
+			} else {
+				pool->idle.push_back(std::move(ctx));
+			}
+			pool->cv.notify_one();
+		}
 	}
 }
 
@@ -125,8 +131,32 @@ OracleConnectionManager::~OracleConnectionManager() {
 }
 
 void OracleConnectionManager::Clear() {
-	std::lock_guard<std::mutex> lock(manager_mutex);
-	pools.clear();
+	std::vector<std::shared_ptr<OracleConnectionPool>> old_pools;
+	{
+		std::lock_guard<std::mutex> lock(manager_mutex);
+		generation++;
+		old_pools.reserve(pools.size());
+		for (auto &entry : pools) {
+			old_pools.push_back(entry.second);
+		}
+		pools.clear();
+	}
+
+	for (auto &pool : old_pools) {
+		std::vector<std::shared_ptr<OracleContext>> idle_to_close;
+		{
+			std::lock_guard<std::mutex> lock(pool->lock);
+			pool->stale = true;
+			pool->generation++;
+			idle_to_close.swap(pool->idle);
+			if (pool->total >= idle_to_close.size()) {
+				pool->total -= idle_to_close.size();
+			} else {
+				pool->total = 0;
+			}
+			pool->cv.notify_all();
+		}
+	}
 }
 
 std::shared_ptr<OracleConnectionHandle> OracleConnectionManager::Acquire(const std::string &connection_string,
@@ -140,50 +170,90 @@ std::shared_ptr<OracleConnectionHandle> OracleConnectionManager::Acquire(const s
 	}
 
 	auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(wait_timeout_ms);
-	std::shared_ptr<OracleConnectionPool> pool;
-
-	{
-		std::unique_lock<std::mutex> lock(manager_mutex);
-		auto &p = pools[MakePoolKey(connection_string, wallet_path)];
-		if (!p) {
-			p = std::make_shared<OracleConnectionPool>();
-		}
-		pool = p;
-	}
-
-	// Lock the specific pool
-	std::unique_lock<std::mutex> lock(pool->lock);
-
-	// Update pool limit from settings
-	if (settings.connection_limit > pool->limit) {
-		pool->limit = settings.connection_limit;
-	}
 
 	while (true) {
-		if (!pool->idle.empty()) {
-			auto ctx = pool->idle.back();
-			pool->idle.pop_back();
-			return std::make_shared<OracleConnectionHandle>(pool, std::move(ctx));
+		std::vector<std::shared_ptr<OracleContext>> idle_to_close;
+		std::shared_ptr<OracleConnectionPool> pool;
+
+		{
+			std::unique_lock<std::mutex> lock(manager_mutex);
+			OraclePoolKey key {connection_string, wallet_path};
+			auto &p = pools[key];
+			if (!p) {
+				p = std::make_shared<OracleConnectionPool>();
+				p->generation = generation;
+			}
+			pool = p;
 		}
 
-		if (pool->total < pool->limit) {
-			// Reserve a slot
-			pool->total++;
-			lock.unlock(); // Unlock pool to create connection
-			try {
-				auto ctx = CreateConnection(connection_string, wallet_path, settings);
-				return std::make_shared<OracleConnectionHandle>(pool, std::move(ctx));
-			} catch (...) {
-				// Rollback reservation
-				lock.lock();
-				pool->total--;
-				pool->cv.notify_one();
-				throw;
+		// Lock the specific pool
+		std::unique_lock<std::mutex> lock(pool->lock);
+		if (pool->stale) {
+			continue;
+		}
+
+		// Update pool limit from the latest settings and close excess idle contexts.
+		auto requested_limit = settings.connection_limit == 0 ? 1 : settings.connection_limit;
+		pool->limit = requested_limit;
+		while (!pool->idle.empty() && pool->total > pool->limit) {
+			idle_to_close.push_back(std::move(pool->idle.back()));
+			pool->idle.pop_back();
+			pool->total--;
+		}
+		if (!idle_to_close.empty()) {
+			pool->cv.notify_all();
+			lock.unlock();
+			idle_to_close.clear();
+			lock.lock();
+			if (pool->stale) {
+				continue;
 			}
 		}
 
-		if (pool->cv.wait_until(lock, deadline) == std::cv_status::timeout) {
-			throw IOException("Oracle connection pool timeout waiting for available session");
+		while (true) {
+			if (pool->stale) {
+				break;
+			}
+
+			if (!pool->idle.empty()) {
+				auto ctx = pool->idle.back();
+				pool->idle.pop_back();
+				return std::make_shared<OracleConnectionHandle>(pool, std::move(ctx), pool->generation);
+			}
+
+			if (pool->total < pool->limit) {
+				// Reserve a slot
+				pool->total++;
+				lock.unlock(); // Unlock pool to create connection
+				std::shared_ptr<OracleContext> ctx;
+				try {
+					ctx = CreateConnection(connection_string, wallet_path, settings);
+				} catch (...) {
+					// Rollback reservation
+					lock.lock();
+					pool->total--;
+					pool->cv.notify_one();
+					throw;
+				}
+
+				lock.lock();
+				if (pool->stale) {
+					if (pool->total > 0) {
+						pool->total--;
+					}
+					pool->cv.notify_all();
+					lock.unlock();
+					ctx.reset();
+					break;
+				}
+				auto handle_generation = pool->generation;
+				lock.unlock();
+				return std::make_shared<OracleConnectionHandle>(pool, std::move(ctx), handle_generation);
+			}
+
+			if (pool->cv.wait_until(lock, deadline) == std::cv_status::timeout) {
+				throw IOException("Oracle connection pool timeout waiting for available session");
+			}
 		}
 	}
 }

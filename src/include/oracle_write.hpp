@@ -54,8 +54,21 @@ public:
 	OracleWriteGlobalState(std::shared_ptr<OracleConnectionHandle> conn, const string &query);
 	~OracleWriteGlobalState() override;
 
+	void MarkUncommittedWork() {
+		has_uncommitted_work = true;
+	}
+	void MarkCommitted() {
+		has_uncommitted_work = false;
+		committed = true;
+	}
+	void RollbackUncommitted() noexcept;
+
 	std::shared_ptr<OracleConnectionHandle> connection;
 	OCIStmt *stmthp;
+
+private:
+	bool has_uncommitted_work = false;
+	bool committed = false;
 };
 
 class OracleWriteLocalState : public LocalFunctionData {
