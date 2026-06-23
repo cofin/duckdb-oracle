@@ -57,42 +57,7 @@ unique_ptr<GlobalSinkState> PhysicalOracleInsert::GetGlobalSinkState(ClientConte
 		bind_data->object_name = table_name;
 	}
 
-	// Set bind_types based on DuckDB LogicalType
-	bind_data->oracle_types.resize(column_types.size(), "VARCHAR2");
-	bind_data->bind_types.resize(column_types.size(), SQLT_CHR);
-
-	for (idx_t i = 0; i < column_types.size(); i++) {
-		switch (column_types[i].id()) {
-		case LogicalTypeId::TINYINT:
-		case LogicalTypeId::SMALLINT:
-		case LogicalTypeId::INTEGER:
-		case LogicalTypeId::BIGINT:
-			bind_data->bind_types[i] = SQLT_INT;
-			break;
-		case LogicalTypeId::FLOAT:
-		case LogicalTypeId::DOUBLE:
-			bind_data->bind_types[i] = SQLT_BDOUBLE;
-			break;
-		case LogicalTypeId::DATE:
-			bind_data->bind_types[i] = SQLT_ODT;
-			break;
-		case LogicalTypeId::TIMESTAMP:
-		case LogicalTypeId::TIMESTAMP_TZ:
-		case LogicalTypeId::TIMESTAMP_SEC:
-		case LogicalTypeId::TIMESTAMP_MS:
-		case LogicalTypeId::TIMESTAMP_NS:
-			bind_data->bind_types[i] = SQLT_CHR;
-			break;
-		case LogicalTypeId::BLOB:
-			bind_data->bind_types[i] = SQLT_BIN;
-			break;
-		default:
-			bind_data->bind_types[i] = SQLT_CHR;
-			break;
-		}
-	}
-
-	ResolveOracleWriteTargetMetadata(*bind_data);
+	PrepareOracleWriteBindData(*bind_data);
 
 	// Initialize global write state.
 	auto gstate = OracleWriteInitGlobal(context, *bind_data);

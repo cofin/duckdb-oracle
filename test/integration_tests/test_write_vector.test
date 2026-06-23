@@ -39,17 +39,29 @@ SELECT
         1 as id, 
         '[1.1, 2.2, 3.3]' as vec
 
+statement ok
+INSERT INTO ora.write_vector (id, vec)
+SELECT
+        2 as id,
+        [4.4, 5.5, 6.6]::FLOAT[] as vec
+
 # Verify - VECTOR is returned as LIST<FLOAT> after parsing VECTOR_SERIALIZE output
 query I
 SELECT id FROM ora.write_vector ORDER BY id;
 ----
 1
+2
 
 # Test accessing vector elements as list
 query R
 SELECT vec[1] FROM ora.write_vector WHERE id = 1;
 ----
 1.1
+
+query R
+SELECT vec[2] FROM ora.write_vector WHERE id = 2;
+----
+5.5
 
 # Cleanup
 statement ok

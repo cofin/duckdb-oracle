@@ -22,7 +22,7 @@ void RejectOracleWriteInExplicitTransaction(ClientContext &context) {
 	}
 }
 
-void ResolveOracleWriteTargetMetadata(OracleWriteBindData &data) {
+static void ResolveOracleWriteTargetMetadata(OracleWriteBindData &data) {
 	if (data.connection_string.empty()) {
 		return;
 	}
@@ -114,6 +114,97 @@ void ResolveOracleWriteTargetMetadata(OracleWriteBindData &data) {
 	}
 }
 
+static ub2 OracleBindTypeForDuckDBType(const LogicalType &type) {
+	switch (type.id()) {
+	case LogicalTypeId::TINYINT:
+	case LogicalTypeId::SMALLINT:
+	case LogicalTypeId::INTEGER:
+	case LogicalTypeId::BIGINT:
+		return SQLT_INT;
+	case LogicalTypeId::FLOAT:
+	case LogicalTypeId::DOUBLE:
+		return SQLT_BDOUBLE;
+	case LogicalTypeId::DATE:
+		return SQLT_ODT;
+	case LogicalTypeId::BLOB:
+		return SQLT_BIN;
+	default:
+		return SQLT_CHR;
+	}
+}
+
+static string OracleWritePlaceholderSQL(const string &oracle_type, ub2 bind_type, idx_t param_index) {
+	string placeholder = ":" + std::to_string(param_index);
+	if (bind_type == SQLT_ODT) {
+		return placeholder;
+	}
+
+	auto type = StringUtil::Upper(oracle_type);
+	if (type == "DATE") {
+		return "TO_DATE(" + placeholder + ", 'YYYY-MM-DD HH24:MI:SS')";
+	}
+	if (type.find("TIMESTAMP") != string::npos) {
+		return "TO_TIMESTAMP(" + placeholder + ", 'YYYY-MM-DD HH24:MI:SS.FF')";
+	}
+	if (type == "SDO_GEOMETRY" || type == "MDSYS.SDO_GEOMETRY") {
+		return "SDO_UTIL.FROM_WKTGEOMETRY(" + placeholder + ")";
+	}
+	return placeholder;
+}
+
+static size_t OracleWriteInitialBufferSize(ub2 bind_type) {
+	if (bind_type == SQLT_INT || bind_type == SQLT_BDOUBLE) {
+		return 8;
+	}
+	if (bind_type == SQLT_ODT) {
+		return sizeof(OCIDate);
+	}
+	return 4096;
+}
+
+static string OracleWriteValueToString(const Value &val) {
+	if (val.type().id() == LogicalTypeId::BLOB) {
+		return StringValue::Get(val);
+	}
+	return val.ToString();
+}
+
+void PrepareOracleWriteBindData(OracleWriteBindData &data) {
+	data.oracle_types.resize(data.column_types.size(), "VARCHAR2");
+	data.bind_types.resize(data.column_types.size(), SQLT_CHR);
+
+	for (idx_t i = 0; i < data.column_types.size(); i++) {
+		data.bind_types[i] = OracleBindTypeForDuckDBType(data.column_types[i]);
+	}
+
+	ResolveOracleWriteTargetMetadata(data);
+}
+
+static string BuildOracleWriteInsertSQL(const OracleWriteBindData &data) {
+	string sql = "INSERT INTO ";
+	if (!data.schema_name.empty()) {
+		sql += KeywordHelper::WriteQuoted(data.schema_name, '"') + ".";
+	}
+	sql += KeywordHelper::WriteQuoted(data.object_name, '"') + " (";
+
+	for (idx_t i = 0; i < data.column_names.size(); i++) {
+		if (i > 0) {
+			sql += ", ";
+		}
+		sql += KeywordHelper::WriteQuoted(data.column_names[i], '"');
+	}
+	sql += ") VALUES (";
+	for (idx_t i = 0; i < data.column_names.size(); i++) {
+		if (i > 0) {
+			sql += ", ";
+		}
+
+		sql += OracleWritePlaceholderSQL(data.oracle_types[i], data.bind_types[i], i + 1);
+	}
+	sql += ")";
+	return sql;
+}
+
 //--- Global State ---
 
 OracleWriteGlobalState::OracleWriteGlobalState(std::shared_ptr<OracleConnectionHandle> conn, const string &query)
@@ -153,41 +244,7 @@ unique_ptr<OracleWriteGlobalState> OracleWriteInitGlobal(ClientContext &context,
 	// Acquire connection
 	auto conn = OracleConnectionManager::Instance().Acquire(data.connection_string, data.wallet_path, data.settings);
 
-	// Generate SQL
-	string sql = "INSERT INTO ";
-	if (!data.schema_name.empty()) {
-		sql += KeywordHelper::WriteQuoted(data.schema_name, '"') + ".";
-	}
-	sql += KeywordHelper::WriteQuoted(data.object_name, '"') + " (";
-
-	for (idx_t i = 0; i < data.column_names.size(); i++) {
-		if (i > 0) {
-			sql += ", ";
-		}
-		sql += KeywordHelper::WriteQuoted(data.column_names[i], '"');
-	}
-	sql += ") VALUES (";
-	for (idx_t i = 0; i < data.column_names.size(); i++) {
-		if (i > 0) {
-			sql += ", ";
-		}
-
-		string type = StringUtil::Upper(data.oracle_types[i]);
-		string placeholder = ":" + std::to_string(i + 1);
-
-		if (data.bind_types[i] == SQLT_ODT) {
-			sql += placeholder;
-		} else if (type == "DATE") {
-			sql += "TO_DATE(" + placeholder + ", 'YYYY-MM-DD HH24:MI:SS')";
-		} else if (type.find("TIMESTAMP") != string::npos) {
-			sql += "TO_TIMESTAMP(" + placeholder + ", 'YYYY-MM-DD HH24:MI:SS.FF')";
-		} else if (type == "SDO_GEOMETRY" || type == "MDSYS.SDO_GEOMETRY") {
-			sql += "SDO_UTIL.FROM_WKTGEOMETRY(" + placeholder + ")";
-		} else {
-			sql += placeholder;
-		}
-	}
-	sql += ")";
+	auto sql = BuildOracleWriteInsertSQL(data);
 
 	if (getenv("ORACLE_DEBUG")) {
 		fprintf(stderr, "[oracle] Insert SQL: %s\n", sql.c_str());
@@ -235,23 +292,14 @@ void OracleWriteGlobalState::Sink(DataChunk &chunk, const vector<string> &oracle
 		}
 
 		ub2 bind_type = bind_types[col_idx];
-		if (bind_type == SQLT_INT || bind_type == SQLT_BDOUBLE) {
-			required_sizes[col_idx] = 8;
-		} else if (bind_type == SQLT_ODT) {
-			required_sizes[col_idx] = 7; // OCIDate
-		} else {
+		required_sizes[col_idx] = OracleWriteInitialBufferSize(bind_type);
+		if (bind_type != SQLT_INT && bind_type != SQLT_BDOUBLE && bind_type != SQLT_ODT) {
 			auto &validity = FlatVector::Validity(chunk.data[col_idx]);
 			size_t max_len = 0;
 
 			for (idx_t i = 0; i < count; i++) {
 				if (validity.RowIsValid(i)) {
-					Value val = chunk.data[col_idx].GetValue(i);
-					string s;
-					if (val.type().id() == LogicalTypeId::BLOB) {
-						s = StringValue::Get(val);
-					} else {
-						s = val.ToString();
-					}
+					auto s = OracleWriteValueToString(chunk.data[col_idx].GetValue(i));
 					if (s.size() > max_len) {
 						max_len = s.size();
 					}
@@ -382,13 +430,7 @@ void OracleWriteGlobalState::BindColumn(Vector &col, idx_t col_idx, idx_t count,
 				lengths[i] = sizeof(OCIDate);
 			} else {
 				Value val = col.GetValue(i);
-				string str_val;
-
-				if (val.type().id() == LogicalTypeId::BLOB) {
-					str_val = StringValue::Get(val);
-				} else {
-					str_val = val.ToString();
-				}
+				auto str_val = OracleWriteValueToString(val);
 
 				if (str_val.size() > element_size) {
 					throw IOException("Value too large for buffer");
