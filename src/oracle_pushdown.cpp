@@ -269,14 +269,17 @@ void OraclePushdownComplexFilter(ClientContext &, LogicalGet &get, FunctionData 
 	vector<LogicalType> projected_types = bind.original_types;
 	vector<ub2> projected_oci_types = bind.oci_types;
 	vector<ub4> projected_oci_sizes = bind.oci_sizes;
+	vector<string> projected_oracle_type_names = bind.oracle_type_names;
 
 	if (!get.projection_ids.empty()) {
 		projected_names.clear();
 		projected_types.clear();
 		projected_oci_types.clear();
 		projected_oci_sizes.clear();
+		projected_oracle_type_names.clear();
 		projected_names.reserve(get.projection_ids.size());
 		projected_types.reserve(get.projection_ids.size());
+		projected_oracle_type_names.reserve(get.projection_ids.size());
 		for (auto idx : get.projection_ids) {
 			if (idx >= bind.original_names.size()) {
 				continue;
@@ -285,6 +288,11 @@ void OraclePushdownComplexFilter(ClientContext &, LogicalGet &get, FunctionData 
 			projected_types.push_back(bind.original_types[idx]);
 			projected_oci_types.push_back(bind.oci_types[idx]);
 			projected_oci_sizes.push_back(bind.oci_sizes[idx]);
+			if (idx < bind.oracle_type_names.size()) {
+				projected_oracle_type_names.push_back(bind.oracle_type_names[idx]);
+			} else {
+				projected_oracle_type_names.push_back("unknown Oracle type");
+			}
 		}
 		get.names = projected_names;
 		get.returned_types = projected_types;
@@ -300,6 +308,7 @@ void OraclePushdownComplexFilter(ClientContext &, LogicalGet &get, FunctionData 
 	bind.column_names = projected_names;
 	bind.oci_types = projected_oci_types;
 	bind.oci_sizes = projected_oci_sizes;
+	bind.oracle_type_names = projected_oracle_type_names;
 
 	bind.query = "SELECT " + select_sql + " FROM (" + bind.base_query + ")" + where_sql;
 	if (bind.settings.debug_show_queries) {

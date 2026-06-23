@@ -1,0 +1,400 @@
+# name: test/integration_tests/oracle/type_registry.test
+# description: Oracle datatype registry policy coverage
+# group: [oracle]
+
+require oracle
+
+require json
+
+statement ok
+CREATE OR REPLACE MACRO oracle_registry_conn() AS '${ORACLE_CONNECTION_STRING}';
+
+statement ok
+CREATE OR REPLACE SECRET oracle_registry_test (
+    TYPE ORACLE,
+    USER '${ORACLE_USER}',
+    PASSWORD '${ORACLE_PASSWORD}',
+    HOST '${ORACLE_HOST}',
+    PORT ${ORACLE_PORT},
+    SERVICE '${ORACLE_SERVICE}'
+);
+
+statement ok
+ATTACH '' AS ora_registry (TYPE ORACLE, SECRET 'oracle_registry_test')
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE registry_supported'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE registry_long_text'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE registry_long_raw'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE registry_unsupported_bool'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE registry_unsupported_bfile'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE registry_unsupported_obj'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TYPE registry_obj_t'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -4043 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), '
+    CREATE TABLE registry_supported (
+        id NUMBER,
+        char_col CHAR(2),
+        nchar_col NCHAR(2),
+        varchar_col VARCHAR2(30),
+        nvarchar_col NVARCHAR2(30),
+        n_unqualified NUMBER,
+        n_38 NUMBER(38,0),
+        n_negative NUMBER(10,-2),
+        n_scaled NUMBER(10,2),
+        float_col FLOAT,
+        binary_float_col BINARY_FLOAT,
+        binary_double_col BINARY_DOUBLE,
+        date_col DATE,
+        ts_col TIMESTAMP,
+        tstz_col TIMESTAMP WITH TIME ZONE,
+        tsltz_col TIMESTAMP WITH LOCAL TIME ZONE,
+        iym_col INTERVAL YEAR TO MONTH,
+        ids_col INTERVAL DAY TO SECOND,
+        raw_col RAW(8),
+        rowid_text ROWID,
+        urowid_text UROWID,
+        clob_col CLOB,
+        nclob_col NCLOB,
+        blob_col BLOB,
+        json_col JSON,
+        xml_col XMLTYPE,
+        vector_col VECTOR(3, FLOAT32)
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), '
+    INSERT INTO registry_supported (
+        id, char_col, nchar_col, varchar_col, nvarchar_col,
+        n_unqualified, n_38, n_negative, n_scaled,
+        float_col, binary_float_col, binary_double_col,
+        date_col, ts_col, tstz_col, tsltz_col,
+        iym_col, ids_col, raw_col, rowid_text, urowid_text,
+        clob_col, nclob_col, blob_col, json_col, xml_col, vector_col
+    )
+    VALUES (
+        1,
+        ''AB'',
+        N''CD'',
+        ''varchar'',
+        N''nvarchar'',
+        123.456,
+        12345678901234567890123456789012345678,
+        123400,
+        123.45,
+        1.25,
+        1.5f,
+        2.5d,
+        DATE ''2024-01-01'',
+        TIMESTAMP ''2024-01-01 01:02:03'',
+        TO_TIMESTAMP_TZ(''2024-01-01 01:02:03 -05:00'', ''YYYY-MM-DD HH24:MI:SS TZH:TZM''),
+        TIMESTAMP ''2024-01-01 01:02:03'',
+        INTERVAL ''2-3'' YEAR TO MONTH,
+        INTERVAL ''4 05:06:07'' DAY TO SECOND,
+        HEXTORAW(''DEADBEEF''),
+        NULL,
+        NULL,
+        TO_CLOB(''plain clob''),
+        TO_NCLOB(''plain nclob''),
+        HEXTORAW(''CAFEBABE''),
+        JSON(''{"kind":"registry"}''),
+        XMLTYPE(''<root><kind>registry</kind></root>''),
+        ''[1.0, 2.0, 3.0]''
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), '
+    CREATE TABLE registry_long_text (
+        id NUMBER,
+        long_text LONG
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), '
+    INSERT INTO registry_long_text VALUES (1, ''long text value'')
+')
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), '
+    CREATE TABLE registry_long_raw (
+        id NUMBER,
+        long_raw_col LONG RAW
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), '
+    INSERT INTO registry_long_raw VALUES (1, HEXTORAW(''010203''))
+')
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), '
+    CREATE TYPE registry_obj_t AS OBJECT (x NUMBER)
+')
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), '
+    CREATE TABLE registry_unsupported_bool (
+        id NUMBER,
+        bool_col BOOLEAN
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), '
+    CREATE TABLE registry_unsupported_bfile (
+        id NUMBER,
+        file_col BFILE
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), '
+    CREATE TABLE registry_unsupported_obj (
+        id NUMBER,
+        obj_col registry_obj_t
+    )
+')
+
+statement ok
+SELECT oracle_clear_cache();
+
+query TTTT
+SELECT
+    typeof(n_unqualified),
+    typeof(n_38),
+    typeof(n_negative),
+    typeof(n_scaled)
+FROM ora_registry.duckdb_test.registry_supported
+WHERE id = 1
+----
+DOUBLE	DECIMAL(38,0)	DOUBLE	DECIMAL(10,2)
+
+query TTTTTTTT
+SELECT
+    typeof(char_col),
+    typeof(nchar_col),
+    typeof(varchar_col),
+    typeof(nvarchar_col),
+    typeof(rowid_text),
+    typeof(urowid_text),
+    typeof(clob_col),
+    typeof(nclob_col)
+FROM ora_registry.duckdb_test.registry_supported
+WHERE id = 1
+----
+VARCHAR	VARCHAR	VARCHAR	VARCHAR	VARCHAR	VARCHAR	VARCHAR	VARCHAR
+
+query TTTTTTTT
+SELECT
+    typeof(date_col),
+    typeof(ts_col),
+    typeof(tstz_col),
+    typeof(tsltz_col),
+    typeof(iym_col),
+    typeof(ids_col),
+    typeof(raw_col),
+    typeof(blob_col)
+FROM ora_registry.duckdb_test.registry_supported
+WHERE id = 1
+----
+TIMESTAMP	TIMESTAMP	TIMESTAMP	TIMESTAMP	VARCHAR	VARCHAR	BLOB	BLOB
+
+query TTTT
+SELECT
+    typeof(json_col),
+    typeof(xml_col),
+    typeof(vector_col),
+    typeof(binary_double_col)
+FROM ora_registry.duckdb_test.registry_supported
+WHERE id = 1
+----
+JSON	VARCHAR	FLOAT[]	DOUBLE
+
+query IT
+SELECT id, long_text
+FROM ora_registry.duckdb_test.registry_long_text
+----
+1	long text value
+
+query II
+SELECT id, long_raw_col
+FROM ora_registry.duckdb_test.registry_long_raw
+----
+1	\x01\x02\x03
+
+query T
+SELECT typeof(amount) FROM oracle_query(oracle_registry_conn(), 'SELECT CAST(123.45 AS NUMBER(10,2)) amount FROM dual')
+----
+DECIMAL(10,2)
+
+query T
+SELECT typeof(big_amount) FROM oracle_query(oracle_registry_conn(), 'SELECT CAST(12345678901234567890123456789012345678 AS NUMBER(38,0)) big_amount FROM dual')
+----
+DECIMAL(38,0)
+
+query TT
+SELECT typeof(data), data->>'kind'
+FROM oracle_query(oracle_registry_conn(), 'SELECT json_col AS data FROM registry_supported WHERE id = 1')
+----
+JSON	registry
+
+query TR
+SELECT typeof(vector_col), vector_col[2]
+FROM oracle_query(oracle_registry_conn(), 'SELECT vector_col FROM registry_supported WHERE id = 1')
+----
+FLOAT[]	2.0
+
+query T
+SELECT replace(replace(replace(CAST(xml_col AS VARCHAR), chr(10), ''), chr(13), ''), ' ', '')
+FROM oracle_query(oracle_registry_conn(), 'SELECT xml_col FROM registry_supported WHERE id = 1')
+----
+<root><kind>registry</kind></root>
+
+query IT
+SELECT id, long_text
+FROM oracle_query(oracle_registry_conn(), 'SELECT id, long_text FROM registry_long_text')
+----
+1	long text value
+
+query II
+SELECT id, long_raw_col
+FROM oracle_query(oracle_registry_conn(), 'SELECT id, long_raw_col FROM registry_long_raw')
+----
+1	\x01\x02\x03
+
+statement error
+SELECT * FROM ora_registry.duckdb_test.registry_unsupported_bool
+----
+Unsupported Oracle type BOOLEAN
+
+statement error
+SELECT file_col FROM ora_registry.duckdb_test.registry_unsupported_bfile
+----
+Unsupported Oracle type BFILE
+
+statement error
+SELECT obj_col FROM ora_registry.duckdb_test.registry_unsupported_obj
+----
+Unsupported Oracle type REGISTRY_OBJ_T
+
+statement error
+SELECT * FROM oracle_query(oracle_registry_conn(), 'SELECT bool_col FROM registry_unsupported_bool')
+----
+Unsupported Oracle type
+
+statement error
+SELECT * FROM oracle_query(oracle_registry_conn(), 'SELECT file_col FROM registry_unsupported_bfile')
+----
+Unsupported Oracle type
+
+statement error
+SELECT * FROM oracle_query(oracle_registry_conn(), 'SELECT obj_col FROM registry_unsupported_obj')
+----
+Unsupported Oracle type
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), 'DROP TABLE registry_unsupported_obj')
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), 'DROP TABLE registry_unsupported_bfile')
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), 'DROP TABLE registry_unsupported_bool')
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), 'DROP TYPE registry_obj_t')
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), 'DROP TABLE registry_long_raw')
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), 'DROP TABLE registry_long_text')
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), 'DROP TABLE registry_supported')
+
+statement ok
+DETACH ora_registry;
+
+statement ok
+DROP SECRET oracle_registry_test;

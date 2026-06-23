@@ -62,6 +62,7 @@ set(EXTENSION_SOURCES
     src/oracle_functions.cpp
     src/oracle_settings.cpp
     src/oracle_type_conversion.cpp
+    src/oracle_type_registry.cpp
     src/storage/oracle_catalog.cpp
     src/storage/oracle_schema_entry.cpp
     src/storage/oracle_table_entry.cpp

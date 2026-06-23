@@ -3,21 +3,24 @@
 #include "oracle_connection_manager.hpp"
 #include "oracle_connection_resolver.hpp"
 #include "oracle_type_conversion.hpp"
+#include "oracle_type_registry.hpp"
 #include "oracle_utils.hpp"
 #include "duckdb/common/limits.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
 #include <cstdio>
 
-#ifndef SQLT_JSON
-#define SQLT_JSON 119
-#endif
-
-#ifndef SQLT_VEC
-#define SQLT_VEC 127
-#endif
-
 namespace duckdb {
+
+static string TryGetParamStringAttr(OCIParam *param, OCIError *errhp, ub4 attr) {
+	OraText *text = nullptr;
+	ub4 text_len = 0;
+	auto status = OCIAttrGet(param, OCI_DTYPE_PARAM, &text, &text_len, attr, errhp);
+	if (status != OCI_SUCCESS || !text || text_len == 0) {
+		return string();
+	}
+	return string(reinterpret_cast<char *>(text), text_len);
+}
 
 OracleBindData::OracleBindData() {
 }
@@ -30,6 +33,7 @@ unique_ptr<FunctionData> OracleBindData::Copy() const {
 	copy->query = query;
 	copy->oci_types = oci_types;
 	copy->oci_sizes = oci_sizes;
+	copy->oracle_type_names = oracle_type_names;
 	copy->column_names = column_names;
 	copy->original_types = original_types;
 	copy->original_names = original_names;
@@ -103,6 +107,18 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
 	CheckOCIError(OCIAttrGet(result->stmt.get(), OCI_HTYPE_STMT, &param_count, 0, OCI_ATTR_PARAM_COUNT, ctx->errhp),
 	              ctx->errhp, "Failed to get OCI parameter count");
 
+	vector<OracleTypeDecision> type_decisions;
+	type_decisions.reserve(param_count);
+	OracleVersionInfo conversion_version;
+	if (state) {
+		conversion_version = state->GetVersionInfo();
+	} else {
+		// A direct OCI describe result that reports JSON/VECTOR already proves server support.
+		conversion_version.supports_json_type = true;
+		conversion_version.supports_vector = true;
+		conversion_version.supports_vector_serialize = true;
+	}
+
 	for (ub4 i = 1; i <= param_count; i++) {
 		OCIParam *param_raw = nullptr;
 		CheckOCIError(OCIParamGet(result->stmt.get(), OCI_HTYPE_STMT, ctx->errhp, (dvoid **)&param_raw, i), ctx->errhp,
@@ -134,63 +150,41 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
 		              ctx->errhp, "Failed to get OCI char size");
 		result->oci_sizes.push_back(char_len > 0 ? char_len : 4000); // Default buffer size
 
-		switch (data_type) {
-		case SQLT_CHR:
-		case SQLT_AFC:
-		case SQLT_VCS:
-		case SQLT_AVC:
-			return_types.push_back(LogicalType::VARCHAR);
-			break;
-		case SQLT_NUM:
-		case SQLT_VNU:
-			if (scale == 0) {
-				if (precision > 18) {
-					return_types.push_back(LogicalType::DOUBLE);
-				} else {
-					return_types.push_back(LogicalType::BIGINT);
-				}
-			} else {
-				return_types.push_back(LogicalType::DOUBLE);
-			}
-			break;
-		case SQLT_INT:
-		case SQLT_UIN:
-			return_types.push_back(LogicalType::BIGINT);
-			break;
-		case SQLT_FLT:
-		case SQLT_BFLOAT:
-		case SQLT_BDOUBLE:
-		case SQLT_IBFLOAT:
-		case SQLT_IBDOUBLE:
-			return_types.push_back(LogicalType::DOUBLE);
-			break;
-		case SQLT_DAT:
-		case SQLT_ODT:
-		case SQLT_TIMESTAMP:
-		case SQLT_TIMESTAMP_TZ:
-		case SQLT_TIMESTAMP_LTZ:
-			return_types.push_back(LogicalType::TIMESTAMP);
-			break;
-		case SQLT_CLOB:
-			return_types.push_back(LogicalType::VARCHAR); // Fetch CLOB as string (text)
-			break;
-		case SQLT_BLOB:
-		case SQLT_BIN:
-		case SQLT_LBI:
-		case SQLT_LNG:
-		case SQLT_LVC:
-			return_types.push_back(LogicalType::BLOB);
-			break;
-		case SQLT_JSON:
-			return_types.push_back(LogicalType::VARCHAR); // Fetch JSON as string
-			break;
-		case SQLT_VEC:
-			return_types.push_back(LogicalType::VARCHAR);
-			break;
-		default:
-			return_types.push_back(LogicalType::VARCHAR);
-			break;
+		OracleTypeMetadata type_metadata;
+		type_metadata.column_name = result->column_names.back();
+		type_metadata.oci_type = data_type;
+		type_metadata.has_oci_type = true;
+		type_metadata.type_name = TryGetParamStringAttr(param.get(), ctx->errhp, OCI_ATTR_TYPE_NAME);
+		type_metadata.oracle_data_type = type_metadata.type_name;
+		type_metadata.type_owner = TryGetParamStringAttr(param.get(), ctx->errhp, OCI_ATTR_SCHEMA_NAME);
+		type_metadata.precision = precision;
+		type_metadata.scale = scale;
+		type_metadata.has_scale = true;
+		type_metadata.char_length = char_len;
+		auto decision = OracleTypeRegistry::ResolveOciDescribe(type_metadata, result->settings);
+		OracleTypeRegistry::ValidateSupported(decision, type_metadata);
+		result->oracle_type_names.push_back(decision.normalized_type);
+		return_types.push_back(decision.duckdb_type);
+		type_decisions.push_back(decision);
+	}
+
+	vector<string> converted_select_list;
+	converted_select_list.reserve(result->column_names.size());
+	bool needs_wrapper = false;
+	for (idx_t i = 0; i < result->column_names.size(); i++) {
+		auto quoted_col = KeywordHelper::WriteQuoted(result->column_names[i], '"');
+		auto &decision = type_decisions[i];
+		if (decision.RequiresQueryRewrite(conversion_version, result->settings.try_native_lobs)) {
+			needs_wrapper = true;
+			converted_select_list.push_back(StringUtil::Format(
+			    "%s AS %s", decision.ConversionExpression(quoted_col, conversion_version).c_str(), quoted_col.c_str()));
+		} else {
+			converted_select_list.push_back(quoted_col);
 		}
+	}
+	if (needs_wrapper) {
+		result->base_query = "SELECT " + StringUtil::Join(converted_select_list, ", ") + " FROM (" + query + ")";
+		result->query = result->base_query;
 	}
 
 	result->original_types = return_types;
@@ -437,9 +431,11 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 			                       ? bind_data.column_names[buffer_idx]
 			                       : StringUtil::Format("#%llu", static_cast<unsigned long long>(buffer_idx));
 			auto oracle_type =
-			    buffer_idx < bind_data.oci_types.size()
-			        ? StringUtil::Format("OCI type %u", static_cast<unsigned>(bind_data.oci_types[buffer_idx]))
-			        : "unknown OCI type";
+			    buffer_idx < bind_data.oracle_type_names.size()
+			        ? bind_data.oracle_type_names[buffer_idx]
+			        : (buffer_idx < bind_data.oci_types.size()
+			               ? StringUtil::Format("OCI type %u", static_cast<unsigned>(bind_data.oci_types[buffer_idx]))
+			               : "unknown OCI type");
 			OracleConversionContext conversion_context {column_name, oracle_type, output.GetTypes()[col_idx],
 			                                            row_count};
 			SetOracleOutputValue(context, output.data[col_idx], row_count, ptr, actual_len, output.GetTypes()[col_idx],

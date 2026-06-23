@@ -5,6 +5,7 @@
 #include "oracle_connection.hpp"
 #include "oracle_utils.hpp"
 #include "oracle_connection_manager.hpp"
+#include "oracle_type_registry.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
@@ -33,7 +34,8 @@ static void ResolveOracleWriteTargetMetadata(OracleWriteBindData &data) {
 	string query;
 	vector<string> bind_values;
 	if (data.schema_name.empty()) {
-		query = "SELECT owner, table_name, column_name, data_type FROM all_tab_columns "
+		query = "SELECT owner, table_name, column_name, data_type, data_type_owner, data_precision, data_scale, "
+		        "data_length, char_used, char_length FROM all_tab_columns "
 		        "WHERE owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') "
 		        "AND (table_name = :1 OR table_name = UPPER(:2)) "
 		        "ORDER BY CASE WHEN table_name = :3 THEN 0 WHEN table_name = UPPER(:4) THEN 1 ELSE 2 END, "
@@ -43,7 +45,8 @@ static void ResolveOracleWriteTargetMetadata(OracleWriteBindData &data) {
 		bind_values.push_back(data.object_name);
 		bind_values.push_back(data.object_name);
 	} else {
-		query = "SELECT owner, table_name, column_name, data_type FROM all_tab_columns "
+		query = "SELECT owner, table_name, column_name, data_type, data_type_owner, data_precision, data_scale, "
+		        "data_length, char_used, char_length FROM all_tab_columns "
 		        "WHERE (owner = :1 OR owner = UPPER(:2)) "
 		        "AND (table_name = :3 OR table_name = UPPER(:4)) "
 		        "ORDER BY CASE WHEN owner = :5 THEN 0 WHEN owner = UPPER(:6) THEN 1 ELSE 2 END, "
@@ -66,21 +69,52 @@ static void ResolveOracleWriteTargetMetadata(OracleWriteBindData &data) {
 
 	const string best_owner = query_res.rows[0][0];
 	const string best_table_name = query_res.rows[0][1];
-	std::unordered_map<string, string> col_type_map;
+	std::unordered_map<string, OracleTypeMetadata> col_type_map;
 	std::unordered_map<string, string> col_name_map;
+	auto parse_idx = [](const string &s) -> idx_t {
+		if (s.empty()) {
+			return 0;
+		}
+		try {
+			return static_cast<idx_t>(std::stoll(s));
+		} catch (...) {
+			return 0;
+		}
+	};
+	auto parse_int = [](const string &s) -> int32_t {
+		if (s.empty()) {
+			return 0;
+		}
+		try {
+			return static_cast<int32_t>(std::stoll(s));
+		} catch (...) {
+			return 0;
+		}
+	};
 
 	for (auto &row : query_res.rows) {
-		if (row.size() < 4) {
+		if (row.size() < 10) {
 			continue;
 		}
 		const string &owner = row[0];
 		const string &table = row[1];
 		const string &col = row[2];
-		const string &type = row[3];
 		if (owner != best_owner || table != best_table_name) {
 			continue;
 		}
-		col_type_map[col] = type;
+		OracleTypeMetadata metadata;
+		metadata.schema_name = owner;
+		metadata.table_name = table;
+		metadata.column_name = col;
+		metadata.oracle_data_type = row[3];
+		metadata.type_owner = row[4];
+		metadata.precision = parse_idx(row[5]);
+		metadata.scale = parse_int(row[6]);
+		metadata.has_scale = !row[6].empty();
+		metadata.data_length = parse_idx(row[7]);
+		metadata.char_used = row[8] == "C";
+		metadata.char_length = parse_idx(row[9]);
+		col_type_map[col] = metadata;
 		auto col_upper = StringUtil::Upper(col);
 		if (!col_name_map.count(col_upper)) {
 			col_name_map[col_upper] = col;
@@ -108,28 +142,13 @@ static void ResolveOracleWriteTargetMetadata(OracleWriteBindData &data) {
 		if (!actual_name.empty()) {
 			data.column_names[i] = actual_name;
 			if (col_type_map.count(actual_name)) {
-				data.oracle_types[i] = col_type_map[actual_name];
+				const auto &type_metadata = col_type_map[actual_name];
+				auto decision = OracleTypeRegistry::ResolveWrite(type_metadata, data.column_types[i], data.settings);
+				OracleTypeRegistry::ValidateSupported(decision, type_metadata);
+				data.oracle_types[i] = decision.normalized_type;
+				data.bind_types[i] = decision.write_bind_type;
 			}
 		}
-	}
-}
-
-static ub2 OracleBindTypeForDuckDBType(const LogicalType &type) {
-	switch (type.id()) {
-	case LogicalTypeId::TINYINT:
-	case LogicalTypeId::SMALLINT:
-	case LogicalTypeId::INTEGER:
-	case LogicalTypeId::BIGINT:
-		return SQLT_INT;
-	case LogicalTypeId::FLOAT:
-	case LogicalTypeId::DOUBLE:
-		return SQLT_BDOUBLE;
-	case LogicalTypeId::DATE:
-		return SQLT_ODT;
-	case LogicalTypeId::BLOB:
-		return SQLT_BIN;
-	default:
-		return SQLT_CHR;
 	}
 }
 
@@ -174,7 +193,11 @@ void PrepareOracleWriteBindData(OracleWriteBindData &data) {
 	data.bind_types.resize(data.column_types.size(), SQLT_CHR);
 
 	for (idx_t i = 0; i < data.column_types.size(); i++) {
-		data.bind_types[i] = OracleBindTypeForDuckDBType(data.column_types[i]);
+		OracleTypeMetadata type_metadata;
+		type_metadata.column_name = i < data.column_names.size() ? data.column_names[i] : "";
+		type_metadata.oracle_data_type = data.oracle_types[i];
+		auto decision = OracleTypeRegistry::ResolveWrite(type_metadata, data.column_types[i], data.settings);
+		data.bind_types[i] = decision.write_bind_type;
 	}
 
 	ResolveOracleWriteTargetMetadata(data);

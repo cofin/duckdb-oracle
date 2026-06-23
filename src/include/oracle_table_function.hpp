@@ -18,6 +18,7 @@ struct OracleBindData : public FunctionData {
 	string query;
 	vector<ub2> oci_types;
 	vector<ub4> oci_sizes;
+	vector<string> oracle_type_names;
 	vector<string> column_names;
 	vector<LogicalType> original_types;
 	vector<string> original_names;
