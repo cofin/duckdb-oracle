@@ -86,14 +86,6 @@ docs:
           type: VARCHAR
       description: Execute arbitrary SQL without expecting a result set.
 
-    - name: oracle_env
-      parameters:
-        - name: key
-          type: VARCHAR
-        - name: default_value
-          type: VARCHAR
-      description: Retrieve the value of an environment variable.
-
   settings:
     - name: oracle_enable_pushdown
       type: BOOLEAN

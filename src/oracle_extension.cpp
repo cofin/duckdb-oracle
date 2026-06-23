@@ -10,7 +10,6 @@
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/common/limits.hpp"
 #include "duckdb/common/types/value.hpp"
-#include "duckdb/common/vector_operations/generic_executor.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
@@ -40,7 +39,7 @@
 
 #ifdef _WIN32
 #include <direct.h>
-#define S_ISDIR(mode) (((mode)&_S_IFDIR) == _S_IFDIR)
+#define S_ISDIR(mode) (((mode) & _S_IFDIR) == _S_IFDIR)
 #endif
 
 #ifndef SQLT_JSON
@@ -52,28 +51,6 @@
 #endif
 
 namespace duckdb {
-
-//===--------------------------------------------------------------------===//
-// Environment helpers
-//===--------------------------------------------------------------------===//
-
-static string OracleGetEnv(const string &key, const string &default_value) {
-	auto val = getenv(key.c_str());
-	if (val && val[0] != '\0') {
-		return string(val);
-	}
-	return default_value;
-}
-
-static void OracleEnvFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	BinaryExecutor::Execute<string_t, string_t, string_t>(args.data[0], args.data[1], result, args.size(),
-	                                                      [&](string_t name, string_t deflt) {
-		                                                      auto key = name.GetString();
-		                                                      auto def_str = deflt.GetString();
-		                                                      auto value = OracleGetEnv(key, def_str);
-		                                                      return StringVector::AddString(result, value);
-	                                                      });
-}
 
 OracleBindData::OracleBindData() {
 }
@@ -1140,11 +1117,6 @@ static void LoadInternal(ExtensionLoader &loader) {
 	auto oracle_execute_func = ScalarFunction("oracle_execute", {LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                                          LogicalType::VARCHAR, OracleExecuteFunction);
 	loader.RegisterFunction(oracle_execute_func);
-
-	// Env helper functions
-	auto oracle_env_func = ScalarFunction("oracle_env", {LogicalType::VARCHAR, LogicalType::VARCHAR},
-	                                      LogicalType::VARCHAR, OracleEnvFunction);
-	loader.RegisterFunction(oracle_env_func);
 
 	// Register Copy Function
 	CopyFunction copy_func("ORACLE");

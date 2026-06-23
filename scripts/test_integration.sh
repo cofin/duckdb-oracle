@@ -232,8 +232,7 @@ main() {
 
   echo "Running DuckDB integration tests..."
 
-  # Set environment variables for integration tests
-  # Tests use oracle_env() helper to read these
+  # Values rendered into temporary sqllogictest files.
   export ORACLE_HOST="localhost"
   export ORACLE_PORT="${db_port}"
   export ORACLE_SERVICE="FREEPDB1"
@@ -267,9 +266,15 @@ main() {
     find test/integration_tests -name "*.test" -print0 | while IFS= read -r -d '' test_file; do
       echo "Running test: ${test_file}"
       
-      # Create a temporary test file with the port and connection string replaced
+      # Create a temporary test file with Oracle connection placeholders replaced
       TEMP_TEST_FILE="test/integration_temp.test"
-      sed -e "s/\${ORACLE_PORT}/${db_port}/g" -e "s|\${ORACLE_CONNECTION_STRING}|${ORACLE_CONNECTION_STRING}|g" "${test_file}" > "${TEMP_TEST_FILE}"
+      sed -e "s|\${ORACLE_HOST}|${ORACLE_HOST}|g" \
+        -e "s|\${ORACLE_PORT}|${ORACLE_PORT}|g" \
+        -e "s|\${ORACLE_SERVICE}|${ORACLE_SERVICE}|g" \
+        -e "s|\${ORACLE_USER}|${ORACLE_USER}|g" \
+        -e "s|\${ORACLE_PASSWORD}|${ORACLE_PASSWORD}|g" \
+        -e "s|\${ORACLE_CONNECTION_STRING}|${ORACLE_CONNECTION_STRING}|g" \
+        "${test_file}" > "${TEMP_TEST_FILE}"
       
       if command -v timeout >/dev/null 2>&1; then
         timeout "${INTEGRATION_TEST_TIMEOUT}" ./build/release/test/unittest "${TEMP_TEST_FILE}"
