@@ -1,0 +1,110 @@
+# name: test/integration_tests/oracle/write_identifiers.test
+# description: Oracle attached INSERT identifier resolution for mixed-case and quoted targets
+# group: [oracle]
+
+require oracle
+
+statement ok
+CREATE OR REPLACE MACRO oracle_identifier_conn() AS '${ORACLE_CONNECTION_STRING}';
+
+statement ok
+CREATE OR REPLACE SECRET test_oracle_identifiers (
+    TYPE ORACLE,
+    USER '${ORACLE_USER}',
+    PASSWORD '${ORACLE_PASSWORD}',
+    HOST '${ORACLE_HOST}',
+    PORT ${ORACLE_PORT},
+    SERVICE '${ORACLE_SERVICE}'
+);
+
+statement ok
+ATTACH '' AS ora_identifiers (TYPE ORACLE, SECRET 'test_oracle_identifiers')
+
+statement ok
+SELECT oracle_execute(oracle_identifier_conn(), '
+    BEGIN
+       EXECUTE IMMEDIATE ''DROP TABLE WRITEMETAMIXED'';
+    EXCEPTION
+       WHEN OTHERS THEN
+          IF SQLCODE != -942 THEN
+             RAISE;
+          END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_identifier_conn(), '
+    BEGIN
+       EXECUTE IMMEDIATE ''DROP TABLE "WriteMetaMixed"'';
+    EXCEPTION
+       WHEN OTHERS THEN
+          IF SQLCODE != -942 THEN
+             RAISE;
+          END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_identifier_conn(), '
+    BEGIN
+       EXECUTE IMMEDIATE ''DROP TABLE "write_meta_x'''') OR 1=1 --"'';
+    EXCEPTION
+       WHEN OTHERS THEN
+          IF SQLCODE != -942 THEN
+             RAISE;
+          END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_identifier_conn(), '
+    CREATE TABLE "WriteMetaMixed" (
+        "Id" NUMBER PRIMARY KEY,
+        "PayloadText" VARCHAR2(100)
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_identifier_conn(), '
+    CREATE TABLE WRITEMETAMIXED (
+        id NUMBER PRIMARY KEY
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_identifier_conn(), '
+    CREATE TABLE "write_meta_x'') OR 1=1 --" (
+        "id" NUMBER PRIMARY KEY,
+        "payload''col" VARCHAR2(100)
+    )
+')
+
+statement ok
+SELECT oracle_clear_cache();
+
+statement ok
+INSERT INTO ora_identifiers."WriteMetaMixed" ("Id", "PayloadText")
+VALUES (2, 'mixed-case-ok');
+
+statement ok
+INSERT INTO ora_identifiers."write_meta_x') OR 1=1 --" ("id", "payload'col")
+VALUES (3, 'quote-safe');
+
+query I
+SELECT * FROM oracle_query(oracle_identifier_conn(), 'SELECT COUNT(*) FROM "WriteMetaMixed" WHERE "PayloadText" = ''mixed-case-ok''');
+----
+1
+
+query I
+SELECT * FROM oracle_query(oracle_identifier_conn(), 'SELECT COUNT(*) FROM "write_meta_x'') OR 1=1 --" WHERE "payload''col" = ''quote-safe''');
+----
+1
+
+statement ok
+SELECT oracle_execute(oracle_identifier_conn(), 'DROP TABLE "write_meta_x'') OR 1=1 --"')
+
+statement ok
+SELECT oracle_execute(oracle_identifier_conn(), 'DROP TABLE "WriteMetaMixed"')
+
+statement ok
+SELECT oracle_execute(oracle_identifier_conn(), 'DROP TABLE WRITEMETAMIXED')

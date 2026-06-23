@@ -44,32 +44,26 @@ statement ok
 INSERT INTO ora.write_txn_behavior VALUES (1, 10);
 
 query I
-SELECT COUNT(*) FROM ora.write_txn_behavior WHERE id = 1;
+SELECT * FROM oracle_query(oracle_test_conn(), 'SELECT COUNT(*) FROM write_txn_behavior WHERE id = 1');
 ----
 1
-
-statement error
-INSERT INTO ora.write_txn_behavior
-SELECT CASE WHEN i = 2050 THEN 1 ELSE i END::INTEGER AS id, i::INTEGER AS value_col
-FROM range(2, 4098) tbl(i);
-----
-ORA-00001
-
-query I
-SELECT * FROM oracle_query(oracle_test_conn(), 'SELECT COUNT(*) FROM write_txn_behavior WHERE id >= 2');
-----
-0
 
 statement ok
-INSERT INTO ora.write_txn_behavior VALUES (5000, 5000);
+BEGIN TRANSACTION;
 
-query I
-SELECT * FROM oracle_query(oracle_test_conn(), 'SELECT COUNT(*) FROM write_txn_behavior WHERE id = 5000');
-----
-1
+statement ok
+CREATE TEMP TABLE write_txn_local_marker AS SELECT 1 AS id;
+
+statement ok
+ROLLBACK;
 
 statement ok
 SELECT oracle_clear_cache();
+
+query I
+SELECT * FROM oracle_query(oracle_test_conn(), 'SELECT COUNT(*) FROM write_txn_behavior WHERE id = 1');
+----
+1
 
 statement ok
 BEGIN TRANSACTION;
@@ -103,6 +97,14 @@ query I
 SELECT * FROM oracle_query(oracle_test_conn(), 'SELECT COUNT(*) FROM write_txn_behavior WHERE id = 10000');
 ----
 0
+
+statement ok
+INSERT INTO ora.write_txn_behavior VALUES (2, 20);
+
+query I
+SELECT * FROM oracle_query(oracle_test_conn(), 'SELECT COUNT(*) FROM write_txn_behavior WHERE id IN (1, 2)');
+----
+2
 
 statement ok
 SELECT oracle_execute(oracle_test_conn(), 'DROP TABLE write_txn_behavior')

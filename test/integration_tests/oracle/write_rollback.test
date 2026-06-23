@@ -1,0 +1,82 @@
+# name: test/integration_tests/oracle/write_rollback.test
+# description: Failed Oracle attached INSERT batches roll back and pooled sessions remain reusable
+# group: [oracle]
+
+require oracle
+
+statement ok
+CREATE OR REPLACE MACRO oracle_rollback_conn() AS '${ORACLE_CONNECTION_STRING}';
+
+statement ok
+CREATE OR REPLACE SECRET test_oracle_rollback (
+    TYPE ORACLE,
+    USER '${ORACLE_USER}',
+    PASSWORD '${ORACLE_PASSWORD}',
+    HOST '${ORACLE_HOST}',
+    PORT ${ORACLE_PORT},
+    SERVICE '${ORACLE_SERVICE}'
+);
+
+statement ok
+ATTACH '' AS ora_rollback (TYPE ORACLE, SECRET 'test_oracle_rollback')
+
+statement ok
+SELECT oracle_execute(oracle_rollback_conn(), '
+    BEGIN
+       EXECUTE IMMEDIATE ''DROP TABLE write_rollback_behavior'';
+    EXCEPTION
+       WHEN OTHERS THEN
+          IF SQLCODE != -942 THEN
+             RAISE;
+          END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_rollback_conn(), '
+    CREATE TABLE write_rollback_behavior (
+        id NUMBER PRIMARY KEY,
+        value_col NUMBER
+    )
+')
+
+statement ok
+INSERT INTO ora_rollback.write_rollback_behavior VALUES (1, 10);
+
+statement error
+INSERT INTO ora_rollback.write_rollback_behavior
+SELECT CASE WHEN i = 2050 THEN 1 ELSE i END::INTEGER AS id, i::INTEGER AS value_col
+FROM range(2, 4098) tbl(i);
+----
+ORA-00001
+
+query I
+SELECT * FROM oracle_query(oracle_rollback_conn(), 'SELECT COUNT(*) FROM write_rollback_behavior WHERE id >= 2');
+----
+0
+
+query I
+SELECT * FROM oracle_query(oracle_rollback_conn(), 'SELECT COUNT(*) FROM write_rollback_behavior WHERE id = 1');
+----
+1
+
+statement ok
+INSERT INTO ora_rollback.write_rollback_behavior VALUES (5000, 5000);
+
+query I
+SELECT * FROM oracle_query(oracle_rollback_conn(), 'SELECT COUNT(*) FROM write_rollback_behavior WHERE id = 5000');
+----
+1
+
+query I
+SELECT * FROM oracle_query(oracle_rollback_conn(), 'SELECT COUNT(*) FROM write_rollback_behavior WHERE id >= 2 AND id <> 5000');
+----
+0
+
+query I
+SELECT COUNT(*) FROM ora_rollback.write_rollback_behavior WHERE id IN (1, 5000);
+----
+2
+
+statement ok
+SELECT oracle_execute(oracle_rollback_conn(), 'DROP TABLE write_rollback_behavior')
