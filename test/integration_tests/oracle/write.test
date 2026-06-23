@@ -75,6 +75,18 @@ SELECT * FROM oracle_query(oracle_test_conn(), 'SELECT COUNT(*) FROM test_write_
 ----
 1
 
+query I
+INSERT INTO ora.test_write_types (id, int_col, str_col)
+SELECT i::INTEGER AS id, i::INTEGER AS int_col, 'multi-chunk-owned' AS str_col
+FROM range(10000, 15100) tbl(i);
+----
+5100
+
+query I
+SELECT * FROM oracle_query(oracle_test_conn(), 'SELECT COUNT(*) FROM test_write_types WHERE str_col = ''multi-chunk-owned''');
+----
+5100
+
 statement ok
 SELECT oracle_execute(oracle_test_conn(), '
     BEGIN

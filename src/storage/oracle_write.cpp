@@ -121,7 +121,6 @@ OracleWriteGlobalState::OracleWriteGlobalState(std::shared_ptr<OracleConnectionH
 	auto ctx = connection->Get();
 	stmthp = AllocateOCIStatement(ctx->envhp, ctx->errhp, "OCIHandleAlloc stmthp");
 
-	// Make a mutable copy of query string for OCI
 	std::vector<char> query_buffer(query.begin(), query.end());
 	query_buffer.push_back(0);
 
@@ -199,8 +198,7 @@ unique_ptr<OracleWriteGlobalState> OracleWriteInitGlobal(ClientContext &context,
 
 //--- Local State ---
 
-OracleWriteLocalState::OracleWriteLocalState(std::shared_ptr<OracleConnectionHandle> conn, OCIStmt *stmthp)
-    : connection(std::move(conn)), stmthp(stmthp) {
+OracleWriteLocalState::OracleWriteLocalState() {
 }
 
 OracleWriteLocalState::~OracleWriteLocalState() {
@@ -211,28 +209,22 @@ OracleWriteLocalState::~OracleWriteLocalState() {
 void OracleWriteSink(ExecutionContext &context, OracleWriteBindData &data, OracleWriteGlobalState &gstate,
                      OracleWriteLocalState &lstate, DataChunk &input) {
 	RejectOracleWriteInExplicitTransaction(context.client);
-
-	if (!lstate.connection) {
-		lstate = OracleWriteLocalState(gstate.connection, gstate.stmthp.get());
-	}
-
-	auto input_size = input.size();
-	if (input_size > 0) {
-		gstate.MarkUncommittedWork();
-	}
+	(void)lstate;
 	try {
-		lstate.Sink(input, data.oracle_types, data.bind_types);
+		gstate.Sink(input, data.oracle_types, data.bind_types);
 	} catch (...) {
 		gstate.RollbackUncommitted();
 		throw;
 	}
 }
 
-void OracleWriteLocalState::Sink(DataChunk &chunk, const vector<string> &oracle_types, const vector<ub2> &bind_types) {
+void OracleWriteGlobalState::Sink(DataChunk &chunk, const vector<string> &oracle_types, const vector<ub2> &bind_types) {
+	std::lock_guard<std::mutex> guard(sink_lock);
 	idx_t count = chunk.size();
 	if (count == 0) {
 		return;
 	}
+	MarkUncommittedWork();
 
 	// Determine max sizes for buffer allocation
 	vector<size_t> required_sizes(chunk.ColumnCount(), 4096);
@@ -309,10 +301,10 @@ void OracleWriteLocalState::Sink(DataChunk &chunk, const vector<string> &oracle_
 			ub2 bind_type = bind_types[col_idx];
 
 			auto ctx = connection->Get();
-			CheckOCIError(OCIBindByPos(stmthp, &binds[col_idx], ctx->errhp, col_idx + 1, bind_buffers[col_idx].data(),
-			                           static_cast<sb4>(current_buffer_sizes[col_idx]), bind_type,
-			                           indicator_buffers[col_idx].data(), length_buffers[col_idx].data(), nullptr, 0,
-			                           nullptr, OCI_DEFAULT),
+			CheckOCIError(OCIBindByPos(stmthp.get(), &binds[col_idx], ctx->errhp, col_idx + 1,
+			                           bind_buffers[col_idx].data(), static_cast<sb4>(current_buffer_sizes[col_idx]),
+			                           bind_type, indicator_buffers[col_idx].data(), length_buffers[col_idx].data(),
+			                           nullptr, 0, nullptr, OCI_DEFAULT),
 			              ctx->errhp, "OCIBindByPos");
 
 			// Set up array binding stride for batch inserts
@@ -332,7 +324,7 @@ void OracleWriteLocalState::Sink(DataChunk &chunk, const vector<string> &oracle_
 	ExecuteBatch(count);
 }
 
-void OracleWriteLocalState::BindColumn(Vector &col, idx_t col_idx, idx_t count, ub2 bind_type) {
+void OracleWriteGlobalState::BindColumn(Vector &col, idx_t col_idx, idx_t count, ub2 bind_type) {
 	auto &validity = FlatVector::Validity(col);
 	auto &bind_buffer = bind_buffers[col_idx];
 	auto &indicators = indicator_buffers[col_idx];
@@ -409,10 +401,10 @@ void OracleWriteLocalState::BindColumn(Vector &col, idx_t col_idx, idx_t count, 
 	}
 }
 
-void OracleWriteLocalState::ExecuteBatch(idx_t count) {
+void OracleWriteGlobalState::ExecuteBatch(idx_t count) {
 	auto ctx = connection->Get();
 	auto status =
-	    OCIStmtExecute(ctx->svchp, stmthp, ctx->errhp, static_cast<ub4>(count), 0, nullptr, nullptr, OCI_DEFAULT);
+	    OCIStmtExecute(ctx->svchp, stmthp.get(), ctx->errhp, static_cast<ub4>(count), 0, nullptr, nullptr, OCI_DEFAULT);
 	if (status != OCI_SUCCESS && status != OCI_SUCCESS_WITH_INFO) {
 		connection->MarkUnusable();
 		OCITransRollback(ctx->svchp, ctx->errhp, OCI_DEFAULT);

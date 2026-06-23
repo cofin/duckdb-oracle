@@ -61,6 +61,14 @@ SELECT * FROM oracle_query(oracle_test_conn(), 'SELECT COUNT(*) FROM write_txn_b
 0
 
 statement ok
+INSERT INTO ora.write_txn_behavior VALUES (5000, 5000);
+
+query I
+SELECT * FROM oracle_query(oracle_test_conn(), 'SELECT COUNT(*) FROM write_txn_behavior WHERE id = 5000');
+----
+1
+
+statement ok
 SELECT oracle_clear_cache();
 
 statement ok

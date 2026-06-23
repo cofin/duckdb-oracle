@@ -20,7 +20,7 @@ struct OracleInsertGlobalState : public GlobalSinkState {
 };
 
 struct OracleInsertLocalState : public LocalSinkState {
-	OracleInsertLocalState() : lstate(make_uniq<OracleWriteLocalState>(nullptr, nullptr)) {
+	OracleInsertLocalState() : lstate(make_uniq<OracleWriteLocalState>()) {
 	}
 
 	unique_ptr<OracleWriteLocalState> lstate;
