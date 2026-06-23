@@ -16,7 +16,7 @@ include extension-ci-tools/makefiles/duckdb_extension.Makefile
 
 ORACLE_IMAGE ?= gvenzl/oracle-free:23-slim
 
-.PHONY: configure_ci tidy-check integration help clean-all test_release_internal lint
+.PHONY: configure_ci configure_oci tidy-check integration help clean-all ensure-libaio lint bump-version bump-prerelease bump-duckdb
 
 # Detect OS for Oracle Instant Client setup
 UNAME_S := $(shell uname -s)
@@ -55,7 +55,11 @@ define ensure_libaio
 	fi
 endef
 
-configure_ci:
+# Extend ci-tools' no-op configure_ci with Oracle Instant Client setup as a
+# PREREQUISITE rather than a recipe override, so make does not warn about
+# "overriding recipe for target 'configure_ci'".
+configure_ci: configure_oci
+configure_oci:
 	@echo "Running Oracle Instant Client setup..."
 	$(OCI_SETUP_SCRIPT)
 ifeq ($(UNAME_S),Linux)
@@ -63,21 +67,24 @@ ifeq ($(UNAME_S),Linux)
 endif
 	@echo "configure_ci complete"
 
-# Override test_release_internal to ensure libaio is available before running tests
-# Excludes integration tests (test/integration/*) which require Oracle container
-test_release_internal:
+# Run only unit tests (integration tests require an Oracle container) and ensure
+# libaio first. Scope ci-tools' own test_release_internal recipe to unit tests via
+# TESTS_BASE_DIRECTORY (a recipe variable, expanded at run time) and add libaio as
+# a prerequisite — no recipe override, so make does not warn.
+TESTS_BASE_DIRECTORY = "test/unit_tests/"
+test_release_internal: ensure-libaio
+ensure-libaio:
 ifeq ($(UNAME_S),Linux)
 	$(call ensure_libaio)
 endif
-	./build/release/$(TEST_PATH) "test/unit_tests/*"
 
-tidy-check:
-	$(OCI_SETUP_SCRIPT)
-	. ./oracle_sdk/env.sh && \
-	mkdir -p ./build/tidy && \
-	cmake $(GENERATOR) $(BUILD_FLAGS) $(EXT_DEBUG_FLAGS) -DDISABLE_UNITY=1 -DCLANG_TIDY=1 -S $(DUCKDB_SRCDIR) -B build/tidy && \
-	cp duckdb/.clang-tidy build/tidy/.clang-tidy && \
-	cd build/tidy && python3 ../../duckdb/scripts/run-clang-tidy.py '$(PROJ_DIR)src/.*/' -header-filter '$(PROJ_DIR)src/.*/' -quiet ${TIDY_THREAD_PARAMETER} ${TIDY_BINARY_PARAMETER} ${TIDY_PERFORM_CHECKS}
+# ci-tools' own tidy-check recipe is identical to what we need; instead of
+# overriding it (which warned), install the SDK via the configure_oci
+# prerequisite and export ORACLE_HOME/LD_LIBRARY_PATH (the two vars env.sh sets)
+# scoped to this target so the cmake/clang-tidy steps see the OCI headers.
+tidy-check: export ORACLE_HOME = $(shell . $(PROJ_DIR)oracle_sdk/env.sh 2>/dev/null; echo "$$ORACLE_HOME")
+tidy-check: export LD_LIBRARY_PATH = $(shell . $(PROJ_DIR)oracle_sdk/env.sh 2>/dev/null; echo "$$LD_LIBRARY_PATH")
+tidy-check: configure_oci
 
 
 # Build (release) then run integration tests against containerized Oracle.
@@ -87,6 +94,30 @@ integration: release
 
 lint: format-check tidy-check
 
+# --- Versioning -------------------------------------------------------------
+# NOTE: `release`/`debug`/`test` are the BUILD targets from extension-ci-tools,
+# so version targets are `bump-`prefixed (unlike the Python litestar projects
+# where `make release` is free to mean "bump version").
+#
+# Extension version (own version) via bump-my-version. description.yml is the
+# source of truth; auto-tag.yml tags it on push to main.
+#   make bump-version bump=patch | minor | major
+bump-version:
+	uvx bump-my-version bump $(bump)
+	@echo "Extension version is now: $$(grep -E '^  version:' description.yml | awk '{print $$2}')"
+
+#   make bump-prerelease version=0.3.0-alpha.1
+bump-prerelease:
+	@if [ -z "$(version)" ]; then echo "Usage: make bump-prerelease version=X.Y.Z-alpha.N"; exit 1; fi
+	uvx bump-my-version bump --new-version $(version) pre
+
+# DuckDB upstream version (submodules + CI refs + compat row + ext patch).
+#   make bump-duckdb VERSION=v1.5.4
+#   make bump-duckdb VERSION=v1.5.4 ARGS=--dry-run
+bump-duckdb:
+	@if [ -z "$(VERSION)" ]; then echo "Usage: make bump-duckdb VERSION=vX.Y.Z [ARGS=--dry-run]"; exit 1; fi
+	./scripts/bump_duckdb_version.sh $(VERSION) $(ARGS)
+
 help:
 	@printf "Available targets:\n"
 	@printf "  release          Build the extension in release mode (from ci tools)\n"
@@ -94,6 +125,9 @@ help:
 	@printf "  test             Run unit tests only (smoke tests, no Oracle container required)\n"
 	@printf "  integration      Run full test suite with Oracle container (uses ORACLE_IMAGE=%s)\n" "$(ORACLE_IMAGE)"
 	@printf "  lint             Run format-check and tidy-check\n"
+	@printf "  bump-version     Bump extension version (bump-my-version): make bump-version bump=patch\n"
+	@printf "  bump-prerelease  Start a pre-release: make bump-prerelease version=0.3.0-alpha.1\n"
+	@printf "  bump-duckdb      Bump targeted DuckDB version: make bump-duckdb VERSION=v1.5.4 [ARGS=--dry-run]\n"
 	@printf "  configure_ci     Install OCI prerequisites for CI/local env\n"
 	@printf "  clean-all        Remove all build directories to allow switching generators (e.g., Ninja)\n"
 
