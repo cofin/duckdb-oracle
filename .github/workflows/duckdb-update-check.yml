@@ -50,7 +50,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Create a python script to check versions
-          cat <<PYTHON_SCRIPT > check_version.py
+          cat <<PYTHON_SCRIPT > "$RUNNER_TEMP/check_version.py"
           import os
           import re
           import sys
@@ -109,7 +109,7 @@ jobs:
                   print(f"update_available=false", file=fh)
           PYTHON_SCRIPT
           
-          python check_version.py
+          python "$RUNNER_TEMP/check_version.py"
 
       - name: Close Stale PRs
         if: steps.check.outputs.update_available == 'true'
