@@ -8,11 +8,26 @@ require oracle
 statement ok
 SET oracle_enable_pushdown=false;
 
+query I
+SELECT (current_setting('oracle_enable_pushdown')::BOOLEAN = false)::INTEGER;
+----
+1
+
 statement ok
 SET oracle_prefetch_rows=10;
 
+query I
+SELECT current_setting('oracle_prefetch_rows')::INTEGER;
+----
+10
+
 statement ok
 SET oracle_array_size=32;
+
+query I
+SELECT current_setting('oracle_array_size')::INTEGER;
+----
+32
 
 statement ok
 SELECT oracle_clear_cache();

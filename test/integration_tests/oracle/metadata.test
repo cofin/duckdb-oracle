@@ -32,6 +32,47 @@ CREATE SECRET oracle_meta_test (
     PASSWORD '${ORACLE_PASSWORD}'
 );
 
+statement ok
+SELECT oracle_execute(oracle_test_conn(), '
+    BEGIN
+       EXECUTE IMMEDIATE ''DROP TABLE aaa_read_limit_source'';
+    EXCEPTION
+       WHEN OTHERS THEN
+          IF SQLCODE != -942 THEN
+             RAISE;
+          END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), '
+    BEGIN
+       EXECUTE IMMEDIATE ''DROP TABLE zzz_read_limit_target'';
+    EXCEPTION
+       WHEN OTHERS THEN
+          IF SQLCODE != -942 THEN
+             RAISE;
+          END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), '
+    CREATE TABLE aaa_read_limit_source (
+        id NUMBER
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), '
+    CREATE TABLE zzz_read_limit_target (
+        id NUMBER
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), 'INSERT INTO zzz_read_limit_target VALUES (1)')
+
 # Test 1: Test lazy schema loading enabled (default)
 statement ok
 SET oracle_lazy_schema_loading = true;
@@ -134,8 +175,12 @@ statement ok
 ATTACH '' AS ora_ondemand (TYPE oracle, SECRET oracle_meta_test);
 
 # Test 15: Query a table that might not be in first 1 enumerated
-# This tests on-demand loading fallback
-# The query should work even if table not in enumerated list
+# This tests attached-catalog on-demand loading fallback.
+query I
+SELECT COUNT(*) FROM ora_ondemand.duckdb_test.zzz_read_limit_target;
+----
+1
+
 query I
 SELECT COUNT(*) FROM oracle_query(oracle_test_conn(),
     'SELECT 1 FROM DUAL');
@@ -189,5 +234,11 @@ SET oracle_metadata_result_limit = 10000;
 SET oracle_use_current_schema = true;
 
 # Cleanup
+statement ok
+SELECT oracle_execute(oracle_test_conn(), 'DROP TABLE zzz_read_limit_target')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), 'DROP TABLE aaa_read_limit_source')
+
 statement ok
 DROP SECRET oracle_meta_test;

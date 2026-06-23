@@ -8,6 +8,7 @@
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/common/types/timestamp.hpp"
+#include "duckdb/common/types/date.hpp"
 #include "duckdb/common/limits.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
@@ -766,16 +767,57 @@ static string ColumnRefSQL(const string &col_name) {
 	return KeywordHelper::WriteQuoted(col_name, '"');
 }
 
+static string OracleQuoteStringLiteral(const string &value) {
+	return "'" + StringUtil::Replace(value, "'", "''") + "'";
+}
+
 static bool ConstantToSQL(Expression &expr, string &out_sql) {
 	if (expr.type != ExpressionType::VALUE_CONSTANT) {
 		return false;
 	}
 	auto &c = expr.Cast<BoundConstantExpression>();
-	out_sql = c.value.ToSQLString();
+	if (c.value.IsNull()) {
+		out_sql = "NULL";
+		return true;
+	}
+
+	switch (c.value.type().id()) {
+	case LogicalTypeId::VARCHAR:
+		out_sql = OracleQuoteStringLiteral(c.value.GetValue<string>());
+		return true;
+	case LogicalTypeId::DATE: {
+		auto date = c.value.GetValue<date_t>();
+		int32_t year, month, day;
+		Date::Convert(date, year, month, day);
+		out_sql = "DATE " + OracleQuoteStringLiteral(Date::Format(year, month, day));
+		return true;
+	}
+	case LogicalTypeId::TIMESTAMP:
+	case LogicalTypeId::TIMESTAMP_TZ:
+	case LogicalTypeId::TIMESTAMP_SEC:
+	case LogicalTypeId::TIMESTAMP_MS:
+	case LogicalTypeId::TIMESTAMP_NS:
+		out_sql = "TIMESTAMP " + OracleQuoteStringLiteral(c.value.ToString());
+		return true;
+	default:
+		out_sql = c.value.ToString();
+		return true;
+	}
 	return true;
 }
 
-static bool TryExtractComparison(Expression &expr, const vector<string> &names, string &out_clause) {
+static idx_t ResolveBoundRefColumnIndex(idx_t ref_idx, const vector<ColumnIndex> &column_ids) {
+	if (ref_idx < column_ids.size()) {
+		auto &column_id = column_ids[ref_idx];
+		if (column_id.HasPrimaryIndex()) {
+			return column_id.GetPrimaryIndex();
+		}
+	}
+	return ref_idx;
+}
+
+static bool TryExtractComparison(Expression &expr, const vector<string> &names, const vector<ColumnIndex> &column_ids,
+                                 string &out_clause) {
 	if (expr.type != ExpressionType::COMPARE_EQUAL && expr.type != ExpressionType::COMPARE_LESSTHAN &&
 	    expr.type != ExpressionType::COMPARE_GREATERTHAN && expr.type != ExpressionType::COMPARE_LESSTHANOREQUALTO &&
 	    expr.type != ExpressionType::COMPARE_GREATERTHANOREQUALTO) {
@@ -798,11 +840,11 @@ static bool TryExtractComparison(Expression &expr, const vector<string> &names, 
 	};
 
 	// Helper lambda to get column index from either BOUND_REF or BOUND_COLUMN_REF
-	auto get_column_index = [](Expression *e) -> idx_t {
+	auto get_column_index = [&column_ids](Expression *e) -> idx_t {
 		if (e->type == ExpressionType::BOUND_REF) {
-			return e->Cast<BoundReferenceExpression>().index;
+			return ResolveBoundRefColumnIndex(e->Cast<BoundReferenceExpression>().index, column_ids);
 		} else if (e->type == ExpressionType::BOUND_COLUMN_REF) {
-			return e->Cast<BoundColumnRefExpression>().binding.column_index;
+			return ResolveBoundRefColumnIndex(e->Cast<BoundColumnRefExpression>().binding.column_index, column_ids);
 		}
 		return DConstants::INVALID_INDEX;
 	};
@@ -878,7 +920,8 @@ static bool TryExtractComparison(Expression &expr, const vector<string> &names, 
 	return true;
 }
 
-static bool TryExtractIsNull(Expression &expr, const vector<string> &names, string &out_clause) {
+static bool TryExtractIsNull(Expression &expr, const vector<string> &names, const vector<ColumnIndex> &column_ids,
+                             string &out_clause) {
 	if (expr.type != ExpressionType::OPERATOR_IS_NULL) {
 		return false;
 	}
@@ -891,9 +934,10 @@ static bool TryExtractIsNull(Expression &expr, const vector<string> &names, stri
 	idx_t col_idx = DConstants::INVALID_INDEX;
 	auto child_type = op.children[0]->type;
 	if (child_type == ExpressionType::BOUND_REF) {
-		col_idx = op.children[0]->Cast<BoundReferenceExpression>().index;
+		col_idx = ResolveBoundRefColumnIndex(op.children[0]->Cast<BoundReferenceExpression>().index, column_ids);
 	} else if (child_type == ExpressionType::BOUND_COLUMN_REF) {
-		col_idx = op.children[0]->Cast<BoundColumnRefExpression>().binding.column_index;
+		col_idx = ResolveBoundRefColumnIndex(op.children[0]->Cast<BoundColumnRefExpression>().binding.column_index,
+		                                     column_ids);
 	} else {
 		return false;
 	}
@@ -925,8 +969,8 @@ void OraclePushdownComplexFilter(ClientContext &, LogicalGet &get, FunctionData 
 	vector<string> clauses;
 	for (auto &expr : expressions) {
 		string clause;
-		if (TryExtractComparison(*expr, bind.column_names, clause) ||
-		    TryExtractIsNull(*expr, bind.column_names, clause)) {
+		if (TryExtractComparison(*expr, bind.column_names, get.GetColumnIds(), clause) ||
+		    TryExtractIsNull(*expr, bind.column_names, get.GetColumnIds(), clause)) {
 			if (bind.settings.debug_show_queries || getenv("ORACLE_DEBUG")) {
 				fprintf(stderr, "[oracle] pushdown: extracted clause: %s\n", clause.c_str());
 			}

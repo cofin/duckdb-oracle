@@ -1,0 +1,320 @@
+# name: test/integration_tests/oracle/type_conversion.test
+# description: Oracle read-path type conversion baseline coverage
+# group: [oracle]
+
+require oracle
+
+require json
+
+statement ok
+CREATE OR REPLACE MACRO oracle_type_conn() AS '${ORACLE_CONNECTION_STRING}';
+
+statement ok
+CREATE OR REPLACE SECRET oracle_type_test (
+    TYPE ORACLE,
+    USER '${ORACLE_USER}',
+    PASSWORD '${ORACLE_PASSWORD}',
+    HOST '${ORACLE_HOST}',
+    PORT ${ORACLE_PORT},
+    SERVICE '${ORACLE_SERVICE}'
+);
+
+statement ok
+ATTACH '' AS ora_types (TYPE ORACLE, SECRET 'oracle_type_test')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE mixed_types'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE json_docs'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE json_clob_docs'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE xml_test'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE clob_test'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE binary_test'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE embeddings'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    CREATE TABLE mixed_types (
+        id NUMBER,
+        raw_data RAW(10),
+        created_date DATE,
+        name VARCHAR2(50),
+        amount NUMBER(10,2)
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    INSERT INTO mixed_types VALUES (1, ''DEADBEEF'', DATE ''2024-01-15'', ''Alice'', 123.45)
+')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    INSERT INTO mixed_types VALUES (2, ''CAFEBABE'', DATE ''2024-06-30'', ''Bob'', 678.90)
+')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    CREATE TABLE json_docs (
+        id NUMBER,
+        data JSON
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), 'INSERT INTO json_docs VALUES (1, JSON(''{"name": "Alice", "age": 30}''))')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), 'INSERT INTO json_docs VALUES (2, JSON(''{"name": "Bob", "details": {"city": "NY"}}''))')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    CREATE TABLE json_clob_docs (
+        id NUMBER,
+        data CLOB CHECK (data IS JSON)
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), 'INSERT INTO json_clob_docs VALUES (1, ''{"item": "Book", "price": 19.99}'')')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    CREATE TABLE xml_test (
+        id NUMBER,
+        doc XMLTYPE
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), 'INSERT INTO xml_test VALUES (1, XMLTYPE(''<root><item>A</item></root>''))')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    CREATE TABLE clob_test (
+        id NUMBER,
+        plain_clob CLOB,
+        xml_clob CLOB
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    INSERT INTO clob_test VALUES (
+        1,
+        TO_CLOB(RPAD(''A'', 4000, ''A'')) || ''B'',
+        TO_CLOB(''<root><item>CLOB</item></root>'')
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    CREATE TABLE binary_test (
+        id NUMBER,
+        raw_col RAW(10),
+        blob_col BLOB
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), 'INSERT INTO binary_test VALUES (1, ''DEADBEEF'', HEXTORAW(''CAFEBABE''))')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    CREATE TABLE embeddings (
+        id NUMBER,
+        embedding VECTOR(3, FLOAT32)
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), 'INSERT INTO embeddings VALUES (1, ''[1.1, 2.2, 3.3]'')')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), 'INSERT INTO embeddings VALUES (2, ''[4.0, 5.0, 6.0]'')')
+
+statement ok
+SELECT oracle_clear_cache();
+
+query ITII
+SELECT id, name, raw_data, CAST(created_date AS DATE)
+FROM ora_types.duckdb_test.mixed_types
+WHERE id = 2
+----
+2	Bob	\xCA\xFE\xBA\xBE	2024-06-30
+
+query R
+SELECT amount FROM ora_types.duckdb_test.mixed_types WHERE id = 1
+----
+123.45
+
+query T
+SELECT typeof(amount) FROM ora_types.duckdb_test.mixed_types WHERE id = 1
+----
+DECIMAL(10,2)
+
+query IT
+SELECT id, data FROM ora_types.json_docs ORDER BY id
+----
+1	{"name":"Alice","age":30}
+2	{"name":"Bob","details":{"city":"NY"}}
+
+query T
+SELECT typeof(data) FROM ora_types.json_docs WHERE id = 1
+----
+JSON
+
+query T
+SELECT data->>'name' FROM ora_types.json_docs WHERE id = 1
+----
+Alice
+
+query IT
+SELECT id, CAST(data AS VARCHAR) FROM ora_types.duckdb_test.json_clob_docs
+----
+1	{"item": "Book", "price": 19.99}
+
+query T
+SELECT CAST(data AS JSON)->>'item' FROM ora_types.duckdb_test.json_clob_docs WHERE id = 1
+----
+Book
+
+query IT
+SELECT id, replace(replace(replace(CAST(doc AS VARCHAR), chr(10), ''), chr(13), ''), ' ', '')
+FROM ora_types.duckdb_test.xml_test
+----
+1	<root><item>A</item></root>
+
+query I
+SELECT LENGTH(plain_clob) FROM ora_types.duckdb_test.clob_test WHERE id = 1
+----
+4001
+
+query T
+SELECT replace(replace(replace(CAST(xml_clob AS VARCHAR), chr(10), ''), chr(13), ''), ' ', '')
+FROM ora_types.duckdb_test.clob_test
+WHERE id = 1
+----
+<root><item>CLOB</item></root>
+
+query I
+SELECT raw_col FROM ora_types.duckdb_test.binary_test WHERE id = 1
+----
+\xDE\xAD\xBE\xEF
+
+query I
+SELECT blob_col FROM ora_types.duckdb_test.binary_test WHERE id = 1
+----
+\xCA\xFE\xBA\xBE
+
+query I
+SELECT embedding FROM ora_types.duckdb_test.embeddings ORDER BY id
+----
+[1.1, 2.2, 3.3]
+[4.0, 5.0, 6.0]
+
+query R
+SELECT embedding[1] FROM ora_types.duckdb_test.embeddings WHERE id = 1
+----
+1.1
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), 'DROP TABLE embeddings')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), 'DROP TABLE binary_test')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), 'DROP TABLE clob_test')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), 'DROP TABLE xml_test')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), 'DROP TABLE json_docs')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), 'DROP TABLE json_clob_docs')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), 'DROP TABLE mixed_types')
+
+statement ok
+DETACH ora_types;
+
+statement ok
+DROP SECRET oracle_type_test;

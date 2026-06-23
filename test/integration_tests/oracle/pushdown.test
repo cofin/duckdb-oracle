@@ -1,0 +1,152 @@
+# name: test/integration_tests/oracle/pushdown.test
+# description: Oracle read-path projection/filter pushdown regression coverage
+# group: [oracle]
+
+require oracle
+
+statement ok
+CREATE OR REPLACE MACRO oracle_pushdown_conn() AS '${ORACLE_CONNECTION_STRING}';
+
+statement ok
+CREATE OR REPLACE SECRET oracle_pushdown_test (
+    TYPE ORACLE,
+    USER '${ORACLE_USER}',
+    PASSWORD '${ORACLE_PASSWORD}',
+    HOST '${ORACLE_HOST}',
+    PORT ${ORACLE_PORT},
+    SERVICE '${ORACLE_SERVICE}'
+);
+
+statement ok
+SELECT oracle_execute(oracle_pushdown_conn(), '
+    BEGIN
+       EXECUTE IMMEDIATE ''DROP TABLE read_pushdown_baseline'';
+    EXCEPTION
+       WHEN OTHERS THEN
+          IF SQLCODE != -942 THEN
+             RAISE;
+          END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_pushdown_conn(), '
+    CREATE TABLE read_pushdown_baseline (
+        id NUMBER(10),
+        category VARCHAR2(20),
+        amount NUMBER(10,2),
+        created_at DATE,
+        note VARCHAR2(100)
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_pushdown_conn(), '
+    INSERT INTO read_pushdown_baseline VALUES (1, ''alpha'', 10.50, DATE ''2024-01-01'', ''Alpha Row'')
+')
+
+statement ok
+SELECT oracle_execute(oracle_pushdown_conn(), '
+    INSERT INTO read_pushdown_baseline VALUES (2, ''beta'', 200.25, DATE ''2024-02-01'', ''Beta Row'')
+')
+
+statement ok
+SELECT oracle_execute(oracle_pushdown_conn(), '
+    INSERT INTO read_pushdown_baseline VALUES (3, ''beta'', 300.00, DATE ''2024-03-01'', NULL)
+')
+
+statement ok
+SELECT oracle_clear_cache();
+
+statement ok
+SET oracle_enable_pushdown = false;
+
+statement ok
+ATTACH '' AS ora_pushdown_off (TYPE ORACLE, SECRET 'oracle_pushdown_test')
+
+statement ok
+SET oracle_enable_pushdown = true;
+
+statement ok
+ATTACH '' AS ora_pushdown_on (TYPE ORACLE, SECRET 'oracle_pushdown_test')
+
+query TI
+SELECT category, id
+FROM ora_pushdown_on.duckdb_test.read_pushdown_baseline
+WHERE amount > 100
+ORDER BY id;
+----
+beta	2
+beta	3
+
+query TI
+SELECT category, id
+FROM ora_pushdown_off.duckdb_test.read_pushdown_baseline
+WHERE amount > 100
+ORDER BY id;
+----
+beta	2
+beta	3
+
+query IR
+SELECT id, amount
+FROM ora_pushdown_on.duckdb_test.read_pushdown_baseline
+WHERE category = 'beta'
+ORDER BY id;
+----
+2	200.25
+3	300.0
+
+query IT
+SELECT id, note
+FROM ora_pushdown_on.duckdb_test.read_pushdown_baseline
+WHERE note IS NULL
+ORDER BY id;
+----
+3	NULL
+
+query IT
+SELECT id, note
+FROM ora_pushdown_on.duckdb_test.read_pushdown_baseline
+WHERE amount >= 10 AND lower(note) = 'alpha row'
+ORDER BY id;
+----
+1	Alpha Row
+
+query I
+SELECT id
+FROM ora_pushdown_on.duckdb_test.read_pushdown_baseline
+WHERE amount > 100 AND lower(note) = 'beta row'
+ORDER BY id;
+----
+2
+
+query I
+SELECT id
+FROM ora_pushdown_on.duckdb_test.read_pushdown_baseline
+WHERE created_at >= DATE '2024-02-01'
+ORDER BY id;
+----
+2
+3
+
+query ITR
+SELECT id, category, amount
+FROM ora_pushdown_on.duckdb_test.read_pushdown_baseline
+WHERE 150 < amount
+ORDER BY id;
+----
+2	beta	200.25
+3	beta	300.0
+
+statement ok
+DETACH ora_pushdown_on;
+
+statement ok
+DETACH ora_pushdown_off;
+
+statement ok
+SELECT oracle_execute(oracle_pushdown_conn(), 'DROP TABLE read_pushdown_baseline')
+
+statement ok
+DROP SECRET oracle_pushdown_test;

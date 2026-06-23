@@ -48,6 +48,11 @@ SELECT COUNT(*) FROM ora_res.duckdb_test.schema_test_table1;
 ----
 1
 
+query I
+SELECT COUNT(*) FROM ora_res.schema_test_table1;
+----
+1
+
 # Test 3: Query with full schema qualification (should always work)
 query I
 SELECT COUNT(*) FROM ora_res.duckdb_test.schema_test_table1;
