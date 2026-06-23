@@ -6,8 +6,8 @@ This document outlines how releases are created and deployed for the DuckDB Orac
 
 This project uses two independent version tracks:
 
-- **Extension version** (e.g., `v1.0.0`): Defined in `description.yml`. Used for git tags and GitHub Releases.
-- **DuckDB version** (e.g., `v1.5.1`): The DuckDB version the extension is built against. Used for the GitHub Pages directory structure that DuckDB's extension loader expects.
+- **Extension version** (e.g., `v0.2.1`): Defined in `description.yml`. Used for git tags, GitHub Releases, and the runtime version reported by `duckdb_extensions()`.
+- **DuckDB version** (e.g., `v1.5.4`): The DuckDB version the extension is built against. Used for the GitHub Pages directory structure that DuckDB's extension loader expects.
 
 When a user runs `INSTALL oracle`, DuckDB fetches from:
 
@@ -41,7 +41,7 @@ Bump the `version:` field in `description.yml`, commit to `main`, and push. The 
 ```bash
 # Edit description.yml to bump version
 git add description.yml
-git commit -m "chore: bump extension version to 1.1.0"
+git commit -m "chore: bump extension version to 0.2.2"
 git push origin main
 ```
 
@@ -49,8 +49,8 @@ git push origin main
 
 ```bash
 git checkout main && git pull
-git tag v1.1.0
-git push origin v1.1.0
+git tag v0.2.2
+git push origin v0.2.2
 ```
 
 ### Manual Workflow Dispatch (Fallback)
@@ -60,14 +60,14 @@ If the automated flow fails, trigger a release manually:
 **GitHub CLI:**
 
 ```bash
-gh workflow run release-unsigned.yml -f version=v1.1.0
+gh workflow run release-unsigned.yml -f version=v0.2.2
 ```
 
 **GitHub UI:**
 
 1. Go to Actions > Release Extension.
 2. Click "Run workflow".
-3. Enter the version tag (e.g., `v1.1.0`).
+3. Enter the version tag (e.g., `v0.2.2`).
 
 ## DuckDB Version Updates
 

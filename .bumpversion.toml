@@ -2,8 +2,8 @@
 # Mirrors the litestar-ecosystem convention (uv run bump-my-version), adapted
 # for this C++ project which has no pyproject.toml.
 #
-#   make release bump=patch        # 0.2.0 -> 0.2.1
-#   make release bump=minor        # 0.2.0 -> 0.3.0
+#   make release bump=patch        # 0.2.1 -> 0.2.2
+#   make release bump=minor        # 0.2.1 -> 0.3.0
 #   make pre-release version=0.3.0-alpha.1
 #
 # description.yml is the single source of truth for the extension version;

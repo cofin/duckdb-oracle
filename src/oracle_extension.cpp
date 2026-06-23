@@ -1170,7 +1170,11 @@ std::string OracleExtension::Name() {
 }
 
 std::string OracleExtension::Version() const {
-	return "1.0.0";
+#ifdef EXT_VERSION_ORACLE
+	return EXT_VERSION_ORACLE;
+#else
+	return "";
+#endif
 }
 
 extern "C" {
