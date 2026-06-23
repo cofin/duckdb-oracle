@@ -4,6 +4,8 @@
 
 namespace duckdb {
 
+class DBConfig;
+
 struct OracleSettings {
 	// Filter pushdown: push WHERE clauses to Oracle for server-side filtering
 	// Enabled by default for performance (industry standard for remote DB connectors)
@@ -28,5 +30,8 @@ struct OracleSettings {
 	bool enable_type_conversion = true; // Enable server-side type conversion for problematic types
 	bool enable_spatial_types = true;   // Map SDO_GEOMETRY to GEOMETRY type (requires spatial extension)
 };
+
+//! Register Oracle extension settings and storage extension with DuckDB.
+void RegisterOracleExtensionOptions(DBConfig &config);
 
 } // namespace duckdb

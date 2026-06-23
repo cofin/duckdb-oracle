@@ -105,11 +105,6 @@ void OracleCatalogState::ClearCaches() {
 	connection = make_uniq<OracleConnection>();
 }
 
-void OracleCatalogState::Register(const shared_ptr<OracleCatalogState> &state) {
-	lock_guard<std::mutex> guard(RegistryLock());
-	Registry().push_back(weak_ptr<OracleCatalogState>(state));
-}
-
 void OracleCatalogState::Register(const shared_ptr<OracleCatalogState> &state, const string &alias) {
 	lock_guard<std::mutex> guard(RegistryLock());
 	Registry().push_back(weak_ptr<OracleCatalogState>(state));
@@ -265,31 +260,6 @@ vector<string> OracleCatalogState::ListSchemas() {
 	return schema_cache;
 }
 
-vector<string> OracleCatalogState::ListTables(const string &schema) {
-	lock_guard<std::mutex> guard(lock);
-	auto entry = table_cache.find(schema);
-	if (entry != table_cache.end()) {
-		return entry->second;
-	}
-	EnsureConnectionInternal();
-
-	if (schema.empty()) {
-		return {};
-	}
-
-	auto query = StringUtil::Format("SELECT table_name FROM all_tables WHERE owner = UPPER(%s) ORDER BY table_name",
-	                                Value(schema).ToSQLString().c_str());
-	auto result = connection->Query(query);
-	vector<string> tables;
-	for (auto &row : result.rows) {
-		if (!row.empty()) {
-			tables.push_back(row[0]);
-		}
-	}
-	table_cache.emplace(schema, tables);
-	return tables;
-}
-
 vector<string> OracleCatalogState::ListObjects(const string &schema, const string &object_types) {
 	lock_guard<std::mutex> guard(lock);
 
@@ -363,20 +333,6 @@ pair<string, string> OracleCatalogState::ResolveSynonym(const string &schema, co
 
 	found = true;
 	return std::make_pair(result.rows[0][0], result.rows[0][1]);
-}
-
-bool OracleCatalogState::ObjectExists(const string &schema, const string &object_name, const string &object_types) {
-	lock_guard<std::mutex> guard(lock);
-	EnsureConnectionInternal();
-
-	auto query = StringUtil::Format("SELECT 1 FROM all_objects "
-	                                "WHERE owner = UPPER(%s) AND object_name = UPPER(%s) "
-	                                "AND object_type IN (%s)",
-	                                Value(schema).ToSQLString().c_str(), Value(object_name).ToSQLString().c_str(),
-	                                object_types.c_str());
-
-	auto result = connection->Query(query);
-	return !result.rows.empty();
 }
 
 string OracleCatalogState::GetObjectName(const string &schema, const string &object_name, const string &object_types) {

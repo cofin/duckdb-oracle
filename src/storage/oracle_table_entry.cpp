@@ -1,4 +1,5 @@
 #include "oracle_table_entry.hpp"
+#include "oracle_pushdown.hpp"
 #include "oracle_table_function.hpp"
 #include "oracle_transaction.hpp"
 #include "duckdb/catalog/catalog.hpp"

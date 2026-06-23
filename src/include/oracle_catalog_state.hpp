@@ -36,7 +36,6 @@ public:
 	void ApplyOptions(const unordered_map<string, Value> &options);
 	void ClearCaches();
 
-	static void Register(const shared_ptr<OracleCatalogState> &state);
 	static void Register(const shared_ptr<OracleCatalogState> &state, const string &alias);
 	static void ClearAllCaches();
 	static shared_ptr<OracleCatalogState> LookupByAlias(const string &alias);
@@ -62,14 +61,12 @@ public:
 
 	// Metadata enumeration
 	vector<string> ListSchemas();
-	vector<string> ListTables(const string &schema);
 	vector<string> ListObjects(const string &schema, const string &object_types);
 
 	// Synonym resolution (returns empty pair if not found)
 	pair<string, string> ResolveSynonym(const string &schema, const string &synonym_name, bool &found);
 
 	// On-demand table loading
-	bool ObjectExists(const string &schema, const string &object_name, const string &object_types);
 	string GetObjectName(const string &schema, const string &object_name, const string &object_types);
 	string GetRealSchemaName(const string &name);
 

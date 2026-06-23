@@ -199,15 +199,4 @@ void OracleConnection::Rollback() {
 	CheckOCIError(OCITransRollback(ctx->svchp, ctx->errhp, OCI_DEFAULT), ctx->errhp, "OCITransRollback");
 }
 
-std::shared_ptr<OracleConnectionHandle> OracleConnection::GetHandle() const {
-	return conn_handle;
-}
-
-std::string OracleResult::GetString(idx_t row, idx_t col) const {
-	if (row >= rows.size() || col >= rows[row].size()) {
-		throw InternalException("OracleResult index out of range");
-	}
-	return rows[row][col];
-}
-
 } // namespace duckdb

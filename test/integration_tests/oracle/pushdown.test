@@ -88,6 +88,32 @@ ORDER BY id;
 beta	2
 beta	3
 
+query TI
+SELECT category, id
+FROM oracle_scan(oracle_pushdown_conn(), 'DUCKDB_TEST', 'READ_PUSHDOWN_BASELINE')
+WHERE amount > 100
+ORDER BY id;
+----
+beta	2
+beta	3
+
+query TI
+SELECT category, id
+FROM oracle_query(oracle_pushdown_conn(), 'SELECT id, category, amount, created_at, note FROM read_pushdown_baseline')
+WHERE amount > 100
+ORDER BY id;
+----
+beta	2
+beta	3
+
+statement error
+SELECT COALESCE(dup_1, '<null>')
+FROM oracle_query(oracle_pushdown_conn(), 'SELECT category AS dup, note AS dup FROM read_pushdown_baseline')
+WHERE dup = 'beta'
+ORDER BY 1;
+----
+duplicate column name
+
 query IR
 SELECT id, amount
 FROM ora_pushdown_on.duckdb_test.read_pushdown_baseline
@@ -125,6 +151,15 @@ query I
 SELECT id
 FROM ora_pushdown_on.duckdb_test.read_pushdown_baseline
 WHERE created_at >= DATE '2024-02-01'
+ORDER BY id;
+----
+2
+3
+
+query I
+SELECT id
+FROM ora_pushdown_on.duckdb_test.read_pushdown_baseline
+WHERE created_at >= TIMESTAMPTZ '2024-02-01 00:00:00+00'
 ORDER BY id;
 ----
 2

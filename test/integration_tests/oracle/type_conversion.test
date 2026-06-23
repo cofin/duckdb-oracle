@@ -112,6 +112,7 @@ SELECT oracle_execute(oracle_type_conn(), '
         id NUMBER,
         raw_data RAW(10),
         created_date DATE,
+        updated_at TIMESTAMP,
         name VARCHAR2(50),
         amount NUMBER(10,2)
     )
@@ -119,12 +120,31 @@ SELECT oracle_execute(oracle_type_conn(), '
 
 statement ok
 SELECT oracle_execute(oracle_type_conn(), '
-    INSERT INTO mixed_types VALUES (1, ''DEADBEEF'', DATE ''2024-01-15'', ''Alice'', 123.45)
+    INSERT INTO mixed_types VALUES (
+        1,
+        ''DEADBEEF'',
+        DATE ''2024-01-15'',
+        TIMESTAMP ''2024-01-15 12:34:56'',
+        ''Alice'',
+        123.45
+    )
 ')
 
 statement ok
 SELECT oracle_execute(oracle_type_conn(), '
-    INSERT INTO mixed_types VALUES (2, ''CAFEBABE'', DATE ''2024-06-30'', ''Bob'', 678.90)
+    INSERT INTO mixed_types VALUES (
+        2,
+        ''CAFEBABE'',
+        DATE ''2024-06-30'',
+        TIMESTAMP ''2024-06-30 01:02:03'',
+        ''Bob'',
+        678.90
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    INSERT INTO mixed_types VALUES (3, NULL, NULL, NULL, NULL, NULL)
 ')
 
 statement ok
@@ -221,6 +241,23 @@ query R
 SELECT amount FROM ora_types.duckdb_test.mixed_types WHERE id = 1
 ----
 123.45
+
+query T
+SELECT strftime(updated_at, '%Y-%m-%d %H:%M:%S') FROM ora_types.duckdb_test.mixed_types WHERE id = 1
+----
+2024-01-15 12:34:56
+
+query IIIII
+SELECT
+    (raw_data IS NULL)::INTEGER,
+    (created_date IS NULL)::INTEGER,
+    (updated_at IS NULL)::INTEGER,
+    (name IS NULL)::INTEGER,
+    (amount IS NULL)::INTEGER
+FROM ora_types.duckdb_test.mixed_types
+WHERE id = 3
+----
+1	1	1	1	1
 
 query T
 SELECT typeof(amount) FROM ora_types.duckdb_test.mixed_types WHERE id = 1

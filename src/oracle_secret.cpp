@@ -157,7 +157,7 @@ unique_ptr<BaseSecret> CreateOracleSecretFromConfig(ClientContext &context, Crea
 	// Mark password as sensitive (will be redacted in output)
 	secret->redact_keys.insert("password");
 
-	return std::move(secret);
+	return secret;
 }
 
 } // namespace duckdb

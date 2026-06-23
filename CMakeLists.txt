@@ -57,6 +57,11 @@ set(EXTENSION_SOURCES
     src/oracle_connection_resolver.cpp
     src/oracle_connection_manager.cpp
     src/oracle_secret.cpp
+    src/oracle_scan.cpp
+    src/oracle_pushdown.cpp
+    src/oracle_functions.cpp
+    src/oracle_settings.cpp
+    src/oracle_type_conversion.cpp
     src/storage/oracle_catalog.cpp
     src/storage/oracle_schema_entry.cpp
     src/storage/oracle_table_entry.cpp

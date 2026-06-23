@@ -26,8 +26,6 @@ struct OracleBindData : public FunctionData {
 
 	// Statement prepared in bind; executed in global scan state
 	std::shared_ptr<OCIStmt> stmt;
-	// Metadata kept in bind data
-	bool finished = false;
 
 	OracleBindData();
 
@@ -37,7 +35,6 @@ struct OracleBindData : public FunctionData {
 
 struct OracleScanState : public GlobalTableFunctionState {
 	std::shared_ptr<OracleConnectionHandle> conn_handle;
-	OCISvcCtx *svc = nullptr;
 	std::shared_ptr<OCIStmt> stmt;
 	OCIError *err = nullptr;
 	vector<vector<char>> buffers;
@@ -46,7 +43,6 @@ struct OracleScanState : public GlobalTableFunctionState {
 	vector<vector<ub2>> return_lens;
 	vector<idx_t> column_mapping; // Map output column index to buffer index
 	bool executed = false;
-	bool defines_bound = false;
 	bool finished = false;
 
 	explicit OracleScanState(idx_t column_count) {
@@ -69,9 +65,12 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
 
 void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataChunk &output);
 
-void OraclePushdownComplexFilter(ClientContext &context, LogicalGet &get, FunctionData *bind_data_p,
-                                 vector<unique_ptr<Expression>> &expressions);
-
 unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &context, TableFunctionInitInput &input);
+
+unique_ptr<FunctionData> OracleScanBind(ClientContext &context, TableFunctionBindInput &input,
+                                        vector<LogicalType> &return_types, vector<string> &names);
+
+unique_ptr<FunctionData> OracleQueryBind(ClientContext &context, TableFunctionBindInput &input,
+                                         vector<LogicalType> &return_types, vector<string> &names);
 
 } // namespace duckdb

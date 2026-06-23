@@ -12,8 +12,6 @@ namespace duckdb {
 struct OracleResult {
 	std::vector<std::string> columns;
 	std::vector<std::vector<std::string>> rows;
-
-	std::string GetString(idx_t row, idx_t col) const;
 };
 
 class OracleConnection {
@@ -34,9 +32,6 @@ public:
 
 	//! Rollback the current transaction
 	void Rollback();
-
-	//! Get the underlying connection handle
-	std::shared_ptr<OracleConnectionHandle> GetHandle() const;
 
 private:
 	std::shared_ptr<OracleConnectionHandle> conn_handle;

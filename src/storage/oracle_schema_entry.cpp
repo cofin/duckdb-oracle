@@ -209,7 +209,7 @@ private:
 unique_ptr<Catalog> CreateOracleCatalog(AttachedDatabase &db, shared_ptr<OracleCatalogState> state) {
 	auto catalog = make_uniq<OracleCatalog>(db, std::move(state));
 	catalog->Initialize(false);
-	return std::move(catalog);
+	return catalog;
 }
 
 } // namespace duckdb
