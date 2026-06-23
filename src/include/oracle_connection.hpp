@@ -26,6 +26,8 @@ public:
 
 	//! Execute a query and return all rows as strings (used for metadata discovery).
 	OracleResult Query(const std::string &query);
+	//! Execute a metadata query with positional string bind values and return all rows as strings.
+	OracleResult QueryWithStringBinds(const std::string &query, const std::vector<std::string> &bind_values);
 
 	//! Commit the current transaction
 	void Commit();

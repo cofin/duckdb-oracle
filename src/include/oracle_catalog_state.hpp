@@ -32,6 +32,7 @@ public:
 
 	void Connect();
 	OracleResult Query(const std::string &query);
+	OracleResult QueryWithStringBinds(const std::string &query, const std::vector<std::string> &bind_values);
 	void ApplyOptions(const unordered_map<string, Value> &options);
 	void ClearCaches();
 

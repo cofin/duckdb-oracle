@@ -34,6 +34,12 @@ OracleResult OracleCatalogState::Query(const std::string &query) {
 	return EnsureConnectionInternal().Query(query);
 }
 
+OracleResult OracleCatalogState::QueryWithStringBinds(const std::string &query,
+                                                      const std::vector<std::string> &bind_values) {
+	lock_guard<std::mutex> guard(lock);
+	return EnsureConnectionInternal().QueryWithStringBinds(query, bind_values);
+}
+
 OracleConnection &OracleCatalogState::EnsureConnectionInternal() {
 	if (!settings.connection_cache) {
 		connection = make_uniq<OracleConnection>();
@@ -378,12 +384,16 @@ string OracleCatalogState::GetObjectName(const string &schema, const string &obj
 	EnsureConnectionInternal();
 
 	auto query = StringUtil::Format("SELECT object_name FROM all_objects "
-	                                "WHERE owner = UPPER(%s) AND UPPER(object_name) = UPPER(%s) "
-	                                "AND object_type IN (%s)",
-	                                Value(schema).ToSQLString().c_str(), Value(object_name).ToSQLString().c_str(),
+	                                "WHERE (owner = :1 OR owner = UPPER(:2)) "
+	                                "AND (object_name = :3 OR object_name = UPPER(:4)) "
+	                                "AND object_type IN (%s) "
+	                                "ORDER BY CASE WHEN owner = :5 THEN 0 WHEN owner = UPPER(:6) THEN 1 ELSE 2 END, "
+	                                "CASE WHEN object_name = :7 THEN 0 WHEN object_name = UPPER(:8) THEN 1 ELSE 2 END, "
+	                                "owner, object_name",
 	                                object_types.c_str());
 
-	auto result = connection->Query(query);
+	auto result = connection->QueryWithStringBinds(
+	    query, {schema, schema, object_name, object_name, schema, schema, object_name, object_name});
 	if (!result.rows.empty()) {
 		return result.rows[0][0];
 	}

@@ -2,6 +2,7 @@
 #include "duckdb/common/types/time.hpp"
 #include "duckdb/common/types/date.hpp"
 #include "oracle_write.hpp"
+#include "oracle_connection.hpp"
 #include "oracle_utils.hpp"
 #include "oracle_connection_manager.hpp"
 #include "duckdb/common/exception.hpp"
@@ -9,6 +10,7 @@
 #include "duckdb/parser/keyword_helper.hpp"
 #include <cstdio>
 #include <cstring>
+#include <unordered_map>
 
 namespace duckdb {
 
@@ -17,6 +19,98 @@ void RejectOracleWriteInExplicitTransaction(ClientContext &context) {
 		throw InvalidInputException("Oracle writes are statement-atomic and cannot run inside an explicit DuckDB "
 		                            "transaction block; commit or rollback the DuckDB transaction before writing to "
 		                            "Oracle");
+	}
+}
+
+void ResolveOracleWriteTargetMetadata(OracleWriteBindData &data) {
+	if (data.connection_string.empty()) {
+		return;
+	}
+
+	OracleConnection temp_conn;
+	temp_conn.Connect(data.connection_string, data.wallet_path, data.settings);
+
+	string query;
+	vector<string> bind_values;
+	if (data.schema_name.empty()) {
+		query = "SELECT owner, table_name, column_name, data_type FROM all_tab_columns "
+		        "WHERE owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') "
+		        "AND (table_name = :1 OR table_name = UPPER(:2)) "
+		        "ORDER BY CASE WHEN table_name = :3 THEN 0 WHEN table_name = UPPER(:4) THEN 1 ELSE 2 END, "
+		        "table_name, column_id";
+		bind_values.push_back(data.object_name);
+		bind_values.push_back(data.object_name);
+		bind_values.push_back(data.object_name);
+		bind_values.push_back(data.object_name);
+	} else {
+		query = "SELECT owner, table_name, column_name, data_type FROM all_tab_columns "
+		        "WHERE (owner = :1 OR owner = UPPER(:2)) "
+		        "AND (table_name = :3 OR table_name = UPPER(:4)) "
+		        "ORDER BY CASE WHEN owner = :5 THEN 0 WHEN owner = UPPER(:6) THEN 1 ELSE 2 END, "
+		        "CASE WHEN table_name = :7 THEN 0 WHEN table_name = UPPER(:8) THEN 1 ELSE 2 END, "
+		        "owner, table_name, column_id";
+		bind_values.push_back(data.schema_name);
+		bind_values.push_back(data.schema_name);
+		bind_values.push_back(data.object_name);
+		bind_values.push_back(data.object_name);
+		bind_values.push_back(data.schema_name);
+		bind_values.push_back(data.schema_name);
+		bind_values.push_back(data.object_name);
+		bind_values.push_back(data.object_name);
+	}
+
+	auto query_res = temp_conn.QueryWithStringBinds(query, bind_values);
+	if (query_res.rows.empty()) {
+		return;
+	}
+
+	const string best_owner = query_res.rows[0][0];
+	const string best_table_name = query_res.rows[0][1];
+	std::unordered_map<string, string> col_type_map;
+	std::unordered_map<string, string> col_name_map;
+
+	for (auto &row : query_res.rows) {
+		if (row.size() < 4) {
+			continue;
+		}
+		const string &owner = row[0];
+		const string &table = row[1];
+		const string &col = row[2];
+		const string &type = row[3];
+		if (owner != best_owner || table != best_table_name) {
+			continue;
+		}
+		col_type_map[col] = type;
+		auto col_upper = StringUtil::Upper(col);
+		if (!col_name_map.count(col_upper)) {
+			col_name_map[col_upper] = col;
+		} else {
+			col_name_map[col_upper] = "";
+		}
+	}
+
+	data.object_name = best_table_name;
+	data.schema_name = best_owner;
+
+	for (idx_t i = 0; i < data.column_names.size(); i++) {
+		auto col_upper = StringUtil::Upper(data.column_names[i]);
+		string actual_name;
+		if (col_type_map.count(data.column_names[i])) {
+			actual_name = data.column_names[i];
+		} else if (col_name_map.count(col_upper)) {
+			if (col_name_map[col_upper].empty()) {
+				throw BinderException("Ambiguous Oracle write target column name \"%s\" after case folding",
+				                      data.column_names[i]);
+			}
+			actual_name = col_name_map[col_upper];
+		}
+
+		if (!actual_name.empty()) {
+			data.column_names[i] = actual_name;
+			if (col_type_map.count(actual_name)) {
+				data.oracle_types[i] = col_type_map[actual_name];
+			}
+		}
 	}
 }
 

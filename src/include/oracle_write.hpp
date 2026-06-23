@@ -81,6 +81,8 @@ private:
 };
 
 void RejectOracleWriteInExplicitTransaction(ClientContext &context);
+//! Resolve the Oracle target table and column metadata for attached-table writes using OCI binds.
+void ResolveOracleWriteTargetMetadata(OracleWriteBindData &data);
 
 unique_ptr<OracleWriteGlobalState> OracleWriteInitGlobal(ClientContext &context, OracleWriteBindData &bind_data);
 

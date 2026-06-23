@@ -166,11 +166,10 @@ static unordered_map<string, idx_t> LoadSpatialSRIDs(OracleCatalogState &state, 
 
 static void LoadColumns(OracleCatalogState &state, const string &schema, const string &table,
                         vector<ColumnDefinition> &columns, vector<OracleColumnMetadata> &metadata) {
-	auto query = StringUtil::Format("SELECT column_name, data_type, data_length, data_precision, data_scale, nullable "
-	                                "FROM all_tab_columns WHERE owner = UPPER(%s) AND table_name = UPPER(%s) "
-	                                "ORDER BY column_id",
-	                                Value(schema).ToSQLString().c_str(), Value(table).ToSQLString().c_str());
-	auto result = state.Query(query);
+	auto query = "SELECT column_name, data_type, data_length, data_precision, data_scale, nullable "
+	             "FROM all_tab_columns WHERE owner = :1 AND table_name = :2 "
+	             "ORDER BY column_id";
+	auto result = state.QueryWithStringBinds(query, {schema, table});
 
 	// Check if any spatial columns exist before querying SRID metadata
 	bool has_spatial = false;
