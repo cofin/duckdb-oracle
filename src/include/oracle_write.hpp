@@ -44,13 +44,15 @@ public:
 		return has_uncommitted_work && !committed && !aborted;
 	}
 	void RollbackUncommitted() noexcept;
-	void Sink(DataChunk &chunk, const vector<string> &oracle_types, const vector<ub2> &bind_types);
+	void Sink(DataChunk &chunk, const vector<string> &column_names, const vector<string> &oracle_types,
+	          const vector<ub2> &bind_types);
 
 	std::shared_ptr<OracleConnectionHandle> connection;
 	OCIHandlePtr<OCIStmt> stmthp;
 
 private:
-	void BindColumn(Vector &col, idx_t col_idx, idx_t count, ub2 bind_type);
+	void BindColumn(Vector &col, idx_t col_idx, idx_t count, const string &column_name, const string &oracle_type,
+	                ub2 bind_type);
 	void ExecuteBatch(idx_t count);
 
 	std::mutex sink_lock;

@@ -3,9 +3,9 @@ set -e
 
 # Oracle Instant Client Version (full client, not Basic Lite)
 OCI_VER_MAJOR=23
-OCI_VER_FULL=23.6.0.24.10
+OCI_VER_FULL=23.26.2.0.0
 # Base URL for Oracle Instant Client (Linux x64). If Oracle rotates the path, we fall back to latest links.
-BASE_URL="https://download.oracle.com/otn_software/linux/instantclient/2360000"
+BASE_URL="https://download.oracle.com/otn_software/linux/instantclient/2326200v2"
 LATEST_BASE_URL="https://download.oracle.com/otn_software/linux/instantclient"
 
 # Detect architecture

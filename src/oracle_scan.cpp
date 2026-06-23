@@ -164,6 +164,9 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
 		auto decision = OracleTypeRegistry::ResolveOciDescribe(type_metadata, result->settings);
 		OracleTypeRegistry::ValidateSupported(decision, type_metadata);
 		result->oracle_type_names.push_back(decision.normalized_type);
+		if (decision.category == OracleTypeCategory::JSON) {
+			result->oci_sizes.back() = MaxValue<ub4>(result->oci_sizes.back(), 32767);
+		}
 		return_types.push_back(decision.duckdb_type);
 		type_decisions.push_back(decision);
 	}
@@ -185,6 +188,7 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
 	if (needs_wrapper) {
 		result->base_query = "SELECT " + StringUtil::Join(converted_select_list, ", ") + " FROM (" + query + ")";
 		result->query = result->base_query;
+		result->stmt.reset();
 	}
 
 	result->original_types = return_types;

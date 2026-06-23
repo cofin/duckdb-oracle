@@ -9,8 +9,11 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
+#include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <iomanip>
+#include <sstream>
 #include <unordered_map>
 
 namespace duckdb {
@@ -181,7 +184,163 @@ static size_t OracleWriteInitialBufferSize(ub2 bind_type) {
 	return 4096;
 }
 
-static string OracleWriteValueToString(const Value &val) {
+static bool IsOracleVectorType(const string &oracle_type) {
+	auto type = StringUtil::Upper(oracle_type);
+	StringUtil::Trim(type);
+	return type == "VECTOR" || StringUtil::StartsWith(type, "VECTOR(");
+}
+
+static idx_t ParseOracleVectorDimension(const string &oracle_type) {
+	auto type = StringUtil::Upper(oracle_type);
+	auto open = type.find('(');
+	auto close = type.find(')', open == string::npos ? 0 : open);
+	if (open == string::npos || close == string::npos || close <= open + 1) {
+		return 0;
+	}
+	auto args = StringUtil::Split(type.substr(open + 1, close - open - 1), ',');
+	if (args.empty()) {
+		return 0;
+	}
+	auto dimension = args[0];
+	StringUtil::Trim(dimension);
+	if (dimension.empty() || dimension == "*") {
+		return 0;
+	}
+	try {
+		return static_cast<idx_t>(std::stoull(dimension));
+	} catch (...) {
+		return 0;
+	}
+}
+
+static string OracleVectorErrorPrefix(const string &column_name, const string &oracle_type) {
+	auto column = column_name.empty() ? "<unknown>" : column_name;
+	auto type = oracle_type.empty() ? "VECTOR" : oracle_type;
+	return StringUtil::Format("Invalid Oracle VECTOR value for column \"%s\" (target %s)", column.c_str(),
+	                          type.c_str());
+}
+
+static void ValidateOracleVectorTargetFormat(const string &column_name, const string &oracle_type) {
+	auto type = StringUtil::Upper(oracle_type);
+	if (StringUtil::Contains(type, "INT8") || StringUtil::Contains(type, "BINARY")) {
+		throw InvalidInputException("%s: VECTOR INT8 and BINARY target formats are not supported yet",
+		                            OracleVectorErrorPrefix(column_name, oracle_type).c_str());
+	}
+}
+
+static double ParseOracleVectorElement(const string &value, const string &full_value, const string &column_name,
+                                       const string &oracle_type) {
+	try {
+		size_t parsed = 0;
+		auto result = std::stod(value, &parsed);
+		if (parsed != value.size()) {
+			throw InvalidInputException("%s: expected numeric vector element. Value: \"%s\"",
+			                            OracleVectorErrorPrefix(column_name, oracle_type).c_str(), full_value.c_str());
+		}
+		if (!std::isfinite(result)) {
+			throw InvalidInputException("%s: NaN and Infinity are not supported for VECTOR writes. Value: \"%s\"",
+			                            OracleVectorErrorPrefix(column_name, oracle_type).c_str(), full_value.c_str());
+		}
+		return result;
+	} catch (const InvalidInputException &) {
+		throw;
+	} catch (const std::exception &ex) {
+		throw InvalidInputException("%s: expected numeric vector element: %s. Value: \"%s\"",
+		                            OracleVectorErrorPrefix(column_name, oracle_type).c_str(), ex.what(),
+		                            full_value.c_str());
+	}
+}
+
+static string FormatOracleVector(const vector<double> &values) {
+	std::ostringstream result;
+	result << "[";
+	for (idx_t i = 0; i < values.size(); i++) {
+		if (i > 0) {
+			result << ", ";
+		}
+		result << std::setprecision(17) << values[i];
+	}
+	result << "]";
+	return result.str();
+}
+
+static void ValidateOracleVectorDimension(const vector<double> &values, const string &column_name,
+                                          const string &oracle_type) {
+	auto expected_dimension = ParseOracleVectorDimension(oracle_type);
+	if (expected_dimension > 0 && values.size() != expected_dimension) {
+		auto expected = std::to_string(expected_dimension);
+		auto actual = std::to_string(values.size());
+		throw InvalidInputException("%s: expected %s dimensions but got %s",
+		                            OracleVectorErrorPrefix(column_name, oracle_type).c_str(), expected.c_str(),
+		                            actual.c_str());
+	}
+}
+
+static string NormalizeOracleVectorString(const string &input, const string &column_name, const string &oracle_type) {
+	ValidateOracleVectorTargetFormat(column_name, oracle_type);
+	auto value = input;
+	StringUtil::Trim(value);
+	if (value.size() < 2 || value.front() != '[' || value.back() != ']') {
+		throw InvalidInputException("%s: expected bracketed vector literal. Value: \"%s\"",
+		                            OracleVectorErrorPrefix(column_name, oracle_type).c_str(), input.c_str());
+	}
+
+	auto body = value.substr(1, value.size() - 2);
+	StringUtil::Trim(body);
+	vector<double> values;
+	if (!body.empty()) {
+		auto parts = StringUtil::Split(body, ',');
+		values.reserve(parts.size());
+		for (auto &part : parts) {
+			StringUtil::Trim(part);
+			if (part.empty()) {
+				throw InvalidInputException("%s: empty vector element. Value: \"%s\"",
+				                            OracleVectorErrorPrefix(column_name, oracle_type).c_str(), input.c_str());
+			}
+			values.push_back(ParseOracleVectorElement(part, input, column_name, oracle_type));
+		}
+	}
+	ValidateOracleVectorDimension(values, column_name, oracle_type);
+	return FormatOracleVector(values);
+}
+
+static string NormalizeOracleVectorValue(const Value &val, const string &column_name, const string &oracle_type) {
+	ValidateOracleVectorTargetFormat(column_name, oracle_type);
+	vector<double> values;
+	if (val.type().id() == LogicalTypeId::LIST || val.type().id() == LogicalTypeId::ARRAY) {
+		const auto &children =
+		    val.type().id() == LogicalTypeId::LIST ? ListValue::GetChildren(val) : ArrayValue::GetChildren(val);
+		values.reserve(children.size());
+		for (auto &child : children) {
+			if (child.IsNull()) {
+				throw InvalidInputException("%s: NULL vector elements are not supported",
+				                            OracleVectorErrorPrefix(column_name, oracle_type).c_str());
+			}
+			try {
+				auto numeric = child.DefaultCastAs(LogicalType::DOUBLE).GetValue<double>();
+				if (!std::isfinite(numeric)) {
+					throw InvalidInputException("%s: NaN and Infinity are not supported for VECTOR writes",
+					                            OracleVectorErrorPrefix(column_name, oracle_type).c_str());
+				}
+				values.push_back(numeric);
+			} catch (const InvalidInputException &) {
+				throw;
+			} catch (const std::exception &ex) {
+				throw InvalidInputException("%s: expected numeric vector element: %s",
+				                            OracleVectorErrorPrefix(column_name, oracle_type).c_str(), ex.what());
+			}
+		}
+		ValidateOracleVectorDimension(values, column_name, oracle_type);
+		return FormatOracleVector(values);
+	}
+
+	return NormalizeOracleVectorString(val.ToString(), column_name, oracle_type);
+}
+
+static string OracleWriteValueToString(const Value &val, const string &column_name, const string &oracle_type) {
+	if (IsOracleVectorType(oracle_type)) {
+		return NormalizeOracleVectorValue(val, column_name, oracle_type);
+	}
 	if (val.type().id() == LogicalTypeId::BLOB) {
 		return StringValue::Get(val);
 	}
@@ -291,14 +450,15 @@ void OracleWriteSink(ExecutionContext &context, OracleWriteBindData &data, Oracl
 	RejectOracleWriteInExplicitTransaction(context.client);
 	(void)lstate;
 	try {
-		gstate.Sink(input, data.oracle_types, data.bind_types);
+		gstate.Sink(input, data.column_names, data.oracle_types, data.bind_types);
 	} catch (...) {
 		gstate.RollbackUncommitted();
 		throw;
 	}
 }
 
-void OracleWriteGlobalState::Sink(DataChunk &chunk, const vector<string> &oracle_types, const vector<ub2> &bind_types) {
+void OracleWriteGlobalState::Sink(DataChunk &chunk, const vector<string> &column_names,
+                                  const vector<string> &oracle_types, const vector<ub2> &bind_types) {
 	std::lock_guard<std::mutex> guard(sink_lock);
 	idx_t count = chunk.size();
 	if (count == 0) {
@@ -322,7 +482,9 @@ void OracleWriteGlobalState::Sink(DataChunk &chunk, const vector<string> &oracle
 
 			for (idx_t i = 0; i < count; i++) {
 				if (validity.RowIsValid(i)) {
-					auto s = OracleWriteValueToString(chunk.data[col_idx].GetValue(i));
+					auto column_name = col_idx < column_names.size() ? column_names[col_idx] : "";
+					auto oracle_type = col_idx < oracle_types.size() ? oracle_types[col_idx] : "";
+					auto s = OracleWriteValueToString(chunk.data[col_idx].GetValue(i), column_name, oracle_type);
 					if (s.size() > max_len) {
 						max_len = s.size();
 					}
@@ -389,13 +551,16 @@ void OracleWriteGlobalState::Sink(DataChunk &chunk, const vector<string> &oracle
 	}
 
 	for (idx_t col_idx = 0; col_idx < chunk.ColumnCount(); col_idx++) {
-		BindColumn(chunk.data[col_idx], col_idx, count, bind_types[col_idx]);
+		auto column_name = col_idx < column_names.size() ? column_names[col_idx] : "";
+		auto oracle_type = col_idx < oracle_types.size() ? oracle_types[col_idx] : "";
+		BindColumn(chunk.data[col_idx], col_idx, count, column_name, oracle_type, bind_types[col_idx]);
 	}
 
 	ExecuteBatch(count);
 }
 
-void OracleWriteGlobalState::BindColumn(Vector &col, idx_t col_idx, idx_t count, ub2 bind_type) {
+void OracleWriteGlobalState::BindColumn(Vector &col, idx_t col_idx, idx_t count, const string &column_name,
+                                        const string &oracle_type, ub2 bind_type) {
 	auto &validity = FlatVector::Validity(col);
 	auto &bind_buffer = bind_buffers[col_idx];
 	auto &indicators = indicator_buffers[col_idx];
@@ -453,7 +618,7 @@ void OracleWriteGlobalState::BindColumn(Vector &col, idx_t col_idx, idx_t count,
 				lengths[i] = sizeof(OCIDate);
 			} else {
 				Value val = col.GetValue(i);
-				auto str_val = OracleWriteValueToString(val);
+				auto str_val = OracleWriteValueToString(val, column_name, oracle_type);
 
 				if (str_val.size() > element_size) {
 					throw IOException("Value too large for buffer");

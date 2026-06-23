@@ -216,6 +216,14 @@ TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_p
 	auto bind = make_uniq<OracleBindData>();
 	bind_data =
 	    OracleBindInternal(context, state->connection_string, query, return_types, names, bind.release(), state.get());
+	auto &oracle_bind = bind_data->Cast<OracleBindData>();
+	for (idx_t i = 0; i < column_metadata.size() && i < oracle_bind.oci_sizes.size(); i++) {
+		if (column_metadata[i].Category() == OracleTypeCategory::JSON) {
+			if (oracle_bind.oci_sizes[i] < 32767) {
+				oracle_bind.oci_sizes[i] = 32767;
+			}
+		}
+	}
 
 	TableFunction tf({}, OracleQueryFunction, nullptr, OracleInitGlobal, nullptr);
 	// We don't implement table_filters, so set filter_pushdown = false

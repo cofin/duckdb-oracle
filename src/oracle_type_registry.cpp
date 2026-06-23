@@ -139,7 +139,7 @@ string OracleTypeDecision::ConversionExpression(const string &quoted_col, const 
 		return StringUtil::Format("VECTOR_SERIALIZE(%s)", quoted_col.c_str());
 	case OracleTypeCategory::JSON:
 		if (version.supports_json_type) {
-			return StringUtil::Format("JSON_SERIALIZE(%s RETURNING VARCHAR2(32767))", quoted_col.c_str());
+			return StringUtil::Format("JSON_SERIALIZE(%s RETURNING CLOB)", quoted_col.c_str());
 		}
 		return quoted_col;
 	case OracleTypeCategory::XML:
@@ -184,7 +184,12 @@ OracleTypeDecision OracleTypeRegistry::ResolveMetadata(const OracleTypeMetadata 
 		return Supported(OracleTypeCategory::SPATIAL, type, logical, true, false);
 	}
 	if (type == "VECTOR" || StringUtil::StartsWith(type, "VECTOR(")) {
-		auto logical = settings.vector_to_list ? LogicalType::LIST(LogicalType::FLOAT) : LogicalType::VARCHAR;
+		if (StringUtil::Contains(type, "INT8") || StringUtil::Contains(type, "BINARY")) {
+			return Unsupported(OracleTypeCategory::VECTOR, type,
+			                   "VECTOR INT8 and BINARY formats are not supported by the DuckDB conversion path yet");
+		}
+		auto child_type = StringUtil::Contains(type, "FLOAT64") ? LogicalType::DOUBLE : LogicalType::FLOAT;
+		auto logical = settings.vector_to_list ? LogicalType::LIST(child_type) : LogicalType::VARCHAR;
 		return Supported(OracleTypeCategory::VECTOR, type, logical, true, false);
 	}
 	if (type == "JSON") {

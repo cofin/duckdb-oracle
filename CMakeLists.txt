@@ -49,6 +49,29 @@ set(EXTENSION_NAME ${TARGET_NAME}_extension)
 set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
 
 project(${TARGET_NAME})
+
+include(CheckCXXSourceCompiles)
+set(CMAKE_REQUIRED_INCLUDES ${OCI_INCLUDE_DIR})
+check_cxx_source_compiles("
+#include <oci.h>
+#ifndef SQLT_JSON
+#error SQLT_JSON missing
+#endif
+#ifndef SQLT_VEC
+#error SQLT_VEC missing
+#endif
+#ifndef SQLT_BOL
+#error SQLT_BOL missing
+#endif
+int main() {
+    return SQLT_JSON == 0 || SQLT_VEC == 0 || SQLT_BOL == 0;
+}
+" ORACLE_OCI_HAS_NATIVE_JSON_VECTOR_TYPES)
+unset(CMAKE_REQUIRED_INCLUDES)
+if (NOT ORACLE_OCI_HAS_NATIVE_JSON_VECTOR_TYPES)
+    message(FATAL_ERROR "Oracle Instant Client SDK headers must define SQLT_JSON, SQLT_VEC, and SQLT_BOL. Install Oracle Instant Client SDK 23.6 or newer; the setup scripts target the current 23.26 line.")
+endif()
+
 include_directories(src/include)
 
 set(EXTENSION_SOURCES

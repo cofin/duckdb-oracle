@@ -5,18 +5,6 @@
 #include "oracle_settings.hpp"
 #include <oci.h>
 
-#ifndef SQLT_JSON
-#define SQLT_JSON 119
-#endif
-
-#ifndef SQLT_VEC
-#define SQLT_VEC 127
-#endif
-
-#ifndef SQLT_BOL
-#define SQLT_BOL 252
-#endif
-
 namespace duckdb {
 
 //! Classification of Oracle column types for transport and conversion policy.

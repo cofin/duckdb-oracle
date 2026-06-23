@@ -2,6 +2,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/timestamp.hpp"
+#include <cmath>
 
 namespace duckdb {
 
@@ -93,19 +94,25 @@ static Value ParseDecimal(const string &value, const LogicalType &target_type, c
 	throw InternalException("unreachable DECIMAL conversion path");
 }
 
-static float ParseVectorElement(const string &value, const OracleConversionContext &context) {
+static double ParseVectorElement(const string &value, const OracleConversionContext &context) {
 	try {
 		size_t parsed = 0;
-		auto result = std::stof(value, &parsed);
-		RequireFullParse(value, parsed, context, "FLOAT");
+		auto result = std::stod(value, &parsed);
+		RequireFullParse(value, parsed, context, "numeric VECTOR element");
+		if (!std::isfinite(result)) {
+			ThrowConversionError(context, value, "NaN and Infinity are not supported for VECTOR reads");
+		}
 		return result;
+	} catch (const InvalidInputException &) {
+		throw;
 	} catch (const std::exception &ex) {
-		ThrowConversionError(context, value, "expected VECTOR FLOAT element: " + string(ex.what()));
+		ThrowConversionError(context, value, "expected numeric VECTOR element: " + string(ex.what()));
 	}
 	throw InternalException("unreachable VECTOR conversion path");
 }
 
-static Value ParseVectorJsonToList(const string &json_str, const OracleConversionContext &context) {
+static Value ParseVectorJsonToList(const string &json_str, const LogicalType &target_type,
+                                   const OracleConversionContext &context) {
 	vector<Value> elements;
 	auto value = json_str;
 	StringUtil::Trim(value);
@@ -113,10 +120,11 @@ static Value ParseVectorJsonToList(const string &json_str, const OracleConversio
 		ThrowConversionError(context, json_str, "expected VECTOR_SERIALIZE JSON array");
 	}
 
+	const auto &child_type = ListType::GetChildType(target_type);
 	value = value.substr(1, value.size() - 2);
 	StringUtil::Trim(value);
 	if (value.empty()) {
-		return Value::LIST(LogicalType::FLOAT, std::move(elements));
+		return Value::LIST(child_type, std::move(elements));
 	}
 
 	auto parts = StringUtil::Split(value, ',');
@@ -126,9 +134,14 @@ static Value ParseVectorJsonToList(const string &json_str, const OracleConversio
 		if (part.empty()) {
 			ThrowConversionError(context, json_str, "empty VECTOR element");
 		}
-		elements.push_back(Value::FLOAT(ParseVectorElement(part, context)));
+		auto element = ParseVectorElement(part, context);
+		if (child_type.id() == LogicalTypeId::DOUBLE) {
+			elements.push_back(Value::DOUBLE(element));
+		} else {
+			elements.push_back(Value::FLOAT(static_cast<float>(element)));
+		}
 	}
-	return Value::LIST(LogicalType::FLOAT, std::move(elements));
+	return Value::LIST(child_type, std::move(elements));
 }
 
 static void SetStringLikeValue(Vector &output_vector, idx_t row_index, const char *data, ub2 length) {
@@ -165,7 +178,7 @@ void SetOracleOutputValue(ClientContext &context, Vector &output_vector, idx_t r
 	}
 	case LogicalTypeId::LIST: {
 		auto value = ReadOracleString(data, length);
-		output_vector.SetValue(row_index, ParseVectorJsonToList(value, conversion_context));
+		output_vector.SetValue(row_index, ParseVectorJsonToList(value, target_type, conversion_context));
 		break;
 	}
 	case LogicalTypeId::GEOMETRY: {
