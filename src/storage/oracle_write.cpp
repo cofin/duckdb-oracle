@@ -242,25 +242,21 @@ unique_ptr<FunctionData> OracleWriteBind(ClientContext &context, CopyFunctionBin
 //--- Global State ---
 
 OracleWriteGlobalState::OracleWriteGlobalState(std::shared_ptr<OracleConnectionHandle> conn, const string &query)
-    : connection(std::move(conn)), stmthp(nullptr) {
+    : connection(std::move(conn)) {
 	auto ctx = connection->Get();
-	CheckOCIError(OCIHandleAlloc(ctx->envhp, reinterpret_cast<dvoid **>(&stmthp), OCI_HTYPE_STMT, 0, nullptr),
-	              ctx->errhp, "OCIHandleAlloc stmthp");
+	stmthp = AllocateOCIStatement(ctx->envhp, ctx->errhp, "OCIHandleAlloc stmthp");
 
 	// Make a mutable copy of query string for OCI
 	std::vector<char> query_buffer(query.begin(), query.end());
 	query_buffer.push_back(0);
 
-	CheckOCIError(OCIStmtPrepare(stmthp, ctx->errhp, reinterpret_cast<OraText *>(query_buffer.data()),
+	CheckOCIError(OCIStmtPrepare(stmthp.get(), ctx->errhp, reinterpret_cast<OraText *>(query_buffer.data()),
 	                             static_cast<ub4>(query.size()), OCI_NTV_SYNTAX, OCI_DEFAULT),
 	              ctx->errhp, "OCIStmtPrepare");
 }
 
 OracleWriteGlobalState::~OracleWriteGlobalState() {
 	RollbackUncommitted();
-	if (stmthp) {
-		OCIHandleFree(stmthp, OCI_HTYPE_STMT);
-	}
 }
 
 void OracleWriteGlobalState::RollbackUncommitted() noexcept {
@@ -353,7 +349,7 @@ void OracleWriteSink(ExecutionContext &context, FunctionData &bind_data, GlobalF
 	auto &data = bind_data.Cast<OracleWriteBindData>();
 
 	if (!lstate.connection) {
-		lstate = OracleWriteLocalState(gstate.connection, gstate.stmthp);
+		lstate = OracleWriteLocalState(gstate.connection, gstate.stmthp.get());
 	}
 
 	auto input_size = input.size();

@@ -134,11 +134,7 @@ static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vecto
 		auto ctx = conn_handle->Get();
 
 		// Allocate statement handle
-		OCIStmt *stmthp_raw = nullptr;
-		CheckOCIError(OCIHandleAlloc(ctx->envhp, (dvoid **)&stmthp_raw, OCI_HTYPE_STMT, 0, nullptr), ctx->errhp,
-		              "Failed to allocate OCI statement handle");
-		auto stmthp = std::unique_ptr<OCIStmt, std::function<void(OCIStmt *)>>(
-		    stmthp_raw, [](OCIStmt *p) { OCIHandleFree(p, OCI_HTYPE_STMT); });
+		auto stmthp = AllocateOCIStatement(ctx->envhp, ctx->errhp, "Failed to allocate OCI statement handle");
 
 		// Prepare statement
 		sword status = OCIStmtPrepare(stmthp.get(), ctx->errhp, (OraText *)sql_statement.c_str(), sql_statement.size(),
@@ -217,27 +213,25 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
 	auto ctx = result->conn_handle->Get();
 
 	// Allocate statement handle on the shared environment and keep it for fetch phase
-	OCIStmt *stmt_raw = nullptr;
-	CheckOCIError(OCIHandleAlloc(ctx->envhp, (dvoid **)&stmt_raw, OCI_HTYPE_STMT, 0, nullptr), ctx->errhp,
-	              "Failed to allocate OCI statement handle");
-
-	result->stmt = std::shared_ptr<OCIStmt>(stmt_raw, [](OCIStmt *stmt) {
-		if (stmt) {
-			OCIHandleFree(stmt, OCI_HTYPE_STMT);
-		}
-	});
+	result->stmt = AllocateSharedOCIStatement(ctx->envhp, ctx->errhp, "Failed to allocate OCI statement handle");
 
 	try {
 		// Bound call timeout for describe/execute to avoid hangs
 		ub4 call_timeout_ms = 30000; // 30s (per-call upper bound)
+		// Some OCI clients reject statement call timeout attributes (ORA-24315).
+		// Keep this best-effort rather than failing otherwise valid scans.
 		OCIAttrSet(result->stmt.get(), OCI_HTYPE_STMT, &call_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp);
 
 		// Set prefetch/array tuning from settings
 		ub4 prefetch_rows = result->settings.prefetch_rows;
-		OCIAttrSet(result->stmt.get(), OCI_HTYPE_STMT, &prefetch_rows, 0, OCI_ATTR_PREFETCH_ROWS, ctx->errhp);
+		CheckOCIError(
+		    OCIAttrSet(result->stmt.get(), OCI_HTYPE_STMT, &prefetch_rows, 0, OCI_ATTR_PREFETCH_ROWS, ctx->errhp),
+		    ctx->errhp, "Failed to set OCI prefetch rows");
 		if (result->settings.prefetch_memory > 0) {
 			ub4 prefetch_mem = result->settings.prefetch_memory;
-			OCIAttrSet(result->stmt.get(), OCI_HTYPE_STMT, &prefetch_mem, 0, OCI_ATTR_PREFETCH_MEMORY, ctx->errhp);
+			CheckOCIError(
+			    OCIAttrSet(result->stmt.get(), OCI_HTYPE_STMT, &prefetch_mem, 0, OCI_ATTR_PREFETCH_MEMORY, ctx->errhp),
+			    ctx->errhp, "Failed to set OCI prefetch memory");
 		}
 
 		sword status;
@@ -257,17 +251,18 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
 		              ctx->errhp, "Failed to get OCI parameter count");
 
 		for (ub4 i = 1; i <= param_count; i++) {
-			OCIParam *param;
-			CheckOCIError(OCIParamGet(result->stmt.get(), OCI_HTYPE_STMT, ctx->errhp, (dvoid **)&param, i), ctx->errhp,
-			              "Failed to get OCI parameter");
+			OCIParam *param_raw = nullptr;
+			CheckOCIError(OCIParamGet(result->stmt.get(), OCI_HTYPE_STMT, ctx->errhp, (dvoid **)&param_raw, i),
+			              ctx->errhp, "Failed to get OCI parameter");
+			OCIDescriptorPtr<OCIParam> param(param_raw, OCIDescriptorFreeDeleter {OCI_DTYPE_PARAM});
 
 			ub2 data_type;
-			CheckOCIError(OCIAttrGet(param, OCI_DTYPE_PARAM, &data_type, 0, OCI_ATTR_DATA_TYPE, ctx->errhp), ctx->errhp,
-			              "Failed to get OCI data type");
+			CheckOCIError(OCIAttrGet(param.get(), OCI_DTYPE_PARAM, &data_type, 0, OCI_ATTR_DATA_TYPE, ctx->errhp),
+			              ctx->errhp, "Failed to get OCI data type");
 
 			OraText *col_name;
 			ub4 col_name_len;
-			CheckOCIError(OCIAttrGet(param, OCI_DTYPE_PARAM, &col_name, &col_name_len, OCI_ATTR_NAME, ctx->errhp),
+			CheckOCIError(OCIAttrGet(param.get(), OCI_DTYPE_PARAM, &col_name, &col_name_len, OCI_ATTR_NAME, ctx->errhp),
 			              ctx->errhp, "Failed to get OCI column name");
 
 			names.emplace_back((char *)col_name, col_name_len);
@@ -276,14 +271,14 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
 
 			ub2 precision = 0;
 			sb1 scale = 0;
-			CheckOCIError(OCIAttrGet(param, OCI_DTYPE_PARAM, &precision, 0, OCI_ATTR_PRECISION, ctx->errhp), ctx->errhp,
-			              "Failed to get OCI precision");
-			CheckOCIError(OCIAttrGet(param, OCI_DTYPE_PARAM, &scale, 0, OCI_ATTR_SCALE, ctx->errhp), ctx->errhp,
+			CheckOCIError(OCIAttrGet(param.get(), OCI_DTYPE_PARAM, &precision, 0, OCI_ATTR_PRECISION, ctx->errhp),
+			              ctx->errhp, "Failed to get OCI precision");
+			CheckOCIError(OCIAttrGet(param.get(), OCI_DTYPE_PARAM, &scale, 0, OCI_ATTR_SCALE, ctx->errhp), ctx->errhp,
 			              "Failed to get OCI scale");
 
 			ub4 char_len = 0;
-			CheckOCIError(OCIAttrGet(param, OCI_DTYPE_PARAM, &char_len, 0, OCI_ATTR_CHAR_SIZE, ctx->errhp), ctx->errhp,
-			              "Failed to get OCI char size");
+			CheckOCIError(OCIAttrGet(param.get(), OCI_DTYPE_PARAM, &char_len, 0, OCI_ATTR_CHAR_SIZE, ctx->errhp),
+			              ctx->errhp, "Failed to get OCI char size");
 			result->oci_sizes.push_back(char_len > 0 ? char_len : 4000); // Default buffer size
 
 			switch (data_type) {
@@ -465,25 +460,23 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &context, Ta
 			fprintf(stderr, "[oracle] InitGlobal: re-preparing query: %s\n", bind.query.c_str());
 		}
 
-		OCIStmt *stmt_raw = nullptr;
-		CheckOCIError(OCIHandleAlloc(ctx->envhp, (dvoid **)&stmt_raw, OCI_HTYPE_STMT, 0, nullptr), ctx->errhp,
-		              "Failed to allocate OCI statement handle");
-
-		state->stmt = std::shared_ptr<OCIStmt>(stmt_raw, [](OCIStmt *stmt) {
-			if (stmt) {
-				OCIHandleFree(stmt, OCI_HTYPE_STMT);
-			}
-		});
+		state->stmt = AllocateSharedOCIStatement(ctx->envhp, ctx->errhp, "Failed to allocate OCI statement handle");
 
 		// Apply settings
 		ub4 call_timeout_ms = 30000;
+		// Some OCI clients reject statement call timeout attributes (ORA-24315).
+		// Keep this best-effort rather than failing otherwise valid scans.
 		OCIAttrSet(state->stmt.get(), OCI_HTYPE_STMT, &call_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp);
 
 		ub4 prefetch_rows = bind.settings.prefetch_rows;
-		OCIAttrSet(state->stmt.get(), OCI_HTYPE_STMT, &prefetch_rows, 0, OCI_ATTR_PREFETCH_ROWS, ctx->errhp);
+		CheckOCIError(
+		    OCIAttrSet(state->stmt.get(), OCI_HTYPE_STMT, &prefetch_rows, 0, OCI_ATTR_PREFETCH_ROWS, ctx->errhp),
+		    ctx->errhp, "Failed to set OCI prefetch rows");
 		if (bind.settings.prefetch_memory > 0) {
 			ub4 prefetch_mem = bind.settings.prefetch_memory;
-			OCIAttrSet(state->stmt.get(), OCI_HTYPE_STMT, &prefetch_mem, 0, OCI_ATTR_PREFETCH_MEMORY, ctx->errhp);
+			CheckOCIError(
+			    OCIAttrSet(state->stmt.get(), OCI_HTYPE_STMT, &prefetch_mem, 0, OCI_ATTR_PREFETCH_MEMORY, ctx->errhp),
+			    ctx->errhp, "Failed to set OCI prefetch memory");
 		}
 
 		CheckOCIError(OCIStmtPrepare(state->stmt.get(), ctx->errhp, (OraText *)bind.query.c_str(), bind.query.size(),

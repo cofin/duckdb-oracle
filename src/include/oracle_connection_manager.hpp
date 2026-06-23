@@ -21,7 +21,6 @@ struct OracleContext {
 	OCISvcCtx *svchp = nullptr;
 	OCIServer *srvhp = nullptr;
 	OCISession *authp = nullptr;
-	OCIStmt *stmthp = nullptr; // Shared statement handle for some ops
 	bool connected = false;
 	bool owns_env = false;
 

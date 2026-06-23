@@ -56,10 +56,6 @@ static void ParseOracleConnectionString(const std::string &connection_string, st
 }
 
 OracleContext::~OracleContext() {
-	if (stmthp) {
-		OCIHandleFree(stmthp, OCI_HTYPE_STMT);
-		stmthp = nullptr;
-	}
 	if (svchp && authp && errhp) {
 		OCISessionEnd(svchp, errhp, authp, OCI_DEFAULT);
 	}
@@ -278,6 +274,8 @@ std::shared_ptr<OracleContext> OracleConnectionManager::CreateConnection(const s
 	              "Failed to allocate OCI service context handle");
 
 	// Set call/connection timeouts on server handle before attach
+	// Some OCI clients reject these pre-attach server attributes (ORA-24315).
+	// Keep them best-effort; the service context call timeout is checked below.
 	ub4 call_timeout_ms = 10000;
 	OCIAttrSet(ctx->srvhp, OCI_HTYPE_SERVER, &call_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp);
 	ub4 conn_timeout_ms = 10000;
@@ -310,25 +308,25 @@ std::shared_ptr<OracleContext> OracleConnectionManager::CreateConnection(const s
 
 	// Set NLS date/timestamp format to ISO
 	{
-		OCIStmt *stmt = nullptr;
-		CheckOCIError(OCIHandleAlloc(ctx->envhp, (dvoid **)&stmt, OCI_HTYPE_STMT, 0, nullptr), ctx->errhp,
-		              "Failed to allocate statement handle for NLS setup");
+		auto stmt = AllocateOCIStatement(ctx->envhp, ctx->errhp, "Failed to allocate statement handle for NLS setup");
 		std::string sql = "ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY-MM-DD HH24:MI:SS' NLS_TIMESTAMP_FORMAT = "
 		                  "'YYYY-MM-DD HH24:MI:SS.FF'";
-		CheckOCIError(OCIStmtPrepare(stmt, ctx->errhp, (OraText *)sql.c_str(), sql.size(), OCI_NTV_SYNTAX, OCI_DEFAULT),
-		              ctx->errhp, "Failed to prepare NLS setup statement");
-		CheckOCIError(OCIStmtExecute(ctx->svchp, stmt, ctx->errhp, 1, 0, nullptr, nullptr, OCI_DEFAULT), ctx->errhp,
-		              "Failed to execute NLS setup statement");
-		OCIHandleFree(stmt, OCI_HTYPE_STMT);
+		CheckOCIError(
+		    OCIStmtPrepare(stmt.get(), ctx->errhp, (OraText *)sql.c_str(), sql.size(), OCI_NTV_SYNTAX, OCI_DEFAULT),
+		    ctx->errhp, "Failed to prepare NLS setup statement");
+		CheckOCIError(OCIStmtExecute(ctx->svchp, stmt.get(), ctx->errhp, 1, 0, nullptr, nullptr, OCI_DEFAULT),
+		              ctx->errhp, "Failed to execute NLS setup statement");
 	}
 
 	// Enable statement cache (Disable for debugging shift issue)
 	ub4 stmt_cache_size = 0;
-	OCIAttrSet(ctx->svchp, OCI_HTYPE_SVCCTX, &stmt_cache_size, 0, OCI_ATTR_STMTCACHESIZE, ctx->errhp);
+	CheckOCIError(OCIAttrSet(ctx->svchp, OCI_HTYPE_SVCCTX, &stmt_cache_size, 0, OCI_ATTR_STMTCACHESIZE, ctx->errhp),
+	              ctx->errhp, "Failed to set OCI statement cache size");
 
 	// Default call timeout for operations on this service context
 	ub4 svc_call_timeout_ms = 30000;
-	OCIAttrSet(ctx->svchp, OCI_HTYPE_SVCCTX, &svc_call_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp);
+	CheckOCIError(OCIAttrSet(ctx->svchp, OCI_HTYPE_SVCCTX, &svc_call_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp),
+	              ctx->errhp, "Failed to set OCI call timeout on service context");
 
 	ctx->connected = true;
 	return ctx;

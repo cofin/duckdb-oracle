@@ -2,6 +2,7 @@
 
 #include "duckdb.hpp"
 #include "oracle_connection.hpp"
+#include "oracle_utils.hpp"
 #include "oracle_settings.hpp"
 #include "duckdb/function/copy_function.hpp"
 #include "duckdb/common/vector.hpp"
@@ -67,7 +68,7 @@ public:
 	void RollbackUncommitted() noexcept;
 
 	std::shared_ptr<OracleConnectionHandle> connection;
-	OCIStmt *stmthp;
+	OCIHandlePtr<OCIStmt> stmthp;
 
 private:
 	bool has_uncommitted_work = false;
