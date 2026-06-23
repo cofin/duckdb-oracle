@@ -26,6 +26,8 @@ readonly DB_PASSWORD="password"
 readonly DB_USER="duckdb_test"
 readonly DB_USER_PWD="duckdb_test"
 readonly SETUP_DIR="$(pwd)/test/integration_tests/init_sql"
+readonly INTEGRATION_TEMP_TEST_FILE="test/integration_temp.test"
+readonly LEGACY_INTEGRATION_TEMP_TEST_FILE="test/unit_tests/test_integration_temp.test"
 
 # Flags
 CLEANUP_ENABLED=1
@@ -131,6 +133,8 @@ get_free_port() {
 cleanup() {
   local exit_code=$?
 
+  rm -f "${INTEGRATION_TEMP_TEST_FILE}" "${LEGACY_INTEGRATION_TEMP_TEST_FILE}"
+
   if [[ "$CLEANUP_ENABLED" -eq 0 ]]; then
     echo ""
     echo "Container cleanup disabled (--keep-container flag)"
@@ -151,7 +155,6 @@ cleanup() {
   echo "Cleaning up container ${CONTAINER_NAME}..."
   ${RUNTIME} stop "${CONTAINER_NAME}" >/dev/null 2>&1 || true
   ${RUNTIME} rm "${CONTAINER_NAME}" >/dev/null 2>&1 || true
-  rm -f test/unit_tests/test_integration_temp.test
 }
 
 #######################################
@@ -267,22 +270,21 @@ main() {
       echo "Running test: ${test_file}"
       
       # Create a temporary test file with Oracle connection placeholders replaced
-      TEMP_TEST_FILE="test/integration_temp.test"
       sed -e "s|\${ORACLE_HOST}|${ORACLE_HOST}|g" \
         -e "s|\${ORACLE_PORT}|${ORACLE_PORT}|g" \
         -e "s|\${ORACLE_SERVICE}|${ORACLE_SERVICE}|g" \
         -e "s|\${ORACLE_USER}|${ORACLE_USER}|g" \
         -e "s|\${ORACLE_PASSWORD}|${ORACLE_PASSWORD}|g" \
         -e "s|\${ORACLE_CONNECTION_STRING}|${ORACLE_CONNECTION_STRING}|g" \
-        "${test_file}" > "${TEMP_TEST_FILE}"
+        "${test_file}" > "${INTEGRATION_TEMP_TEST_FILE}"
       
       if command -v timeout >/dev/null 2>&1; then
-        timeout "${INTEGRATION_TEST_TIMEOUT}" ./build/release/test/unittest "${TEMP_TEST_FILE}"
+        timeout "${INTEGRATION_TEST_TIMEOUT}" ./build/release/test/unittest "${INTEGRATION_TEMP_TEST_FILE}"
       else
-        ./build/release/test/unittest "${TEMP_TEST_FILE}"
+        ./build/release/test/unittest "${INTEGRATION_TEMP_TEST_FILE}"
       fi
       
-      rm -f "${TEMP_TEST_FILE}"
+      rm -f "${INTEGRATION_TEMP_TEST_FILE}"
     done
     echo "Integration tests completed successfully."
   else
@@ -290,7 +292,7 @@ main() {
     echo "Creating basic smoke test to verify Oracle connection..."
 
     # Create a minimal smoke test to verify the integration script works
-    cat <<EOF > test/unit_tests/test_integration_temp.test
+    cat <<EOF > "${LEGACY_INTEGRATION_TEMP_TEST_FILE}"
 # name: test_oracle_integration_smoke
 # description: Basic Oracle integration smoke test
 # group: [oracle_integration]
@@ -304,7 +306,7 @@ SELECT * FROM oracle_query('${ORACLE_CONNECTION_STRING}', 'SELECT 1 FROM DUAL');
 EOF
 
     echo "Executing smoke test..."
-    ./build/release/test/unittest "test/unit_tests/test_integration_temp.test"
+    ./build/release/test/unittest "${LEGACY_INTEGRATION_TEMP_TEST_FILE}"
     echo "Smoke test completed successfully."
   fi
 }

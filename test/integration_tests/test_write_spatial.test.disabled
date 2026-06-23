@@ -1,0 +1,7 @@
+# name: test/integration_tests/test_write_spatial.test.disabled
+# description: Disabled spatial write stub. Keep out of the default `*.test` integration run until a verified SDO_GEOMETRY roundtrip is available for gvenzl/oracle-free:23-slim.
+# group: [integration_tests]
+#
+# This file is intentionally not named `*.test` so the default integration
+# discovery in `scripts/test_integration.sh` does not treat the placeholder as
+# a passing test.
