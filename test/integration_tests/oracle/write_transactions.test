@@ -1,0 +1,102 @@
+# name: test/integration_tests/oracle/write_transactions.test
+# description: Statement-atomic Oracle write transaction behavior
+# group: [oracle]
+
+require oracle
+
+statement ok
+CREATE OR REPLACE MACRO oracle_test_conn() AS '${ORACLE_CONNECTION_STRING}';
+
+statement ok
+CREATE OR REPLACE SECRET test_oracle_txn (
+    TYPE ORACLE,
+    USER '${ORACLE_USER}',
+    PASSWORD '${ORACLE_PASSWORD}',
+    HOST '${ORACLE_HOST}',
+    PORT ${ORACLE_PORT},
+    SERVICE '${ORACLE_SERVICE}'
+);
+
+statement ok
+ATTACH '' AS ora (TYPE ORACLE, SECRET 'test_oracle_txn')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), '
+    BEGIN
+       EXECUTE IMMEDIATE ''DROP TABLE write_txn_behavior'';
+    EXCEPTION
+       WHEN OTHERS THEN
+          IF SQLCODE != -942 THEN
+             RAISE;
+          END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), '
+    CREATE TABLE write_txn_behavior (
+        id NUMBER PRIMARY KEY,
+        value_col NUMBER
+    )
+')
+
+statement ok
+INSERT INTO ora.write_txn_behavior VALUES (1, 10);
+
+query I
+SELECT COUNT(*) FROM ora.write_txn_behavior WHERE id = 1;
+----
+1
+
+statement error
+INSERT INTO ora.write_txn_behavior
+SELECT CASE WHEN i = 2050 THEN 1 ELSE i END::INTEGER AS id, i::INTEGER AS value_col
+FROM range(2, 4098) tbl(i);
+----
+ORA-00001
+
+query I
+SELECT * FROM oracle_query(oracle_test_conn(), 'SELECT COUNT(*) FROM write_txn_behavior WHERE id >= 2');
+----
+0
+
+statement ok
+SELECT oracle_clear_cache();
+
+statement ok
+BEGIN TRANSACTION;
+
+statement error
+INSERT INTO ora.write_txn_behavior VALUES (9999, 9999);
+----
+<REGEX>:.*Oracle writes are statement-atomic.*explicit DuckDB transaction block.*
+
+statement ok
+ROLLBACK;
+
+query I
+SELECT * FROM oracle_query(oracle_test_conn(), 'SELECT COUNT(*) FROM write_txn_behavior WHERE id = 9999');
+----
+0
+
+statement ok
+BEGIN TRANSACTION;
+
+statement error
+COPY (SELECT 10000 AS id, 10000 AS value_col) TO 'write_txn_behavior' (
+    FORMAT ORACLE,
+    CONNECTION_STRING '${ORACLE_CONNECTION_STRING}'
+);
+----
+<REGEX>:.*Oracle writes are statement-atomic.*explicit DuckDB transaction block.*
+
+statement ok
+ROLLBACK;
+
+query I
+SELECT * FROM oracle_query(oracle_test_conn(), 'SELECT COUNT(*) FROM write_txn_behavior WHERE id = 10000');
+----
+0
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), 'DROP TABLE write_txn_behavior')

@@ -123,5 +123,7 @@ make integration
 
 ## Limitations
 
-- **Transaction Management**: Currently auto-commits read/write operations.
+- **Transaction Management**: Oracle writes are statement-atomic: a successful DuckDB write statement commits to
+  Oracle, a failed write statement rolls back its Oracle work, and Oracle writes are rejected inside explicit DuckDB
+  transaction blocks until true cross-system transaction integration exists.
 - **Views**: Visible only if present in `ALL_TABLES` (standard behavior).

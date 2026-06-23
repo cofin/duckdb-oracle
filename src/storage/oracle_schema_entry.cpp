@@ -17,6 +17,7 @@
 #include "duckdb/execution/physical_plan_generator.hpp"
 #include "oracle_catalog_state.hpp"
 #include "oracle_insert.hpp"
+#include "oracle_write.hpp"
 #include "oracle_connection_resolver.hpp"
 #include <memory>
 #include "oracle_table_entry.hpp"
@@ -163,6 +164,8 @@ public:
 
 	PhysicalOperator &PlanInsert(ClientContext &context, PhysicalPlanGenerator &planner, LogicalInsert &op,
 	                             optional_ptr<PhysicalOperator> plan) override {
+		RejectOracleWriteInExplicitTransaction(context);
+
 		// Use the table name directly — schema resolution happens in the write init
 		string insert_table_name = op.table.name;
 

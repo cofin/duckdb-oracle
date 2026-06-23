@@ -61,6 +61,9 @@ public:
 		has_uncommitted_work = false;
 		committed = true;
 	}
+	bool ShouldCommit() const {
+		return has_uncommitted_work && !committed && !aborted;
+	}
 	void RollbackUncommitted() noexcept;
 
 	std::shared_ptr<OracleConnectionHandle> connection;
@@ -69,6 +72,7 @@ public:
 private:
 	bool has_uncommitted_work = false;
 	bool committed = false;
+	bool aborted = false;
 };
 
 class OracleWriteLocalState : public LocalFunctionData {
@@ -101,6 +105,8 @@ private:
 // CopyFunction implementations
 unique_ptr<FunctionData> OracleWriteBind(ClientContext &context, CopyFunctionBindInput &input,
                                          const vector<string> &names, const vector<LogicalType> &sql_types);
+
+void RejectOracleWriteInExplicitTransaction(ClientContext &context);
 
 unique_ptr<GlobalFunctionData> OracleWriteInitGlobal(ClientContext &context, FunctionData &bind_data,
                                                      const string &file_path);

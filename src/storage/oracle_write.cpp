@@ -9,15 +9,26 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
 #include "oracle_connection.hpp" // For OracleConnection wrapper
+#include <cstdio>
 #include <cstring>
 #include <unordered_map>
 
 namespace duckdb {
 
+void RejectOracleWriteInExplicitTransaction(ClientContext &context) {
+	if (!context.transaction.IsAutoCommit()) {
+		throw InvalidInputException("Oracle writes are statement-atomic and cannot run inside an explicit DuckDB "
+		                            "transaction block; commit or rollback the DuckDB transaction before writing to "
+		                            "Oracle");
+	}
+}
+
 //--- Bind Data ---
 
 unique_ptr<FunctionData> OracleWriteBind(ClientContext &context, CopyFunctionBindInput &input,
                                          const vector<string> &names, const vector<LogicalType> &sql_types) {
+	RejectOracleWriteInExplicitTransaction(context);
+
 	auto result = make_uniq<OracleWriteBindData>();
 
 	// Target table name passed as "file path" or via TABLE option
@@ -256,6 +267,8 @@ void OracleWriteGlobalState::RollbackUncommitted() noexcept {
 	if (!connection || !has_uncommitted_work || committed) {
 		return;
 	}
+	aborted = true;
+	connection->MarkUnusable();
 	auto ctx = connection->Get();
 	auto status = OCITransRollback(ctx->svchp, ctx->errhp, OCI_DEFAULT);
 	has_uncommitted_work = false;
@@ -266,13 +279,15 @@ void OracleWriteGlobalState::RollbackUncommitted() noexcept {
 
 unique_ptr<GlobalFunctionData> OracleWriteInitGlobal(ClientContext &context, FunctionData &bind_data,
                                                      const string &file_path) {
+	RejectOracleWriteInExplicitTransaction(context);
+
 	auto &data = bind_data.Cast<OracleWriteBindData>();
 
 	// Acquire connection
 	auto conn = OracleConnectionManager::Instance().Acquire(data.connection_string, data.wallet_path, data.settings);
 
 	// Generate SQL
-	string sql = "INSERT /*+ APPEND_VALUES */ INTO ";
+	string sql = "INSERT INTO ";
 	if (!data.schema_name.empty()) {
 		sql += KeywordHelper::WriteQuoted(data.schema_name, '"') + ".";
 	}
@@ -331,6 +346,8 @@ unique_ptr<LocalFunctionData> OracleWriteInitLocal(ExecutionContext &context, Fu
 
 void OracleWriteSink(ExecutionContext &context, FunctionData &bind_data, GlobalFunctionData &gstate_p,
                      LocalFunctionData &lstate_p, DataChunk &input) {
+	RejectOracleWriteInExplicitTransaction(context.client);
+
 	auto &gstate = gstate_p.Cast<OracleWriteGlobalState>();
 	auto &lstate = lstate_p.Cast<OracleWriteLocalState>();
 	auto &data = bind_data.Cast<OracleWriteBindData>();
@@ -343,7 +360,12 @@ void OracleWriteSink(ExecutionContext &context, FunctionData &bind_data, GlobalF
 	if (input_size > 0) {
 		gstate.MarkUncommittedWork();
 	}
-	lstate.Sink(input, data.oracle_types, data.bind_types);
+	try {
+		lstate.Sink(input, data.oracle_types, data.bind_types);
+	} catch (...) {
+		gstate.RollbackUncommitted();
+		throw;
+	}
 }
 
 void OracleWriteLocalState::Sink(DataChunk &chunk, const vector<string> &oracle_types, const vector<ub2> &bind_types) {
@@ -529,17 +551,26 @@ void OracleWriteLocalState::BindColumn(Vector &col, idx_t col_idx, idx_t count, 
 
 void OracleWriteLocalState::ExecuteBatch(idx_t count) {
 	auto ctx = connection->Get();
-	CheckOCIError(
-	    OCIStmtExecute(ctx->svchp, stmthp, ctx->errhp, static_cast<ub4>(count), 0, nullptr, nullptr, OCI_DEFAULT),
-	    ctx->errhp, "OCIStmtExecute Insert");
+	auto status =
+	    OCIStmtExecute(ctx->svchp, stmthp, ctx->errhp, static_cast<ub4>(count), 0, nullptr, nullptr, OCI_DEFAULT);
+	if (status != OCI_SUCCESS && status != OCI_SUCCESS_WITH_INFO) {
+		connection->MarkUnusable();
+		OCITransRollback(ctx->svchp, ctx->errhp, OCI_DEFAULT);
+	}
+	CheckOCIError(status, ctx->errhp, "OCIStmtExecute Insert");
 }
 
 void OracleWriteFinalize(ClientContext &context, FunctionData &bind_data, GlobalFunctionData &gstate_p) {
 	auto &gstate = gstate_p.Cast<OracleWriteGlobalState>();
-	if (gstate.connection) {
+	if (gstate.connection && gstate.ShouldCommit()) {
 		auto ctx = gstate.connection->Get();
-		CheckOCIError(OCITransCommit(ctx->svchp, ctx->errhp, OCI_DEFAULT), ctx->errhp, "OCITransCommit");
-		gstate.MarkCommitted();
+		try {
+			CheckOCIError(OCITransCommit(ctx->svchp, ctx->errhp, OCI_DEFAULT), ctx->errhp, "OCITransCommit");
+			gstate.MarkCommitted();
+		} catch (...) {
+			gstate.RollbackUncommitted();
+			throw;
+		}
 	}
 }
 
