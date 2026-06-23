@@ -115,11 +115,6 @@ string BuildConnectionStringFromSecret(const KeyValueSecret &secret) {
 	// Validate before building connection string
 	ValidateOracleSecret(params);
 
-	// Handle wallet path if provided (set TNS_ADMIN environment variable)
-	if (!params.wallet_path.empty()) {
-		setenv("TNS_ADMIN", params.wallet_path.c_str(), 1);
-	}
-
 	// Build Oracle EZConnect format: user/password@host:port/service
 	string connection_string = params.user;
 
@@ -130,6 +125,14 @@ string BuildConnectionStringFromSecret(const KeyValueSecret &secret) {
 	connection_string += "@" + params.host + ":" + std::to_string(params.port) + "/" + params.service;
 
 	return connection_string;
+}
+
+string GetWalletPathFromSecret(const KeyValueSecret &secret) {
+	Value val;
+	if (secret.TryGetValue("wallet_path", val)) {
+		return val.ToString();
+	}
+	return "";
 }
 
 unique_ptr<BaseSecret> CreateOracleSecretFromConfig(ClientContext &context, CreateSecretInput &input) {

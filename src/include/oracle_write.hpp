@@ -2,6 +2,7 @@
 
 #include "duckdb.hpp"
 #include "oracle_connection.hpp"
+#include "oracle_settings.hpp"
 #include "duckdb/function/copy_function.hpp"
 #include "duckdb/common/vector.hpp"
 #include <vector>
@@ -11,6 +12,8 @@ namespace duckdb {
 struct OracleWriteBindData : public FunctionData {
 	string table_name;
 	string connection_string;
+	string wallet_path;
+	OracleSettings settings;
 
 	// Helper to reconstruct SQL
 	string schema_name;
@@ -28,6 +31,8 @@ public:
 		auto result = make_uniq<OracleWriteBindData>();
 		result->table_name = table_name;
 		result->connection_string = connection_string;
+		result->wallet_path = wallet_path;
+		result->settings = settings;
 		result->schema_name = schema_name;
 		result->object_name = object_name;
 		result->column_names = column_names;
@@ -39,7 +44,8 @@ public:
 
 	bool Equals(const FunctionData &other_p) const override {
 		auto &other = other_p.Cast<OracleWriteBindData>();
-		return table_name == other.table_name && connection_string == other.connection_string;
+		return table_name == other.table_name && connection_string == other.connection_string &&
+		       wallet_path == other.wallet_path;
 	}
 };
 

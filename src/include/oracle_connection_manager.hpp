@@ -53,7 +53,8 @@ public:
 	static OracleConnectionManager &Instance();
 
 	std::shared_ptr<OracleConnectionHandle> Acquire(const std::string &connection_string,
-	                                                const OracleSettings &settings, idx_t wait_timeout_ms = 10000);
+	                                                const std::string &wallet_path, const OracleSettings &settings,
+	                                                idx_t wait_timeout_ms = 10000);
 
 	void Clear();
 
@@ -70,7 +71,7 @@ private:
 	~OracleConnectionManager();
 
 	std::shared_ptr<OracleContext> CreateConnection(const std::string &connection_string,
-	                                                const OracleSettings &settings);
+	                                                const std::string &wallet_path, const OracleSettings &settings);
 };
 
 } // namespace duckdb

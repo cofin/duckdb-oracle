@@ -14,13 +14,12 @@ OracleConnection::~OracleConnection() {
 	// Handle destructor releases connection back to pool automatically
 }
 
-void OracleConnection::Connect(const std::string &connection_string) {
+void OracleConnection::Connect(const std::string &connection_string, const std::string &wallet_path,
+                               const OracleSettings &settings) {
 	if (conn_handle) {
 		return;
 	}
-	// Use default settings for catalog connections
-	OracleSettings settings;
-	conn_handle = OracleConnectionManager::Instance().Acquire(connection_string, settings);
+	conn_handle = OracleConnectionManager::Instance().Acquire(connection_string, wallet_path, settings);
 }
 
 bool OracleConnection::IsConnected() const {

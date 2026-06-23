@@ -12,6 +12,10 @@ static inline int setenv(const char *name, const char *value, int overwrite) {
 	}
 	return _putenv_s(name, value);
 }
+
+static inline int unsetenv(const char *name) {
+	return _putenv_s(name, "");
+}
 #endif
 
 namespace duckdb {

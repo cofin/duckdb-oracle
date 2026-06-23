@@ -39,7 +39,7 @@ OracleConnection &OracleCatalogState::EnsureConnectionInternal() {
 		connection = make_uniq<OracleConnection>();
 	}
 	if (!connection->IsConnected()) {
-		connection->Connect(connection_string);
+		connection->Connect(connection_string, wallet_path, settings);
 	}
 	return *connection;
 }

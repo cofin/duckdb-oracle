@@ -13,6 +13,7 @@ class OracleCatalogState;
 
 struct OracleBindData : public FunctionData {
 	string connection_string;
+	string wallet_path;
 	string base_query;
 	string query;
 	vector<ub2> oci_types;
@@ -63,7 +64,8 @@ struct OracleScanState : public GlobalTableFunctionState {
 unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string connection_string, string query,
                                             vector<LogicalType> &return_types, vector<string> &names,
                                             OracleBindData *bind_data_ptr = nullptr,
-                                            OracleCatalogState *state = nullptr);
+                                            OracleCatalogState *state = nullptr, bool reject_bare_identifier = false,
+                                            const char *surface = "Oracle table function");
 
 void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataChunk &output);
 

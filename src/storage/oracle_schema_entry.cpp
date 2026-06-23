@@ -17,6 +17,7 @@
 #include "duckdb/execution/physical_plan_generator.hpp"
 #include "oracle_catalog_state.hpp"
 #include "oracle_insert.hpp"
+#include "oracle_connection_resolver.hpp"
 #include <memory>
 #include "oracle_table_entry.hpp"
 
@@ -178,9 +179,10 @@ public:
 			plan = planner.ResolveDefaultsProjection(op, *plan);
 		}
 
-		auto &insert =
-		    planner.Make<PhysicalOracleInsert>(op.types, std::move(insert_table_name), state->connection_string,
-		                                       std::move(col_names), std::move(col_types), op.estimated_cardinality);
+		auto resolved = ResolveOracleConnection(context, state->connection_string, state.get());
+		auto &insert = planner.Make<PhysicalOracleInsert>(
+		    op.types, std::move(insert_table_name), resolved.connection_string, resolved.wallet_path, resolved.settings,
+		    std::move(col_names), std::move(col_types), op.estimated_cardinality);
 		if (plan) {
 			insert.children.push_back(*plan);
 		}

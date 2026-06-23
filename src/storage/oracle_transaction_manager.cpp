@@ -1,5 +1,6 @@
 #include "oracle_transaction_manager.hpp"
 #include "oracle_transaction.hpp"
+#include "oracle_connection_resolver.hpp"
 #include "duckdb/common/exception.hpp"
 
 namespace duckdb {
@@ -9,7 +10,9 @@ OracleTransactionManager::OracleTransactionManager(AttachedDatabase &db, shared_
 }
 
 Transaction &OracleTransactionManager::StartTransaction(ClientContext &context) {
-	auto txn = make_uniq<OracleTransaction>(*this, context, state->connection_string);
+	auto resolved = ResolveOracleConnection(context, state->connection_string, state.get());
+	auto txn = make_uniq<OracleTransaction>(*this, context, resolved.connection_string, resolved.wallet_path,
+	                                        resolved.settings);
 	auto &result = *txn;
 	active.push_back(std::move(txn));
 	return result;

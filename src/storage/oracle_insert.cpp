@@ -29,11 +29,13 @@ struct OracleInsertLocalState : public LocalSinkState {
 //--- PhysicalOracleInsert ---
 
 PhysicalOracleInsert::PhysicalOracleInsert(PhysicalPlan &physical_plan, vector<LogicalType> types, string table_name_p,
-                                           string connection_string_p, vector<string> column_names_p,
-                                           vector<LogicalType> column_types_p, idx_t estimated_cardinality)
+                                           string connection_string_p, string wallet_path_p, OracleSettings settings_p,
+                                           vector<string> column_names_p, vector<LogicalType> column_types_p,
+                                           idx_t estimated_cardinality)
     : PhysicalOperator(physical_plan, PhysicalOperatorType::EXTENSION, std::move(types), estimated_cardinality),
       table_name(std::move(table_name_p)), connection_string(std::move(connection_string_p)),
-      column_names(std::move(column_names_p)), column_types(std::move(column_types_p)) {
+      wallet_path(std::move(wallet_path_p)), settings(std::move(settings_p)), column_names(std::move(column_names_p)),
+      column_types(std::move(column_types_p)) {
 }
 
 unique_ptr<GlobalSinkState> PhysicalOracleInsert::GetGlobalSinkState(ClientContext &context) const {
@@ -41,6 +43,8 @@ unique_ptr<GlobalSinkState> PhysicalOracleInsert::GetGlobalSinkState(ClientConte
 	auto bind_data = make_uniq<OracleWriteBindData>();
 	bind_data->table_name = table_name;
 	bind_data->connection_string = connection_string;
+	bind_data->wallet_path = wallet_path;
+	bind_data->settings = settings;
 	bind_data->column_names = column_names;
 	bind_data->column_types = column_types;
 
@@ -92,7 +96,7 @@ unique_ptr<GlobalSinkState> PhysicalOracleInsert::GetGlobalSinkState(ClientConte
 	if (!connection_string.empty()) {
 		try {
 			OracleConnection temp_conn;
-			temp_conn.Connect(connection_string);
+			temp_conn.Connect(connection_string, wallet_path, settings);
 
 			string schema_filter = bind_data->schema_name.empty() ? "owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')"
 			                                                      : "owner = upper('" + bind_data->schema_name + "')";

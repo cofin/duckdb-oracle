@@ -25,6 +25,7 @@
 #include <condition_variable>
 #include "oracle_table_function.hpp"
 #include "oracle_catalog_state.hpp"
+#include "oracle_connection_resolver.hpp"
 #include "oracle_secret.hpp"
 #include "oracle_connection_manager.hpp"
 #include "oracle_write.hpp" // Include write support
@@ -58,6 +59,7 @@ OracleBindData::OracleBindData() {
 unique_ptr<FunctionData> OracleBindData::Copy() const {
 	auto copy = make_uniq<OracleBindData>();
 	copy->connection_string = connection_string;
+	copy->wallet_path = wallet_path;
 	copy->base_query = base_query;
 	copy->query = query;
 	copy->oci_types = oci_types;
@@ -72,7 +74,8 @@ unique_ptr<FunctionData> OracleBindData::Copy() const {
 
 bool OracleBindData::Equals(const FunctionData &other) const {
 	auto &other_bind_data = (const OracleBindData &)other;
-	return query == other_bind_data.query && connection_string == other_bind_data.connection_string;
+	return query == other_bind_data.query && connection_string == other_bind_data.connection_string &&
+	       wallet_path == other_bind_data.wallet_path;
 }
 
 static timestamp_t ParseOciTimestamp(const char *data, ub2 len) {
@@ -102,74 +105,22 @@ static bool PathIsDirectory(const string &path) {
 	return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
 }
 
-static OracleSettings GetOracleSettings(ClientContext &context, OracleCatalogState *state) {
-	OracleSettings settings;
-	if (state) {
-		settings = state->settings;
-	}
-
-	Value option_value;
-	if (context.TryGetCurrentSetting("oracle_enable_pushdown", option_value)) {
-		settings.enable_pushdown = option_value.GetValue<bool>();
-	}
-	if (context.TryGetCurrentSetting("oracle_prefetch_rows", option_value)) {
-		auto val = option_value.GetValue<int64_t>();
-		settings.prefetch_rows = MaxValue<idx_t>(1, static_cast<idx_t>(val));
-	}
-	if (context.TryGetCurrentSetting("oracle_prefetch_memory", option_value)) {
-		auto val = option_value.GetValue<int64_t>();
-		settings.prefetch_memory = val <= 0 ? 0 : static_cast<idx_t>(val);
-	}
-	if (context.TryGetCurrentSetting("oracle_array_size", option_value)) {
-		auto val = option_value.GetValue<int64_t>();
-		settings.array_size = MaxValue<idx_t>(1, static_cast<idx_t>(val));
-	}
-	if (context.TryGetCurrentSetting("oracle_connection_cache", option_value)) {
-		settings.connection_cache = option_value.GetValue<bool>();
-	}
-	if (context.TryGetCurrentSetting("oracle_connection_limit", option_value)) {
-		auto val = option_value.GetValue<int64_t>();
-		settings.connection_limit = MaxValue<idx_t>(1, static_cast<idx_t>(val));
-	}
-	if (context.TryGetCurrentSetting("oracle_debug_show_queries", option_value)) {
-		settings.debug_show_queries = option_value.GetValue<bool>();
-	}
-	if (context.TryGetCurrentSetting("oracle_lazy_schema_loading", option_value)) {
-		settings.lazy_schema_loading = option_value.GetValue<bool>();
-	}
-	if (context.TryGetCurrentSetting("oracle_metadata_object_types", option_value)) {
-		settings.metadata_object_types = option_value.ToString();
-	}
-	if (context.TryGetCurrentSetting("oracle_metadata_result_limit", option_value)) {
-		auto val = option_value.GetValue<int64_t>();
-		settings.metadata_result_limit = val <= 0 ? 0 : static_cast<idx_t>(val);
-	}
-	if (context.TryGetCurrentSetting("oracle_use_current_schema", option_value)) {
-		settings.use_current_schema = option_value.GetValue<bool>();
-	}
-	if (context.TryGetCurrentSetting("oracle_enable_spatial_types", option_value)) {
-		settings.enable_spatial_types = option_value.GetValue<bool>();
-	}
-	return settings;
-}
-
 //! Oracle Execute Function - Execute arbitrary SQL without expecting result set
 static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	// We only expect a single row input (scalar function); operate on the first tuple.
-	auto connection_string = args.data[0].GetValue(0).ToString();
-	auto sql_statement = args.data[1].GetValue(0).ToString();
+	auto connection_value = args.data[0].GetValue(0);
+	auto sql_value = args.data[1].GetValue(0);
 
-	if (connection_string.empty()) {
+	if (connection_value.IsNull() || sql_value.IsNull()) {
 		result.SetValue(0, Value());
 		return;
 	}
 
-	// Support attached DB alias: if no '@' present, treat as alias of an attached Oracle database.
-	if (connection_string.find('@') == string::npos) {
-		auto catalog_state = OracleCatalogState::LookupByAlias(connection_string);
-		if (catalog_state) {
-			connection_string = catalog_state->connection_string;
-		}
+	auto connection_string = connection_value.ToString();
+	auto sql_statement = sql_value.ToString();
+	if (connection_string.empty()) {
+		result.SetValue(0, Value());
+		return;
 	}
 
 	if (getenv("ORACLE_DEBUG")) {
@@ -177,8 +128,9 @@ static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vecto
 	}
 
 	try {
-		OracleSettings settings; // defaults; execute does not depend on session options
-		auto conn_handle = OracleConnectionManager::Instance().Acquire(connection_string, settings);
+		auto resolved = ResolveOracleConnection(state.GetContext(), connection_string, nullptr, true, "oracle_execute");
+		auto conn_handle = OracleConnectionManager::Instance().Acquire(resolved.connection_string, resolved.wallet_path,
+		                                                               resolved.settings);
 		auto ctx = conn_handle->Get();
 
 		// Allocate statement handle
@@ -242,9 +194,13 @@ static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vecto
 unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string connection_string, string query,
                                             vector<LogicalType> &return_types, vector<string> &names,
                                             OracleBindData *bind_data_ptr /* = nullptr */,
-                                            OracleCatalogState *state /* = nullptr */) {
+                                            OracleCatalogState *state /* = nullptr */,
+                                            bool reject_bare_identifier /* = false */,
+                                            const char *surface /* = "Oracle table function" */) {
 	auto result = bind_data_ptr ? unique_ptr<OracleBindData>(bind_data_ptr) : make_uniq<OracleBindData>();
-	result->connection_string = connection_string;
+	auto resolved = ResolveOracleConnection(context, connection_string, state, reject_bare_identifier, surface);
+	result->connection_string = resolved.connection_string;
+	result->wallet_path = resolved.wallet_path;
 
 	// Clear output vectors - they will be populated from OCI describe below.
 	// This prevents duplication when caller pre-populates vectors (e.g., GetScanFunction).
@@ -252,11 +208,12 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
 	return_types.clear();
 	result->base_query = query;
 	result->query = query;
-	result->settings = GetOracleSettings(context, state);
+	result->settings = resolved.settings;
 	if (getenv("ORACLE_DEBUG")) {
-		fprintf(stderr, "[oracle] raw connection: %s\n", connection_string.c_str());
+		fprintf(stderr, "[oracle] resolved connection reference for %s\n", surface);
 	}
-	result->conn_handle = OracleConnectionManager::Instance().Acquire(connection_string, result->settings);
+	result->conn_handle =
+	    OracleConnectionManager::Instance().Acquire(result->connection_string, result->wallet_path, result->settings);
 	auto ctx = result->conn_handle->Get();
 
 	// Allocate statement handle on the shared environment and keep it for fetch phase
@@ -410,23 +367,17 @@ static unique_ptr<FunctionData> OracleScanBind(ClientContext &context, TableFunc
 	auto quoted_schema = KeywordHelper::WriteQuoted(schema_name, '"');
 	auto quoted_table = KeywordHelper::WriteQuoted(table_name, '"');
 	string query = StringUtil::Format("SELECT * FROM %s.%s", quoted_schema.c_str(), quoted_table.c_str());
-	return OracleBindInternal(context, connection_string, query, return_types, names);
+	return OracleBindInternal(context, connection_string, query, return_types, names, nullptr, nullptr, true,
+	                          "oracle_scan");
 }
 
 static unique_ptr<FunctionData> OracleQueryBind(ClientContext &context, TableFunctionBindInput &input,
                                                 vector<LogicalType> &return_types, vector<string> &names) {
 	auto connection_string = input.inputs[0].GetValue<string>();
 
-	// Support attached DB alias: if no '@' present, treat as alias of an attached Oracle database.
-	if (connection_string.find('@') == string::npos) {
-		auto state = OracleCatalogState::LookupByAlias(connection_string);
-		if (state) {
-			connection_string = state->connection_string;
-		}
-	}
-
 	auto query = input.inputs[1].GetValue<string>();
-	return OracleBindInternal(context, connection_string, query, return_types, names);
+	return OracleBindInternal(context, connection_string, query, return_types, names, nullptr, nullptr, true,
+	                          "oracle_query");
 }
 
 unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &context, TableFunctionInitInput &input) {
@@ -484,7 +435,8 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &context, Ta
 
 	state->conn_handle = bind.conn_handle;
 	if (!state->conn_handle) {
-		state->conn_handle = OracleConnectionManager::Instance().Acquire(bind.connection_string, bind.settings);
+		state->conn_handle =
+		    OracleConnectionManager::Instance().Acquire(bind.connection_string, bind.wallet_path, bind.settings);
 	}
 
 	auto ctx = state->conn_handle->Get();

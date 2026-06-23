@@ -25,8 +25,9 @@ struct OracleVersionInfo {
 //! Shared state per attached Oracle database used by generators for schemas/tables.
 class OracleCatalogState {
 public:
-	explicit OracleCatalogState(std::string connection_string_p)
-	    : connection_string(std::move(connection_string_p)), connection(make_uniq<OracleConnection>()) {
+	explicit OracleCatalogState(std::string connection_string_p, std::string wallet_path_p = "")
+	    : connection_string(std::move(connection_string_p)), wallet_path(std::move(wallet_path_p)),
+	      connection(make_uniq<OracleConnection>()) {
 	}
 
 	void Connect();
@@ -40,6 +41,7 @@ public:
 	static shared_ptr<OracleCatalogState> LookupByAlias(const string &alias);
 
 	OracleSettings settings;
+	string wallet_path;
 
 	// Current schema detection
 	void DetectCurrentSchema();

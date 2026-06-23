@@ -4,6 +4,7 @@
 #include "oracle_write.hpp"
 #include "oracle_utils.hpp"
 #include "oracle_connection_manager.hpp"
+#include "oracle_connection_resolver.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
@@ -43,7 +44,10 @@ unique_ptr<FunctionData> OracleWriteBind(ClientContext &context, CopyFunctionBin
 	}
 
 	if (conn_it != options.end()) {
-		result->connection_string = conn_it->second.front().ToString();
+		auto resolved = ResolveOracleConnection(context, conn_it->second.front().ToString());
+		result->connection_string = resolved.connection_string;
+		result->wallet_path = resolved.wallet_path;
+		result->settings = resolved.settings;
 	}
 
 	// Check for TABLE option override
@@ -116,10 +120,9 @@ unique_ptr<FunctionData> OracleWriteBind(ClientContext &context, CopyFunctionBin
 	// Introspect Oracle table to get actual types
 	if (!result->connection_string.empty()) {
 		try {
-			OracleSettings settings;
 			// Use temporary connection logic to avoid catalog state dependency if simple string
 			OracleConnection temp_conn;
-			temp_conn.Connect(result->connection_string);
+			temp_conn.Connect(result->connection_string, result->wallet_path, result->settings);
 
 			// Try to find table metadata
 			string schema_filter = result->schema_name.empty() ? "owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')"
@@ -253,8 +256,7 @@ unique_ptr<GlobalFunctionData> OracleWriteInitGlobal(ClientContext &context, Fun
 	auto &data = bind_data.Cast<OracleWriteBindData>();
 
 	// Acquire connection
-	OracleSettings settings; // Default settings
-	auto conn = OracleConnectionManager::Instance().Acquire(data.connection_string, settings);
+	auto conn = OracleConnectionManager::Instance().Acquire(data.connection_string, data.wallet_path, data.settings);
 
 	// Generate SQL
 	string sql = "INSERT /*+ APPEND_VALUES */ INTO ";

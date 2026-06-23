@@ -6,6 +6,7 @@
 #include "duckdb/main/secret/secret_manager.hpp"
 #include "oracle_storage_extension.hpp"
 #include "oracle_transaction_manager.hpp"
+#include "oracle_connection_resolver.hpp"
 #include "oracle_secret.hpp"
 
 namespace duckdb {
@@ -17,6 +18,7 @@ static unique_ptr<Catalog> OracleAttach(optional_ptr<StorageExtensionInfo> stora
 	options.access_mode = AccessMode::READ_ONLY;
 
 	string connection_string;
+	string wallet_path;
 
 	// Decision logic: path vs secret
 	if (!info.path.empty()) {
@@ -61,6 +63,7 @@ static unique_ptr<Catalog> OracleAttach(optional_ptr<StorageExtensionInfo> stora
 
 		// Build connection string from secret parameters
 		connection_string = BuildConnectionStringFromSecret(*kv_secret);
+		wallet_path = GetWalletPathFromSecret(*kv_secret);
 	}
 
 	// Use in-memory storage underneath the DuckDB catalog
@@ -71,7 +74,7 @@ static unique_ptr<Catalog> OracleAttach(optional_ptr<StorageExtensionInfo> stora
 	if (oracle_info && oracle_info->state) {
 		state = oracle_info->state;
 	} else {
-		state = make_shared_ptr<OracleCatalogState>(connection_string);
+		state = make_shared_ptr<OracleCatalogState>(connection_string, wallet_path);
 		OracleCatalogState::Register(state, name);
 		if (oracle_info) {
 			oracle_info->state = state;
@@ -79,6 +82,9 @@ static unique_ptr<Catalog> OracleAttach(optional_ptr<StorageExtensionInfo> stora
 	}
 	// Map attach options to state settings (best-effort, ignore unknown keys).
 	state->ApplyOptions(options.options);
+	auto resolved = ResolveOracleConnection(context, state->connection_string, state.get());
+	state->settings = resolved.settings;
+	state->wallet_path = resolved.wallet_path;
 	return CreateOracleCatalog(db, state);
 }
 

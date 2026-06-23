@@ -28,6 +28,9 @@ void ValidateOracleSecret(const OracleSecretParameters &params);
 //! Returns EZConnect format: user/password@host:port/service
 string BuildConnectionStringFromSecret(const KeyValueSecret &secret);
 
+//! Extract optional Oracle wallet path from secret parameters
+string GetWalletPathFromSecret(const KeyValueSecret &secret);
+
 //! Create secret function for Oracle secrets
 unique_ptr<BaseSecret> CreateOracleSecretFromConfig(ClientContext &context, CreateSecretInput &input);
 

@@ -1,9 +1,50 @@
 #include "oracle_connection_manager.hpp"
 #include "oracle_utils.hpp"
 #include "duckdb/common/string_util.hpp"
+#include <cstdlib>
 #include <cstdio>
 
 namespace duckdb {
+
+namespace {
+
+static std::string MakePoolKey(const std::string &connection_string, const std::string &wallet_path) {
+	return std::to_string(wallet_path.size()) + ":" + wallet_path + connection_string;
+}
+
+static std::mutex &WalletEnvLock() {
+	static std::mutex lock;
+	return lock;
+}
+
+struct ScopedTnsAdmin {
+	explicit ScopedTnsAdmin(const std::string &wallet_path) {
+		if (wallet_path.empty()) {
+			return;
+		}
+		const auto *current = getenv("TNS_ADMIN");
+		if (current) {
+			previous = current;
+		}
+		changed = true;
+		setenv("TNS_ADMIN", wallet_path.c_str(), 1);
+	}
+
+	~ScopedTnsAdmin() {
+		if (changed) {
+			if (previous.empty()) {
+				unsetenv("TNS_ADMIN");
+			} else {
+				setenv("TNS_ADMIN", previous.c_str(), 1);
+			}
+		}
+	}
+
+	std::string previous;
+	bool changed = false;
+};
+
+} // namespace
 
 static void ParseOracleConnectionString(const std::string &connection_string, std::string &user, std::string &password,
                                         std::string &db) {
@@ -89,11 +130,12 @@ void OracleConnectionManager::Clear() {
 }
 
 std::shared_ptr<OracleConnectionHandle> OracleConnectionManager::Acquire(const std::string &connection_string,
+                                                                         const std::string &wallet_path,
                                                                          const OracleSettings &settings,
                                                                          idx_t wait_timeout_ms) {
 	// If caching disabled, create a standalone connection
 	if (!settings.connection_cache) {
-		auto ctx = CreateConnection(connection_string, settings);
+		auto ctx = CreateConnection(connection_string, wallet_path, settings);
 		return std::make_shared<OracleConnectionHandle>(nullptr, std::move(ctx));
 	}
 
@@ -102,7 +144,7 @@ std::shared_ptr<OracleConnectionHandle> OracleConnectionManager::Acquire(const s
 
 	{
 		std::unique_lock<std::mutex> lock(manager_mutex);
-		auto &p = pools[connection_string];
+		auto &p = pools[MakePoolKey(connection_string, wallet_path)];
 		if (!p) {
 			p = std::make_shared<OracleConnectionPool>();
 		}
@@ -129,7 +171,7 @@ std::shared_ptr<OracleConnectionHandle> OracleConnectionManager::Acquire(const s
 			pool->total++;
 			lock.unlock(); // Unlock pool to create connection
 			try {
-				auto ctx = CreateConnection(connection_string, settings);
+				auto ctx = CreateConnection(connection_string, wallet_path, settings);
 				return std::make_shared<OracleConnectionHandle>(pool, std::move(ctx));
 			} catch (...) {
 				// Rollback reservation
@@ -147,6 +189,7 @@ std::shared_ptr<OracleConnectionHandle> OracleConnectionManager::Acquire(const s
 }
 
 std::shared_ptr<OracleContext> OracleConnectionManager::CreateConnection(const std::string &connection_string,
+                                                                         const std::string &wallet_path,
                                                                          const OracleSettings &settings) {
 	auto ctx = std::make_shared<OracleContext>();
 	ctx->envhp = envhp;
@@ -154,6 +197,8 @@ std::shared_ptr<OracleContext> OracleConnectionManager::CreateConnection(const s
 
 	std::string user, password, db;
 	ParseOracleConnectionString(connection_string, user, password, db);
+	std::unique_lock<std::mutex> wallet_lock(WalletEnvLock());
+	ScopedTnsAdmin tns_admin(wallet_path);
 
 	CheckOCIError(OCIHandleAlloc(ctx->envhp, (dvoid **)&ctx->errhp, OCI_HTYPE_ERROR, 0, nullptr), nullptr,
 	              "Failed to allocate OCI error handle");
