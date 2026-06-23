@@ -58,8 +58,7 @@ CUR=$(grep -oE 'duckdb_version:[[:space:]]*v[0-9.]+' "$PIPELINE" | head -1 | gre
 
 echo "DuckDB target: ${CUR} -> ${TAG}   (ext-bump=${EXT_BUMP}, dry-run=${DRY_RUN})"
 if [ "$CUR" = "$TAG" ]; then
-  echo "Already at ${TAG}; nothing to do."
-  exit 0
+  echo "Pipeline already references ${TAG}; continuing to verify submodules and metadata."
 fi
 
 run() {  # echo + execute, unless dry-run
@@ -80,9 +79,11 @@ fi
 note "extension-ci-tools submodule -> ${TAG} (fallback ${MINOR})"
 run git -C extension-ci-tools fetch --tags --quiet
 if [ "$DRY_RUN" -eq 1 ]; then
-  echo "    \$ (checkout ${TAG} if tag exists, else origin/${MINOR})"
+  echo "    \$ (checkout ${TAG} tag if it exists, else origin/${TAG}, else origin/${MINOR})"
 elif git -C extension-ci-tools rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
   git -C extension-ci-tools checkout --quiet "$TAG"
+elif git -C extension-ci-tools rev-parse -q --verify "origin/${TAG}" >/dev/null; then
+  git -C extension-ci-tools checkout --quiet -B "$TAG" "origin/${TAG}"
 else
   git -C extension-ci-tools fetch --quiet origin "$MINOR" 2>/dev/null || true
   if git -C extension-ci-tools rev-parse -q --verify "origin/${MINOR}" >/dev/null; then
@@ -104,7 +105,9 @@ echo "    (updated @v refs, duckdb_version, ci_tools_version)"
 # --- 4. extension version bump (description.yml) -----------------------------
 if [ "$EXT_BUMP" -eq 1 ]; then
   note "extension version: bump-my-version patch"
-  if [ "$DRY_RUN" -eq 0 ]; then
+  if [ "$CUR" = "$TAG" ]; then
+    echo "    (skipped: pipeline already references ${TAG})"
+  elif [ "$DRY_RUN" -eq 0 ]; then
     uvx bump-my-version bump patch
   else
     echo "    \$ uvx bump-my-version bump patch  (dry-run)"
@@ -116,7 +119,7 @@ EXT_VER=$(grep -E '^  version:' description.yml | awk '{print $2}')
 note "$COMPAT (+ row: ${TAG} / v${EXT_VER})"
 DATE=$(date -u +%Y-%m-%d)
 ROW="| ${TAG} | v${EXT_VER} | ✅ Compatible | ${DATE} | DuckDB ${TAG} upgrade |"
-if [ "$DRY_RUN" -eq 0 ]; then
+if [ "$DRY_RUN" -eq 0 ] && ! grep -qF "| ${TAG} |" "$COMPAT"; then
   printf '%s\n' "$ROW" >> "$COMPAT"
 fi
 echo "    ${ROW}"
