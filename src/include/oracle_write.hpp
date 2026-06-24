@@ -30,7 +30,7 @@ struct OracleWriteBindData {
 
 class OracleWriteGlobalState {
 public:
-	OracleWriteGlobalState(std::shared_ptr<OracleConnectionHandle> conn, const string &query);
+	OracleWriteGlobalState(std::shared_ptr<OracleConnectionHandle> conn, const string &query, idx_t max_batch_size);
 	~OracleWriteGlobalState();
 
 	void MarkUncommittedWork() {
@@ -51,8 +51,8 @@ public:
 	OCIHandlePtr<OCIStmt> stmthp;
 
 private:
-	void BindColumn(Vector &col, idx_t col_idx, idx_t count, const string &column_name, const string &oracle_type,
-	                ub2 bind_type);
+	void BindColumn(Vector &col, idx_t col_idx, idx_t offset, idx_t count, const string &column_name,
+	                const string &oracle_type, ub2 bind_type);
 	void ExecuteBatch(idx_t count);
 
 	std::mutex sink_lock;
@@ -67,7 +67,7 @@ private:
 	std::vector<OCIBind *> binds;
 	std::vector<size_t> current_buffer_sizes;
 
-	static constexpr idx_t MAX_BATCH_SIZE = STANDARD_VECTOR_SIZE;
+	idx_t max_batch_size = STANDARD_VECTOR_SIZE;
 };
 
 class OracleWriteLocalState {

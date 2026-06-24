@@ -79,6 +79,7 @@ set(EXTENSION_SOURCES
     src/oracle_connection.cpp
     src/oracle_connection_resolver.cpp
     src/oracle_connection_manager.cpp
+    src/oracle_debug_stats.cpp
     src/oracle_secret.cpp
     src/oracle_scan.cpp
     src/oracle_pushdown.cpp

@@ -2,6 +2,7 @@
 #include "oracle_catalog_state.hpp"
 #include "oracle_connection_manager.hpp"
 #include "oracle_connection_resolver.hpp"
+#include "oracle_debug_stats.hpp"
 #include "oracle_pushdown.hpp"
 #include "oracle_secret.hpp"
 #include "oracle_table_function.hpp"
@@ -110,6 +111,23 @@ static void OracleClearCache(DataChunk &, ExpressionState &, Vector &result) {
 	result.SetValue(0, Value("oracle caches cleared"));
 }
 
+static void OracleDebugResetStatsFunction(DataChunk &, ExpressionState &, Vector &result) {
+	OracleDebugResetStats();
+	result.SetValue(0, Value("oracle debug stats reset"));
+}
+
+static void OracleDebugCounterFunction(DataChunk &args, ExpressionState &, Vector &result) {
+	auto count = args.size();
+	for (idx_t i = 0; i < count; i++) {
+		auto value = args.data[0].GetValue(i);
+		if (value.IsNull()) {
+			result.SetValue(i, Value());
+			continue;
+		}
+		result.SetValue(i, Value::UBIGINT(OracleDebugGetCounter(value.ToString())));
+	}
+}
+
 void RegisterOracleFunctions(ExtensionLoader &loader) {
 	SecretType secret_type;
 	secret_type.name = "oracle";
@@ -148,6 +166,14 @@ void RegisterOracleFunctions(ExtensionLoader &loader) {
 
 	auto clear_cache_func = ScalarFunction("oracle_clear_cache", {}, LogicalType::VARCHAR, OracleClearCache);
 	loader.RegisterFunction(clear_cache_func);
+
+	auto debug_reset_func =
+	    ScalarFunction("oracle_debug_reset_stats", {}, LogicalType::VARCHAR, OracleDebugResetStatsFunction);
+	loader.RegisterFunction(debug_reset_func);
+
+	auto debug_counter_func = ScalarFunction("oracle_debug_counter", {LogicalType::VARCHAR}, LogicalType::UBIGINT,
+	                                         OracleDebugCounterFunction);
+	loader.RegisterFunction(debug_counter_func);
 
 	auto oracle_execute_func = ScalarFunction("oracle_execute", {LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                                          LogicalType::VARCHAR, OracleExecuteFunction);

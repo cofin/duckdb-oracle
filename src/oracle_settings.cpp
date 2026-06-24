@@ -4,6 +4,17 @@
 
 namespace duckdb {
 
+idx_t OracleEffectiveArraySize(const OracleSettings &settings) {
+	return MinValue<idx_t>(MaxValue<idx_t>(settings.array_size, 1), STANDARD_VECTOR_SIZE);
+}
+
+idx_t OracleEffectiveMetadataResultLimit(const OracleSettings &settings) {
+	if (settings.metadata_result_limit == 0) {
+		return DEFAULT_ORACLE_METADATA_RESULT_LIMIT;
+	}
+	return settings.metadata_result_limit;
+}
+
 void RegisterOracleExtensionOptions(DBConfig &config) {
 	config.AddExtensionOption("oracle_enable_pushdown", "Enable Oracle filter/projection pushdown",
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(true));
@@ -27,8 +38,8 @@ void RegisterOracleExtensionOptions(DBConfig &config) {
 	                          "Object types to enumerate (TABLE,VIEW,SYNONYM,MATERIALIZED VIEW)", LogicalType::VARCHAR,
 	                          Value("TABLE,VIEW,SYNONYM,MATERIALIZED VIEW"));
 	config.AddExtensionOption("oracle_metadata_result_limit",
-	                          "Maximum rows returned from metadata queries (0=unlimited)", LogicalType::UBIGINT,
-	                          Value::UBIGINT(10000));
+	                          "Maximum rows returned from metadata queries (0=default bounded limit)",
+	                          LogicalType::UBIGINT, Value::UBIGINT(10000));
 	config.AddExtensionOption("oracle_use_current_schema", "Resolve unqualified table names to current schema first",
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(true));
 	config.AddExtensionOption("oracle_enable_spatial_types",

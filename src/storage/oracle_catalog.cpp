@@ -78,7 +78,7 @@ void OracleCatalogState::ApplyOptions(const unordered_map<string, Value> &option
 			settings.metadata_object_types = entry.second.ToString();
 		} else if (key == "metadata_result_limit") {
 			auto val = entry.second.GetValue<int64_t>();
-			settings.metadata_result_limit = val <= 0 ? 0 : static_cast<idx_t>(val);
+			settings.metadata_result_limit = val <= 0 ? DEFAULT_ORACLE_METADATA_RESULT_LIMIT : static_cast<idx_t>(val);
 		} else if (key == "use_current_schema") {
 			settings.use_current_schema = entry.second.GetValue<bool>();
 		} else if (key == "try_native_lobs") {
@@ -286,11 +286,10 @@ vector<string> OracleCatalogState::ListObjects(const string &schema, const strin
 	                                  "ORDER BY object_name",
 	                                  Value(schema).ToSQLString().c_str(), types_sql.c_str());
 
-	// Apply metadata result limit
-	if (settings.metadata_result_limit > 0) {
-		query = StringUtil::Format("SELECT * FROM (%s) WHERE ROWNUM <= %llu", query.c_str(),
-		                           static_cast<uint64_t>(settings.metadata_result_limit));
-	}
+	// Apply metadata result limit. A configured zero maps to the default bounded limit.
+	auto metadata_result_limit = OracleEffectiveMetadataResultLimit(settings);
+	query = StringUtil::Format("SELECT * FROM (%s) WHERE ROWNUM <= %llu", query.c_str(),
+	                           static_cast<uint64_t>(metadata_result_limit));
 
 	auto result = connection->Query(query);
 	vector<string> objects;
@@ -301,13 +300,13 @@ vector<string> OracleCatalogState::ListObjects(const string &schema, const strin
 	}
 
 	// Log warning if limit reached
-	if (settings.metadata_result_limit > 0 && objects.size() >= settings.metadata_result_limit) {
+	if (objects.size() >= metadata_result_limit) {
 		fprintf(stderr,
 		        "[oracle] Warning: Metadata enumeration limit reached (%lu objects). "
 		        "Tables beyond this limit are still accessible via on-demand loading, "
 		        "but may not appear in autocomplete. Increase oracle_metadata_result_limit "
 		        "or filter with oracle_metadata_object_types for better discovery.\n",
-		        (unsigned long)settings.metadata_result_limit);
+		        (unsigned long)metadata_result_limit);
 	}
 
 	object_cache.emplace(cache_key, objects);

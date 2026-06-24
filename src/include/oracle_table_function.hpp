@@ -43,6 +43,7 @@ struct OracleScanState : public GlobalTableFunctionState {
 	vector<vector<sb2>> indicators;
 	vector<vector<ub2>> return_lens;
 	vector<idx_t> column_mapping; // Map output column index to buffer index
+	idx_t fetch_size = STANDARD_VECTOR_SIZE;
 	bool executed = false;
 	bool finished = false;
 

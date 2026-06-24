@@ -156,7 +156,7 @@ SELECT COUNT(*) FROM duckdb_schemas() WHERE database_name = 'ora_limited';
 statement ok
 DETACH ora_limited;
 
-# Test 13: Test metadata result limit = 0 (unlimited)
+# Test 13: Test metadata result limit = 0 (runtime uses default bounded limit)
 statement ok
 SET oracle_metadata_result_limit = 0;
 

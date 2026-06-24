@@ -2,6 +2,7 @@
 #include "oracle_catalog_state.hpp"
 #include "oracle_connection_manager.hpp"
 #include "oracle_connection_resolver.hpp"
+#include "oracle_debug_stats.hpp"
 #include "oracle_type_conversion.hpp"
 #include "oracle_type_registry.hpp"
 #include "oracle_utils.hpp"
@@ -316,6 +317,7 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &, TableFunc
 	}
 
 	for (idx_t col_idx = 0; col_idx < bind.column_names.size(); col_idx++) {
+		state->fetch_size = OracleEffectiveArraySize(bind.settings);
 		ub4 size = 4000; // Default max
 		if (col_idx < bind.oci_sizes.size() && bind.oci_sizes[col_idx] > 0) {
 			size = bind.oci_sizes[col_idx] * 4; // UTF8 safety
@@ -323,9 +325,12 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &, TableFunc
 		if (size < 4000) {
 			size = 4000;
 		}
+		if (size > NumericLimits<ub2>::Maximum()) {
+			size = NumericLimits<ub2>::Maximum();
+		}
 
-		state->indicators[col_idx].resize(STANDARD_VECTOR_SIZE);
-		state->return_lens[col_idx].resize(STANDARD_VECTOR_SIZE);
+		state->indicators[col_idx].resize(state->fetch_size);
+		state->return_lens[col_idx].resize(state->fetch_size);
 
 		if (bind.settings.debug_show_queries || getenv("ORACLE_DEBUG")) {
 			fprintf(stderr, "[oracle] DefineCol[%lu]: name=%s size=%u oci_size=%lu original_type=%s\n",
@@ -347,18 +352,18 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &, TableFunc
 				} else {
 					type = SQLT_STR;
 				}
-				state->buffers[col_idx].resize(size * STANDARD_VECTOR_SIZE);
+				state->buffers[col_idx].resize(size * state->fetch_size);
 				break;
 			case LogicalTypeId::VARCHAR:
 				type = SQLT_STR;
-				state->buffers[col_idx].resize(size * STANDARD_VECTOR_SIZE);
+				state->buffers[col_idx].resize(size * state->fetch_size);
 				break;
 			default:
 				type = SQLT_STR;
 				break;
 			}
 		}
-		state->buffers[col_idx].resize(size * STANDARD_VECTOR_SIZE);
+		state->buffers[col_idx].resize(size * state->fetch_size);
 
 		CheckOCIError(OCIDefineByPos(state->stmt.get(), &state->defines[col_idx], state->err, col_idx + 1,
 		                             state->buffers[col_idx].data(), size, type, state->indicators[col_idx].data(),
@@ -368,6 +373,11 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &, TableFunc
 		CheckOCIError(OCIDefineArrayOfStruct(state->defines[col_idx], state->err, size, sizeof(sb2), sizeof(ub2), 0),
 		              state->err, "Failed to set OCI array of struct");
 	}
+	idx_t scan_buffer_bytes = 0;
+	for (auto &buffer : state->buffers) {
+		scan_buffer_bytes += buffer.size();
+	}
+	OracleDebugRecordScanBufferBytes(scan_buffer_bytes);
 	return state;
 }
 
@@ -394,11 +404,16 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 	}
 
 	ub4 rows_fetched = 0;
-	status = OCIStmtFetch2(gstate.stmt.get(), ctx->errhp, STANDARD_VECTOR_SIZE, OCI_FETCH_NEXT, 0, OCI_DEFAULT);
+	status = OCIStmtFetch2(gstate.stmt.get(), ctx->errhp, static_cast<ub4>(gstate.fetch_size), OCI_FETCH_NEXT, 0,
+	                       OCI_DEFAULT);
 	if (status != OCI_SUCCESS && status != OCI_SUCCESS_WITH_INFO && status != OCI_NO_DATA) {
 		CheckOCIError(status, ctx->errhp, "Failed to fetch OCI data");
 	}
 	OCIAttrGet(gstate.stmt.get(), OCI_HTYPE_STMT, &rows_fetched, 0, OCI_ATTR_ROWS_FETCHED, ctx->errhp);
+	OracleDebugRecordFetch(rows_fetched);
+	if (status == OCI_SUCCESS_WITH_INFO) {
+		throw IOException("Oracle fetch returned diagnostic information; a value may exceed the bounded fetch buffer");
+	}
 	if (getenv("ORACLE_DEBUG")) {
 		fprintf(stderr, "[oracle] fetch status=%d rows=%u\n", status, (unsigned)rows_fetched);
 	}
@@ -422,12 +437,16 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 				continue;
 			}
 
+			if (gstate.indicators[buffer_idx][row_count] == -2) {
+				throw IOException("Oracle value for column \"%s\" exceeds the bounded fetch buffer",
+				                  bind_data.column_names[buffer_idx].c_str());
+			}
 			if (gstate.indicators[buffer_idx][row_count] == -1) {
 				FlatVector::SetNull(output.data[col_idx], row_count, true);
 				continue;
 			}
 
-			ub4 element_size = gstate.buffers[buffer_idx].size() / STANDARD_VECTOR_SIZE;
+			ub4 element_size = gstate.buffers[buffer_idx].size() / gstate.fetch_size;
 			char *ptr = (char *)gstate.buffers[buffer_idx].data() + (row_count * element_size);
 			ub2 actual_len = gstate.return_lens[buffer_idx][row_count];
 

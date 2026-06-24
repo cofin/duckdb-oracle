@@ -46,7 +46,7 @@ OracleSettings GetOracleSettings(ClientContext &context, OracleCatalogState *sta
 	}
 	if (context.TryGetCurrentSetting("oracle_metadata_result_limit", option_value)) {
 		auto val = option_value.GetValue<int64_t>();
-		settings.metadata_result_limit = val <= 0 ? 0 : static_cast<idx_t>(val);
+		settings.metadata_result_limit = val <= 0 ? DEFAULT_ORACLE_METADATA_RESULT_LIMIT : static_cast<idx_t>(val);
 	}
 	if (context.TryGetCurrentSetting("oracle_use_current_schema", option_value)) {
 		settings.use_current_schema = option_value.GetValue<bool>();

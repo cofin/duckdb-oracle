@@ -218,6 +218,9 @@ TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_p
 	    OracleBindInternal(context, state->connection_string, query, return_types, names, bind.release(), state.get());
 	auto &oracle_bind = bind_data->Cast<OracleBindData>();
 	for (idx_t i = 0; i < column_metadata.size() && i < oracle_bind.oci_sizes.size(); i++) {
+		if (i < oracle_bind.oracle_type_names.size() && !column_metadata[i].decision.normalized_type.empty()) {
+			oracle_bind.oracle_type_names[i] = column_metadata[i].decision.normalized_type;
+		}
 		if (column_metadata[i].Category() == OracleTypeCategory::JSON) {
 			if (oracle_bind.oci_sizes[i] < 32767) {
 				oracle_bind.oci_sizes[i] = 32767;

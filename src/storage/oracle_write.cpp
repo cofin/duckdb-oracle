@@ -3,6 +3,7 @@
 #include "duckdb/common/types/date.hpp"
 #include "oracle_write.hpp"
 #include "oracle_connection.hpp"
+#include "oracle_debug_stats.hpp"
 #include "oracle_utils.hpp"
 #include "oracle_connection_manager.hpp"
 #include "oracle_type_registry.hpp"
@@ -389,8 +390,9 @@ static string BuildOracleWriteInsertSQL(const OracleWriteBindData &data) {
 
 //--- Global State ---
 
-OracleWriteGlobalState::OracleWriteGlobalState(std::shared_ptr<OracleConnectionHandle> conn, const string &query)
-    : connection(std::move(conn)) {
+OracleWriteGlobalState::OracleWriteGlobalState(std::shared_ptr<OracleConnectionHandle> conn, const string &query,
+                                               idx_t max_batch_size_p)
+    : connection(std::move(conn)), max_batch_size(max_batch_size_p) {
 	auto ctx = connection->Get();
 	stmthp = AllocateOCIStatement(ctx->envhp, ctx->errhp, "OCIHandleAlloc stmthp");
 
@@ -432,7 +434,7 @@ unique_ptr<OracleWriteGlobalState> OracleWriteInitGlobal(ClientContext &context,
 		fprintf(stderr, "[oracle] Insert SQL: %s\n", sql.c_str());
 	}
 
-	return make_uniq<OracleWriteGlobalState>(conn, sql);
+	return make_uniq<OracleWriteGlobalState>(conn, sql, OracleEffectiveArraySize(data.settings));
 }
 
 //--- Local State ---
@@ -521,13 +523,13 @@ void OracleWriteGlobalState::Sink(DataChunk &chunk, const vector<string> &column
 		for (idx_t col_idx = 0; col_idx < chunk.ColumnCount(); col_idx++) {
 			if (required_sizes[col_idx] > current_buffer_sizes[col_idx]) {
 				current_buffer_sizes[col_idx] = required_sizes[col_idx];
-				bind_buffers[col_idx].resize(MAX_BATCH_SIZE * current_buffer_sizes[col_idx]);
+				bind_buffers[col_idx].resize(max_batch_size * current_buffer_sizes[col_idx]);
 			}
 		}
 
 		for (idx_t col_idx = 0; col_idx < chunk.ColumnCount(); col_idx++) {
-			indicator_buffers[col_idx].resize(MAX_BATCH_SIZE);
-			length_buffers[col_idx].resize(MAX_BATCH_SIZE);
+			indicator_buffers[col_idx].resize(max_batch_size);
+			length_buffers[col_idx].resize(max_batch_size);
 		}
 
 		for (idx_t col_idx = 0; col_idx < chunk.ColumnCount(); col_idx++) {
@@ -550,17 +552,25 @@ void OracleWriteGlobalState::Sink(DataChunk &chunk, const vector<string> &column
 		}
 	}
 
-	for (idx_t col_idx = 0; col_idx < chunk.ColumnCount(); col_idx++) {
-		auto column_name = col_idx < column_names.size() ? column_names[col_idx] : "";
-		auto oracle_type = col_idx < oracle_types.size() ? oracle_types[col_idx] : "";
-		BindColumn(chunk.data[col_idx], col_idx, count, column_name, oracle_type, bind_types[col_idx]);
+	idx_t write_buffer_bytes = 0;
+	for (auto &buffer : bind_buffers) {
+		write_buffer_bytes += buffer.size();
 	}
+	OracleDebugRecordWriteBufferBytes(write_buffer_bytes);
 
-	ExecuteBatch(count);
+	for (idx_t offset = 0; offset < count; offset += max_batch_size) {
+		auto iter_count = MinValue<idx_t>(max_batch_size, count - offset);
+		for (idx_t col_idx = 0; col_idx < chunk.ColumnCount(); col_idx++) {
+			auto column_name = col_idx < column_names.size() ? column_names[col_idx] : "";
+			auto oracle_type = col_idx < oracle_types.size() ? oracle_types[col_idx] : "";
+			BindColumn(chunk.data[col_idx], col_idx, offset, iter_count, column_name, oracle_type, bind_types[col_idx]);
+		}
+		ExecuteBatch(iter_count);
+	}
 }
 
-void OracleWriteGlobalState::BindColumn(Vector &col, idx_t col_idx, idx_t count, const string &column_name,
-                                        const string &oracle_type, ub2 bind_type) {
+void OracleWriteGlobalState::BindColumn(Vector &col, idx_t col_idx, idx_t offset, idx_t count,
+                                        const string &column_name, const string &oracle_type, ub2 bind_type) {
 	auto &validity = FlatVector::Validity(col);
 	auto &bind_buffer = bind_buffers[col_idx];
 	auto &indicators = indicator_buffers[col_idx];
@@ -568,22 +578,23 @@ void OracleWriteGlobalState::BindColumn(Vector &col, idx_t col_idx, idx_t count,
 	size_t element_size = current_buffer_sizes[col_idx];
 
 	for (idx_t i = 0; i < count; i++) {
-		if (!validity.RowIsValid(i)) {
+		auto source_idx = offset + i;
+		if (!validity.RowIsValid(source_idx)) {
 			indicators[i] = -1;
 			lengths[i] = 0;
 		} else {
 			indicators[i] = 0;
 
 			if (bind_type == SQLT_INT) {
-				int64_t val = col.GetValue(i).GetValue<int64_t>();
+				int64_t val = col.GetValue(source_idx).GetValue<int64_t>();
 				memcpy(bind_buffer.data() + (i * element_size), &val, sizeof(int64_t));
 				lengths[i] = sizeof(int64_t);
 			} else if (bind_type == SQLT_BDOUBLE) {
-				double val = col.GetValue(i).GetValue<double>();
+				double val = col.GetValue(source_idx).GetValue<double>();
 				memcpy(bind_buffer.data() + (i * element_size), &val, sizeof(double));
 				lengths[i] = sizeof(double);
 			} else if (bind_type == SQLT_ODT) {
-				Value val = col.GetValue(i);
+				Value val = col.GetValue(source_idx);
 				OCIDate date;
 				memset(&date, 0, sizeof(OCIDate));
 
@@ -617,7 +628,7 @@ void OracleWriteGlobalState::BindColumn(Vector &col, idx_t col_idx, idx_t count,
 				memcpy(bind_buffer.data() + (i * element_size), &date, sizeof(OCIDate));
 				lengths[i] = sizeof(OCIDate);
 			} else {
-				Value val = col.GetValue(i);
+				Value val = col.GetValue(source_idx);
 				auto str_val = OracleWriteValueToString(val, column_name, oracle_type);
 
 				if (str_val.size() > element_size) {
@@ -635,6 +646,7 @@ void OracleWriteGlobalState::ExecuteBatch(idx_t count) {
 	auto ctx = connection->Get();
 	auto status =
 	    OCIStmtExecute(ctx->svchp, stmthp.get(), ctx->errhp, static_cast<ub4>(count), 0, nullptr, nullptr, OCI_DEFAULT);
+	OracleDebugRecordWriteExecute(count);
 	if (status != OCI_SUCCESS && status != OCI_SUCCESS_WITH_INFO) {
 		connection->MarkUnusable();
 		OCITransRollback(ctx->svchp, ctx->errhp, OCI_DEFAULT);

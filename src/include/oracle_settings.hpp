@@ -4,6 +4,8 @@
 
 namespace duckdb {
 
+static constexpr idx_t DEFAULT_ORACLE_METADATA_RESULT_LIMIT = 10000;
+
 class DBConfig;
 
 struct OracleSettings {
@@ -30,6 +32,11 @@ struct OracleSettings {
 	bool enable_type_conversion = true; // Enable server-side type conversion for problematic types
 	bool enable_spatial_types = true;   // Map SDO_GEOMETRY to GEOMETRY type (requires spatial extension)
 };
+
+//! Return the effective OCI array size, capped to one DuckDB output chunk.
+idx_t OracleEffectiveArraySize(const OracleSettings &settings);
+//! Return the bounded metadata row limit. A configured zero uses the default limit.
+idx_t OracleEffectiveMetadataResultLimit(const OracleSettings &settings);
 
 //! Register Oracle extension settings and storage extension with DuckDB.
 void RegisterOracleExtensionOptions(DBConfig &config);
