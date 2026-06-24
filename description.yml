@@ -1,7 +1,7 @@
 extension:
   name: oracle
   description: Native Oracle database extension for DuckDB enabling read and write access to Oracle tables via OCI.
-  version: 0.2.0
+  version: 0.2.1
   language: C++
   build: cmake
   license: Apache-2.0
