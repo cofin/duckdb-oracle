@@ -189,7 +189,7 @@ std::shared_ptr<OracleConnectionHandle> OracleConnectionManager::Acquire(const s
 		}
 
 		// Update pool limit from the latest settings and close excess idle contexts.
-		auto requested_limit = settings.connection_limit == 0 ? 1 : settings.connection_limit;
+		auto requested_limit = OracleEffectiveConnectionLimit(settings);
 		pool->limit = requested_limit;
 		while (!pool->idle.empty() && pool->total > pool->limit) {
 			idle_to_close.push_back(std::move(pool->idle.back()));

@@ -135,7 +135,7 @@ docs:
     - name: oracle_metadata_result_limit
       type: UBIGINT
       default: 10000
-      description: Maximum rows returned from metadata queries (0=unlimited)
+      description: Maximum rows returned from metadata queries (0=default bounded limit)
 
     - name: oracle_use_current_schema
       type: BOOLEAN

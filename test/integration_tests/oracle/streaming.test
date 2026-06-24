@@ -23,7 +23,18 @@ statement ok
 SET oracle_array_size = 3;
 
 statement ok
+SET oracle_prefetch_rows = 7;
+
+statement ok
+SET oracle_prefetch_memory = 4096;
+
+statement ok
 ATTACH '' AS ora_streaming (TYPE ORACLE, SECRET 'oracle_streaming_test', ARRAY_SIZE 3)
+
+statement error
+ATTACH '' AS ora_streaming_bad_option (TYPE ORACLE, SECRET 'oracle_streaming_test', NOT_A_SETTING 1)
+----
+Unknown Oracle attach option
 
 statement ok
 SELECT oracle_execute(oracle_streaming_conn(), '
@@ -106,6 +117,16 @@ SELECT
 ----
 1	1	1
 
+query IIIII
+SELECT
+    oracle_debug_counter('effective_array_size')::INTEGER,
+    oracle_debug_counter('effective_prefetch_rows')::INTEGER,
+    oracle_debug_counter('effective_prefetch_memory')::INTEGER,
+    (oracle_debug_counter('effective_connection_limit') >= 1)::INTEGER,
+    oracle_debug_counter('effective_metadata_result_limit')::INTEGER;
+----
+3	7	4096	1	10000
+
 statement ok
 SELECT oracle_debug_reset_stats();
 
@@ -122,6 +143,28 @@ SELECT
     (oracle_debug_counter('scan_buffer_bytes') > 0)::INTEGER;
 ----
 1	1	1
+
+statement ok
+SET oracle_array_size = 0;
+
+statement error
+SELECT oracle_execute(oracle_streaming_conn(), 'SELECT 1 FROM dual');
+----
+oracle_array_size
+
+statement ok
+SET oracle_array_size = 3;
+
+statement ok
+SET oracle_prefetch_rows = 1000001;
+
+statement error
+SELECT oracle_execute(oracle_streaming_conn(), 'SELECT 1 FROM dual');
+----
+oracle_prefetch_rows
+
+statement ok
+SET oracle_prefetch_rows = 7;
 
 statement ok
 SELECT oracle_execute(oracle_streaming_conn(), '

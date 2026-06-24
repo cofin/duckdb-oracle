@@ -434,6 +434,7 @@ unique_ptr<OracleWriteGlobalState> OracleWriteInitGlobal(ClientContext &context,
 		fprintf(stderr, "[oracle] Insert SQL: %s\n", sql.c_str());
 	}
 
+	OracleDebugRecordSettings(data.settings);
 	return make_uniq<OracleWriteGlobalState>(conn, sql, OracleEffectiveArraySize(data.settings));
 }
 

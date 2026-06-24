@@ -18,22 +18,24 @@ OracleSettings GetOracleSettings(ClientContext &context, OracleCatalogState *sta
 	}
 	if (context.TryGetCurrentSetting("oracle_prefetch_rows", option_value)) {
 		auto val = option_value.GetValue<int64_t>();
-		settings.prefetch_rows = MaxValue<idx_t>(1, static_cast<idx_t>(val));
+		settings.prefetch_rows = OracleValidatedSettingValue(val, "oracle_prefetch_rows", 1, MAX_ORACLE_PREFETCH_ROWS);
 	}
 	if (context.TryGetCurrentSetting("oracle_prefetch_memory", option_value)) {
 		auto val = option_value.GetValue<int64_t>();
-		settings.prefetch_memory = val <= 0 ? 0 : static_cast<idx_t>(val);
+		settings.prefetch_memory =
+		    OracleValidatedSettingValue(val, "oracle_prefetch_memory", 0, MAX_ORACLE_PREFETCH_MEMORY);
 	}
 	if (context.TryGetCurrentSetting("oracle_array_size", option_value)) {
 		auto val = option_value.GetValue<int64_t>();
-		settings.array_size = MaxValue<idx_t>(1, static_cast<idx_t>(val));
+		settings.array_size = OracleValidatedSettingValue(val, "oracle_array_size", 1, STANDARD_VECTOR_SIZE);
 	}
 	if (context.TryGetCurrentSetting("oracle_connection_cache", option_value)) {
 		settings.connection_cache = option_value.GetValue<bool>();
 	}
 	if (context.TryGetCurrentSetting("oracle_connection_limit", option_value)) {
 		auto val = option_value.GetValue<int64_t>();
-		settings.connection_limit = MaxValue<idx_t>(1, static_cast<idx_t>(val));
+		settings.connection_limit =
+		    OracleValidatedSettingValue(val, "oracle_connection_limit", 1, MAX_ORACLE_CONNECTION_LIMIT);
 	}
 	if (context.TryGetCurrentSetting("oracle_debug_show_queries", option_value)) {
 		settings.debug_show_queries = option_value.GetValue<bool>();
@@ -46,7 +48,7 @@ OracleSettings GetOracleSettings(ClientContext &context, OracleCatalogState *sta
 	}
 	if (context.TryGetCurrentSetting("oracle_metadata_result_limit", option_value)) {
 		auto val = option_value.GetValue<int64_t>();
-		settings.metadata_result_limit = val <= 0 ? DEFAULT_ORACLE_METADATA_RESULT_LIMIT : static_cast<idx_t>(val);
+		settings.metadata_result_limit = OracleValidatedMetadataResultLimit(val);
 	}
 	if (context.TryGetCurrentSetting("oracle_use_current_schema", option_value)) {
 		settings.use_current_schema = option_value.GetValue<bool>();

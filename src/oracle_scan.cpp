@@ -78,6 +78,7 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
 
 	// Allocate statement handle on the shared environment and keep it for fetch phase
 	result->stmt = AllocateSharedOCIStatement(ctx->envhp, ctx->errhp, "Failed to allocate OCI statement handle");
+	OracleDebugRecordSettings(result->settings);
 
 	// Bound call timeout for describe/execute to avoid hangs
 	ub4 call_timeout_ms = 30000; // 30s (per-call upper bound)
@@ -86,11 +87,12 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
 	OCIAttrSet(result->stmt.get(), OCI_HTYPE_STMT, &call_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp);
 
 	// Set prefetch/array tuning from settings
-	ub4 prefetch_rows = result->settings.prefetch_rows;
+	ub4 prefetch_rows = static_cast<ub4>(OracleEffectivePrefetchRows(result->settings));
 	CheckOCIError(OCIAttrSet(result->stmt.get(), OCI_HTYPE_STMT, &prefetch_rows, 0, OCI_ATTR_PREFETCH_ROWS, ctx->errhp),
 	              ctx->errhp, "Failed to set OCI prefetch rows");
-	if (result->settings.prefetch_memory > 0) {
-		ub4 prefetch_mem = result->settings.prefetch_memory;
+	auto effective_prefetch_memory = OracleEffectivePrefetchMemory(result->settings);
+	if (effective_prefetch_memory > 0) {
+		ub4 prefetch_mem = static_cast<ub4>(effective_prefetch_memory);
 		CheckOCIError(
 		    OCIAttrSet(result->stmt.get(), OCI_HTYPE_STMT, &prefetch_mem, 0, OCI_ATTR_PREFETCH_MEMORY, ctx->errhp),
 		    ctx->errhp, "Failed to set OCI prefetch memory");
@@ -297,18 +299,20 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &, TableFunc
 		}
 
 		state->stmt = AllocateSharedOCIStatement(ctx->envhp, ctx->errhp, "Failed to allocate OCI statement handle");
+		OracleDebugRecordSettings(bind.settings);
 
 		ub4 call_timeout_ms = 30000;
 		// Some OCI clients reject statement call timeout attributes (ORA-24315).
 		// Keep this best-effort rather than failing otherwise valid scans.
 		OCIAttrSet(state->stmt.get(), OCI_HTYPE_STMT, &call_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp);
 
-		ub4 prefetch_rows = bind.settings.prefetch_rows;
+		ub4 prefetch_rows = static_cast<ub4>(OracleEffectivePrefetchRows(bind.settings));
 		CheckOCIError(
 		    OCIAttrSet(state->stmt.get(), OCI_HTYPE_STMT, &prefetch_rows, 0, OCI_ATTR_PREFETCH_ROWS, ctx->errhp),
 		    ctx->errhp, "Failed to set OCI prefetch rows");
-		if (bind.settings.prefetch_memory > 0) {
-			ub4 prefetch_mem = bind.settings.prefetch_memory;
+		auto effective_prefetch_memory = OracleEffectivePrefetchMemory(bind.settings);
+		if (effective_prefetch_memory > 0) {
+			ub4 prefetch_mem = static_cast<ub4>(effective_prefetch_memory);
 			CheckOCIError(
 			    OCIAttrSet(state->stmt.get(), OCI_HTYPE_STMT, &prefetch_mem, 0, OCI_ATTR_PREFETCH_MEMORY, ctx->errhp),
 			    ctx->errhp, "Failed to set OCI prefetch memory");

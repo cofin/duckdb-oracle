@@ -1,4 +1,5 @@
 #include "oracle_debug_stats.hpp"
+#include "oracle_settings.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include <mutex>
@@ -54,6 +55,16 @@ void OracleDebugRecordQuery(const string &query) {
 	MutableStats().last_query = query;
 }
 
+void OracleDebugRecordSettings(const OracleSettings &settings) {
+	lock_guard<std::mutex> guard(StatsLock());
+	auto &stats = MutableStats();
+	stats.effective_array_size = OracleEffectiveArraySize(settings);
+	stats.effective_prefetch_rows = OracleEffectivePrefetchRows(settings);
+	stats.effective_prefetch_memory = OracleEffectivePrefetchMemory(settings);
+	stats.effective_connection_limit = OracleEffectiveConnectionLimit(settings);
+	stats.effective_metadata_result_limit = OracleEffectiveMetadataResultLimit(settings);
+}
+
 OracleDebugStatsSnapshot OracleDebugGetStats() {
 	lock_guard<std::mutex> guard(StatsLock());
 	return MutableStats();
@@ -79,6 +90,21 @@ idx_t OracleDebugGetCounter(const string &name) {
 	}
 	if (key == "write_buffer_bytes") {
 		return stats.write_buffer_bytes;
+	}
+	if (key == "effective_array_size") {
+		return stats.effective_array_size;
+	}
+	if (key == "effective_prefetch_rows") {
+		return stats.effective_prefetch_rows;
+	}
+	if (key == "effective_prefetch_memory") {
+		return stats.effective_prefetch_memory;
+	}
+	if (key == "effective_connection_limit") {
+		return stats.effective_connection_limit;
+	}
+	if (key == "effective_metadata_result_limit") {
+		return stats.effective_metadata_result_limit;
 	}
 	throw InvalidInputException("Unknown Oracle debug counter \"%s\"", name.c_str());
 }

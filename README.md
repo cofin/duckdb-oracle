@@ -80,10 +80,13 @@ Set these variables to tune performance or behavior:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `oracle_enable_pushdown` | `true` | Push filters/projections to Oracle. |
-| `oracle_prefetch_rows` | `1024` | Rows to prefetch per round-trip. |
-| `oracle_array_size` | `256` | Batch size for OCI fetch/bind. |
+| `oracle_prefetch_rows` | `1024` | Rows to prefetch per round-trip; validated between 1 and 1,000,000. |
+| `oracle_prefetch_memory` | `0` | OCI prefetch memory in bytes; `0` lets OCI choose, otherwise max 1 GiB. |
+| `oracle_array_size` | `256` | Batch size for OCI fetch/bind; validated between 1 and DuckDB's vector capacity. |
 | `oracle_enable_spatial_types` | `true` | Map `SDO_GEOMETRY` to `GEOMETRY` type. |
 | `oracle_connection_cache` | `true` | Enable connection pooling. |
+| `oracle_connection_limit` | `8` | Maximum cached Oracle sessions per connection key; validated between 1 and 1024. |
+| `oracle_metadata_result_limit` | `10000` | Bounded metadata discovery limit; `0` uses the bounded default. |
 
 ## Authentication
 

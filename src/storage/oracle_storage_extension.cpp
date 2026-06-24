@@ -71,20 +71,24 @@ static unique_ptr<Catalog> OracleAttach(optional_ptr<StorageExtensionInfo> stora
 
 	auto *oracle_info = storage_info ? dynamic_cast<duckdb::OracleStorageInfo *>(storage_info.get()) : nullptr;
 	shared_ptr<OracleCatalogState> state;
+	bool new_state = false;
 	if (oracle_info && oracle_info->state) {
 		state = oracle_info->state;
 	} else {
 		state = make_shared_ptr<OracleCatalogState>(connection_string, wallet_path);
+		new_state = true;
+	}
+	// Map attach options to state settings before exposing a new alias.
+	state->ApplyOptions(options.options);
+	auto resolved = ResolveOracleConnection(context, state->connection_string, state.get());
+	state->settings = resolved.settings;
+	state->wallet_path = resolved.wallet_path;
+	if (new_state) {
 		OracleCatalogState::Register(state, name);
 		if (oracle_info) {
 			oracle_info->state = state;
 		}
 	}
-	// Map attach options to state settings (best-effort, ignore unknown keys).
-	state->ApplyOptions(options.options);
-	auto resolved = ResolveOracleConnection(context, state->connection_string, state.get());
-	state->settings = resolved.settings;
-	state->wallet_path = resolved.wallet_path;
 	return CreateOracleCatalog(db, state);
 }
 

@@ -3,6 +3,7 @@
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/limits.hpp"
+#include "duckdb/common/vector_size.hpp"
 #include <mutex>
 #include <memory>
 
@@ -74,22 +75,28 @@ void OracleCatalogState::ApplyOptions(const unordered_map<string, Value> &option
 	// Options are case-insensitive; normalize by lowering.
 	for (auto &entry : options) {
 		auto key = StringUtil::Lower(entry.first);
+		if (key == "secret") {
+			continue;
+		}
 		if (key == "enable_pushdown") {
 			settings.enable_pushdown = entry.second.GetValue<bool>();
 		} else if (key == "prefetch_rows") {
 			auto val = entry.second.GetValue<int64_t>();
-			settings.prefetch_rows = MaxValue<idx_t>(1, static_cast<idx_t>(val));
+			settings.prefetch_rows =
+			    OracleValidatedSettingValue(val, "oracle_prefetch_rows", 1, MAX_ORACLE_PREFETCH_ROWS);
 		} else if (key == "prefetch_memory") {
 			auto val = entry.second.GetValue<int64_t>();
-			settings.prefetch_memory = val <= 0 ? 0 : static_cast<idx_t>(val);
+			settings.prefetch_memory =
+			    OracleValidatedSettingValue(val, "oracle_prefetch_memory", 0, MAX_ORACLE_PREFETCH_MEMORY);
 		} else if (key == "array_size") {
 			auto val = entry.second.GetValue<int64_t>();
-			settings.array_size = MaxValue<idx_t>(1, static_cast<idx_t>(val));
+			settings.array_size = OracleValidatedSettingValue(val, "oracle_array_size", 1, STANDARD_VECTOR_SIZE);
 		} else if (key == "connection_cache") {
 			settings.connection_cache = entry.second.GetValue<bool>();
 		} else if (key == "connection_limit") {
 			auto val = entry.second.GetValue<int64_t>();
-			settings.connection_limit = MaxValue<idx_t>(1, static_cast<idx_t>(val));
+			settings.connection_limit =
+			    OracleValidatedSettingValue(val, "oracle_connection_limit", 1, MAX_ORACLE_CONNECTION_LIMIT);
 		} else if (key == "debug_show_queries") {
 			settings.debug_show_queries = entry.second.GetValue<bool>();
 		} else if (key == "lazy_schema_loading") {
@@ -98,7 +105,7 @@ void OracleCatalogState::ApplyOptions(const unordered_map<string, Value> &option
 			settings.metadata_object_types = entry.second.ToString();
 		} else if (key == "metadata_result_limit") {
 			auto val = entry.second.GetValue<int64_t>();
-			settings.metadata_result_limit = val <= 0 ? DEFAULT_ORACLE_METADATA_RESULT_LIMIT : static_cast<idx_t>(val);
+			settings.metadata_result_limit = OracleValidatedMetadataResultLimit(val);
 		} else if (key == "use_current_schema") {
 			settings.use_current_schema = entry.second.GetValue<bool>();
 		} else if (key == "try_native_lobs") {
@@ -109,6 +116,8 @@ void OracleCatalogState::ApplyOptions(const unordered_map<string, Value> &option
 			settings.enable_type_conversion = entry.second.GetValue<bool>();
 		} else if (key == "enable_spatial_types") {
 			settings.enable_spatial_types = entry.second.GetValue<bool>();
+		} else {
+			throw InvalidInputException("Unknown Oracle attach option \"%s\"", entry.first.c_str());
 		}
 	}
 }

@@ -31,7 +31,7 @@ struct OracleConnectionPool {
 	std::mutex lock;
 	std::vector<std::shared_ptr<OracleContext>> idle;
 	idx_t total = 0;
-	idx_t limit = 8;
+	idx_t limit = DEFAULT_ORACLE_CONNECTION_LIMIT;
 	idx_t generation = 0;
 	bool stale = false;
 	std::condition_variable cv;
