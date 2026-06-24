@@ -4,8 +4,8 @@ set -e
 # Oracle Instant Client Version (full client, not Basic Lite)
 OCI_VER_MAJOR=23
 OCI_VER_FULL=23.26.2.0.0
-# Base URL for Oracle Instant Client (Linux x64). If Oracle rotates the path, we fall back to latest links.
-BASE_URL="https://download.oracle.com/otn_software/linux/instantclient/2326200v2"
+# Base URL for Oracle Instant Client. Oracle can publish the same version under
+# different archive folders per architecture, so keep this architecture-specific.
 LATEST_BASE_URL="https://download.oracle.com/otn_software/linux/instantclient"
 
 # Detect architecture
@@ -14,10 +14,14 @@ case "$ARCH" in
     x86_64)
         OCI_ARCH="linux.x64"
         LIBAIO_ARCH="x86_64-linux-gnu"
+        BASE_URL="https://download.oracle.com/otn_software/linux/instantclient/2326200v2"
+        FALLBACK_BASE_URL="https://download.oracle.com/otn_software/linux/instantclient/2326200"
         ;;
     aarch64|arm64)
         OCI_ARCH="linux.arm64"
         LIBAIO_ARCH="aarch64-linux-gnu"
+        BASE_URL="https://download.oracle.com/otn_software/linux/instantclient/2326200"
+        FALLBACK_BASE_URL="https://download.oracle.com/otn_software/linux/instantclient/2326200v2"
         ;;
     *)
         echo "Error: Unsupported architecture: $ARCH"
@@ -26,6 +30,30 @@ case "$ARCH" in
 esac
 
 echo "Detected architecture: $ARCH (using $OCI_ARCH)"
+
+download_instant_client_zip() {
+    local package_name="$1"
+    local destination="$2"
+    local versioned_name="instantclient-${package_name}-${OCI_ARCH}-${OCI_VER_FULL}.zip"
+    local latest_name="instantclient-${package_name}-${OCI_ARCH}.zip"
+
+    for base_url in "$BASE_URL" "$FALLBACK_BASE_URL" "$LATEST_BASE_URL"; do
+        local url="${base_url}/${versioned_name}"
+        if [ "$base_url" = "$LATEST_BASE_URL" ]; then
+            url="${base_url}/${latest_name}"
+        fi
+
+        echo "Trying ${url}..."
+        rm -f "$destination"
+        if wget -q -O "$destination" "$url"; then
+            return 0
+        fi
+    done
+
+    echo "Error: failed to download ${versioned_name}"
+    rm -f "$destination"
+    return 1
+}
 
 INSTALL_DIR=$PWD/oracle_sdk
 mkdir -p "$INSTALL_DIR"
@@ -57,10 +85,8 @@ if [ "$SKIP_DOWNLOAD" -eq 0 ]; then
     rm -rf "$INSTALL_DIR/instantclient_*" "$INSTALL_DIR"/*.zip
 
     echo "Downloading Oracle Instant Client ${OCI_VER_FULL} for ${OCI_ARCH}..."
-    wget -q -O "$INSTALL_DIR/basic.zip" "${BASE_URL}/instantclient-basic-${OCI_ARCH}-${OCI_VER_FULL}.zip" || \
-      wget -q -O "$INSTALL_DIR/basic.zip" "${LATEST_BASE_URL}/instantclient-basic-${OCI_ARCH}.zip"
-    wget -q -O "$INSTALL_DIR/sdk.zip" "${BASE_URL}/instantclient-sdk-${OCI_ARCH}-${OCI_VER_FULL}.zip" || \
-      wget -q -O "$INSTALL_DIR/sdk.zip" "${LATEST_BASE_URL}/instantclient-sdk-${OCI_ARCH}.zip"
+    download_instant_client_zip "basic" "$INSTALL_DIR/basic.zip"
+    download_instant_client_zip "sdk" "$INSTALL_DIR/sdk.zip"
 
     echo "Extracting..."
     unzip -oq "$INSTALL_DIR/basic.zip" -d "$INSTALL_DIR"
