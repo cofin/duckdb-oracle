@@ -22,6 +22,23 @@ ATTACH '' AS ora (TYPE ORACLE, SECRET 'test_oracle');
 
 statement ok
 SELECT oracle_execute('ora', '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE pipeline_pkg_log PURGE'';
+    EXCEPTION WHEN OTHERS THEN
+        IF SQLCODE != -942 THEN RAISE; END IF;
+    END;
+');
+
+statement ok
+SELECT oracle_execute('ora', '
+    CREATE TABLE pipeline_pkg_log (
+        id NUMBER,
+        description VARCHAR2(50)
+    )
+');
+
+statement ok
+SELECT oracle_execute('ora', '
     CREATE OR REPLACE TYPE t_row AS OBJECT (
         id NUMBER,
         description VARCHAR2(50)
@@ -44,6 +61,34 @@ SELECT oracle_execute('ora', '
     END;
 ');
 
+statement ok
+SELECT oracle_execute('ora', '
+    CREATE OR REPLACE PACKAGE pipeline_pkg AS
+        FUNCTION get_rows(p_count NUMBER) RETURN t_tab PIPELINED;
+        FUNCTION get_logged_rows RETURN t_tab PIPELINED;
+        PROCEDURE log_value(p_id NUMBER, p_description VARCHAR2);
+    END pipeline_pkg;
+');
+
+statement ok
+SELECT oracle_execute('ora',
+    'CREATE OR REPLACE PACKAGE BODY pipeline_pkg AS ' ||
+    'FUNCTION get_rows(p_count NUMBER) RETURN t_tab PIPELINED AS BEGIN ' ||
+    'FOR i IN 1 .. p_count LOOP PIPE ROW(t_row(i, ''Pkg Row '' || i))' || chr(59) ||
+    ' END LOOP' || chr(59) ||
+    ' RETURN' || chr(59) ||
+    ' END get_rows' || chr(59) ||
+    ' FUNCTION get_logged_rows RETURN t_tab PIPELINED AS BEGIN ' ||
+    'FOR rec IN (SELECT id, description FROM pipeline_pkg_log ORDER BY id) LOOP ' ||
+    'PIPE ROW(t_row(rec.id, rec.description))' || chr(59) ||
+    ' END LOOP' || chr(59) ||
+    ' RETURN' || chr(59) ||
+    ' END get_logged_rows' || chr(59) ||
+    ' PROCEDURE log_value(p_id NUMBER, p_description VARCHAR2) AS BEGIN ' ||
+    'INSERT INTO pipeline_pkg_log VALUES (p_id, p_description)' || chr(59) ||
+    ' END log_value' || chr(59) ||
+    ' END pipeline_pkg' || chr(59));
+
 # Querying Pipelined Function
 # DuckDB Oracle extension exposes tables. Pipelined functions appear in ALL_OBJECTS as FUNCTION.
 # They are NOT automatically exposed as tables in the catalog.
@@ -55,6 +100,32 @@ SELECT * FROM oracle_query('ora', 'SELECT * FROM TABLE(get_rows(3))') ORDER BY i
 1	Row 1
 2	Row 2
 3	Row 3
+
+query IT
+SELECT * FROM oracle_query('ora', 'SELECT * FROM TABLE(pipeline_pkg.get_rows(2))') ORDER BY id
+----
+1	Pkg Row 1
+2	Pkg Row 2
+
+query I
+SELECT oracle_execute('ora', 'BEGIN pipeline_pkg.log_value(7, ''Procedure row''); END;')
+----
+<REGEX>:.*Statement executed successfully.*
+
+query IT
+SELECT * FROM oracle_query('ora', 'SELECT * FROM TABLE(pipeline_pkg.get_logged_rows())') ORDER BY id
+----
+7	Procedure row
+
+query I
+SELECT oracle_execute('ora', 'EXPLAIN PLAN FOR SELECT * FROM TABLE(pipeline_pkg.get_rows(2))')
+----
+<REGEX>:.*Statement executed successfully.*
+
+query I
+SELECT count(*) > 0 FROM oracle_query('ora', 'SELECT plan_table_output FROM TABLE(DBMS_XPLAN.DISPLAY())')
+----
+true
 
 # Verify we can join it with local data
 statement ok
@@ -74,6 +145,9 @@ ORDER BY l.id
 
 # Cleanup
 statement ok
+SELECT oracle_execute('ora', 'DROP PACKAGE pipeline_pkg');
+
+statement ok
 SELECT oracle_execute('ora', 'DROP FUNCTION get_rows');
 
 statement ok
@@ -81,6 +155,9 @@ SELECT oracle_execute('ora', 'DROP TYPE t_tab');
 
 statement ok
 SELECT oracle_execute('ora', 'DROP TYPE t_row');
+
+statement ok
+SELECT oracle_execute('ora', 'DROP TABLE pipeline_pkg_log PURGE');
 
 statement ok
 DETACH ora;

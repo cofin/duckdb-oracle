@@ -467,8 +467,6 @@ void OracleWriteGlobalState::Sink(DataChunk &chunk, const vector<string> &column
 	if (count == 0) {
 		return;
 	}
-	MarkUncommittedWork();
-
 	// Determine max sizes for buffer allocation
 	vector<size_t> required_sizes(chunk.ColumnCount(), 4096);
 
@@ -653,6 +651,7 @@ void OracleWriteGlobalState::ExecuteBatch(idx_t count) {
 		OCITransRollback(ctx->svchp, ctx->errhp, OCI_DEFAULT);
 	}
 	CheckOCIError(status, ctx->errhp, "OCIStmtExecute Insert");
+	MarkUncommittedWork();
 }
 
 void OracleWriteFinalize(OracleWriteGlobalState &gstate) {

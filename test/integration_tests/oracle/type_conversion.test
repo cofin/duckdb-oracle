@@ -188,6 +188,7 @@ SELECT oracle_execute(oracle_type_conn(), '
     CREATE TABLE clob_test (
         id NUMBER,
         plain_clob CLOB,
+        plain_nclob NCLOB,
         xml_clob CLOB
     )
 ')
@@ -197,6 +198,7 @@ SELECT oracle_execute(oracle_type_conn(), '
     INSERT INTO clob_test VALUES (
         1,
         TO_CLOB(RPAD(''A'', 4000, ''A'')) || ''B'',
+        TO_NCLOB(''plain NCLOB value''),
         TO_CLOB(''<root><item>CLOB</item></root>'')
     )
 ')
@@ -300,6 +302,11 @@ query I
 SELECT LENGTH(plain_clob) FROM ora_types.duckdb_test.clob_test WHERE id = 1
 ----
 4001
+
+query T
+SELECT plain_nclob FROM ora_types.duckdb_test.clob_test WHERE id = 1
+----
+plain NCLOB value
 
 query T
 SELECT replace(replace(replace(CAST(xml_clob AS VARCHAR), chr(10), ''), chr(13), ''), ' ', '')

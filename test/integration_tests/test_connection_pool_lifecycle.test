@@ -19,6 +19,15 @@ SELECT oracle_execute('ora', '
 statement ok
 SELECT oracle_execute('ora', '
     BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE pool_vector_write PURGE'';
+    EXCEPTION WHEN OTHERS THEN
+        IF SQLCODE != -942 THEN RAISE; END IF;
+    END;
+');
+
+statement ok
+SELECT oracle_execute('ora', '
+    BEGIN
         EXECUTE IMMEDIATE ''DROP TABLE pool_cache_state PURGE'';
     EXCEPTION WHEN OTHERS THEN
         IF SQLCODE != -942 THEN RAISE; END IF;
@@ -49,6 +58,49 @@ statement ok
 SET oracle_connection_cache = true;
 
 statement ok
+SET oracle_connection_limit = 1;
+
+statement ok
+SELECT oracle_clear_cache();
+
+query I
+SELECT oracle_execute('ora', 'INSERT INTO pool_cache_state VALUES (2)');
+----
+<REGEX>:.*1 rows? affected.*
+
+query I
+SELECT * FROM oracle_query('ora', 'SELECT COUNT(*) FROM pool_cache_state');
+----
+1
+
+statement ok
+SELECT oracle_clear_cache();
+
+query I
+SELECT * FROM oracle_query('ora', 'SELECT COUNT(*) FROM pool_cache_state');
+----
+0
+
+statement ok
+SELECT oracle_debug_reset_stats();
+
+query I
+SELECT * FROM oracle_query('ora', 'SELECT 1 FROM dual');
+----
+1
+
+query I
+SELECT oracle_debug_counter('effective_connection_limit')::INTEGER;
+----
+1
+
+statement ok
+SET oracle_connection_limit = 8;
+
+statement ok
+SELECT oracle_clear_cache();
+
+statement ok
 SELECT oracle_execute('ora', '
     CREATE TABLE pool_failed_write (
         id NUMBER PRIMARY KEY
@@ -68,7 +120,31 @@ SELECT * FROM oracle_query('ora', 'SELECT COUNT(*) FROM pool_failed_write');
 0
 
 statement ok
-SELECT oracle_execute('ora', 'DROP TABLE pool_failed_write PURGE');
+SELECT oracle_execute('ora', '
+    CREATE TABLE pool_vector_write (
+        id NUMBER PRIMARY KEY,
+        embedding VECTOR(3, FLOAT32)
+    )
+');
+
+query I
+SELECT oracle_execute('ora', 'INSERT INTO pool_cache_state VALUES (3)');
+----
+<REGEX>:.*1 rows? affected.*
+
+statement error
+INSERT INTO ora.pool_vector_write (id, embedding)
+VALUES (1, '[Infinity, 2.0, 3.0]');
+----
+Invalid Oracle VECTOR value
+
+query I
+SELECT * FROM oracle_query('ora', 'SELECT COUNT(*) FROM pool_cache_state');
+----
+1
 
 statement ok
-SELECT oracle_execute('ora', 'DROP TABLE pool_cache_state PURGE');
+SELECT oracle_execute('ora', 'DROP TABLE pool_vector_write PURGE');
+
+statement ok
+SELECT oracle_execute('ora', 'DROP TABLE pool_failed_write PURGE');

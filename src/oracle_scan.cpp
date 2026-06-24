@@ -82,9 +82,9 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
 
 	// Bound call timeout for describe/execute to avoid hangs
 	ub4 call_timeout_ms = 30000; // 30s (per-call upper bound)
-	// Some OCI clients reject statement call timeout attributes (ORA-24315).
-	// Keep this best-effort rather than failing otherwise valid scans.
-	OCIAttrSet(result->stmt.get(), OCI_HTYPE_STMT, &call_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp);
+	CheckOCIOptionalAttributeORA24315(
+	    OCIAttrSet(result->stmt.get(), OCI_HTYPE_STMT, &call_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp),
+	    ctx->errhp, "Failed to set OCI statement call timeout");
 
 	// Set prefetch/array tuning from settings
 	ub4 prefetch_rows = static_cast<ub4>(OracleEffectivePrefetchRows(result->settings));
@@ -302,9 +302,9 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &, TableFunc
 		OracleDebugRecordSettings(bind.settings);
 
 		ub4 call_timeout_ms = 30000;
-		// Some OCI clients reject statement call timeout attributes (ORA-24315).
-		// Keep this best-effort rather than failing otherwise valid scans.
-		OCIAttrSet(state->stmt.get(), OCI_HTYPE_STMT, &call_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp);
+		CheckOCIOptionalAttributeORA24315(
+		    OCIAttrSet(state->stmt.get(), OCI_HTYPE_STMT, &call_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp),
+		    ctx->errhp, "Failed to set OCI statement call timeout");
 
 		ub4 prefetch_rows = static_cast<ub4>(OracleEffectivePrefetchRows(bind.settings));
 		CheckOCIError(

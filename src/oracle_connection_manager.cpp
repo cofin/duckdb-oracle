@@ -274,12 +274,14 @@ std::shared_ptr<OracleContext> OracleConnectionManager::CreateConnection(const s
 	              "Failed to allocate OCI service context handle");
 
 	// Set call/connection timeouts on server handle before attach
-	// Some OCI clients reject these pre-attach server attributes (ORA-24315).
-	// Keep them best-effort; the service context call timeout is checked below.
 	ub4 call_timeout_ms = 10000;
-	OCIAttrSet(ctx->srvhp, OCI_HTYPE_SERVER, &call_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp);
+	CheckOCIOptionalAttributeORA24315(
+	    OCIAttrSet(ctx->srvhp, OCI_HTYPE_SERVER, &call_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp), ctx->errhp,
+	    "Failed to set pre-attach OCI server call timeout");
 	ub4 conn_timeout_ms = 10000;
-	OCIAttrSet(ctx->srvhp, OCI_HTYPE_SERVER, &conn_timeout_ms, 0, OCI_ATTR_CONN_TIMEOUT, ctx->errhp);
+	CheckOCIOptionalAttributeORA24315(
+	    OCIAttrSet(ctx->srvhp, OCI_HTYPE_SERVER, &conn_timeout_ms, 0, OCI_ATTR_CONN_TIMEOUT, ctx->errhp), ctx->errhp,
+	    "Failed to set pre-attach OCI server connection timeout");
 
 	// Attach to server
 	CheckOCIError(OCIServerAttach(ctx->srvhp, ctx->errhp, (OraText *)db.c_str(), (sb4)db.size(), OCI_DEFAULT),

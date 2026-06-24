@@ -55,8 +55,8 @@ SELECT oracle_execute(oracle_registry_conn(), '
             IF SQLCODE != -942 THEN
                 RAISE;
             END IF;
-    END;
-')
+	    END;
+	')
 
 statement ok
 SELECT oracle_execute(oracle_registry_conn(), '
@@ -177,8 +177,8 @@ SELECT oracle_execute(oracle_registry_conn(), '
         JSON(''{"kind":"registry"}''),
         XMLTYPE(''<root><kind>registry</kind></root>''),
         ''[1.0, 2.0, 3.0]''
-    )
-')
+	    )
+	')
 
 statement ok
 SELECT oracle_execute(oracle_registry_conn(), '
@@ -290,6 +290,13 @@ WHERE id = 1
 ----
 JSON	VARCHAR	FLOAT[]	DOUBLE
 
+query T
+SELECT nclob_col
+FROM ora_registry.duckdb_test.registry_supported
+WHERE id = 1
+----
+plain nclob
+
 query IT
 SELECT id, long_text
 FROM ora_registry.duckdb_test.registry_long_text
@@ -371,6 +378,11 @@ statement error
 SELECT * FROM oracle_query(oracle_registry_conn(), 'SELECT obj_col FROM registry_unsupported_obj')
 ----
 Unsupported Oracle type
+
+statement error
+SELECT * FROM oracle_query(oracle_registry_conn(), 'SELECT CURSOR(SELECT 1 AS x FROM dual) nested_cursor FROM dual')
+----
+Unsupported Oracle type OCI type
 
 statement ok
 SELECT oracle_execute(oracle_registry_conn(), 'DROP TABLE registry_unsupported_obj')

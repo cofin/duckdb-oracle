@@ -6,6 +6,17 @@
 
 namespace duckdb {
 
+namespace {
+
+static bool HasDirectConnectionStringShape(const string &connection_ref) {
+	auto slash_pos = connection_ref.find('/');
+	auto at_pos = connection_ref.find('@', slash_pos == string::npos ? 0 : slash_pos);
+	return slash_pos != string::npos && at_pos != string::npos && slash_pos > 0 && at_pos > slash_pos + 1 &&
+	       at_pos < connection_ref.size() - 1;
+}
+
+} // namespace
+
 OracleSettings GetOracleSettings(ClientContext &context, OracleCatalogState *state) {
 	OracleSettings settings;
 	if (state) {
@@ -79,7 +90,7 @@ OracleResolvedConnection ResolveOracleConnection(ClientContext &context, const s
 		return resolved;
 	}
 
-	if (reject_bare_identifier && !connection_ref.empty() && connection_ref.find('@') == string::npos) {
+	if (reject_bare_identifier && !connection_ref.empty() && !HasDirectConnectionStringShape(connection_ref)) {
 		throw InvalidInputException(
 		    "%s does not accept bare Oracle secret names or malformed direct connection strings without an '@'. Use "
 		    "ATTACH ... (TYPE oracle, SECRET ...) AS an alias and pass that alias, or pass a full "
