@@ -6,11 +6,6 @@ set(TARGET_NAME oracle)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# DuckDB's extension distribution supports vcpkg. As such, dependencies can be added in ./vcpkg.json and then
-# used in cmake with find_package. Feel free to remove or replace with other dependencies.
-# Note that it should also be removed from vcpkg.json to prevent needlessly installing it..
-find_package(OpenSSL REQUIRED)
-
 # OCI Library Detection
 if(DEFINED ENV{ORACLE_HOME})
     set(ORACLE_HOME $ENV{ORACLE_HOME})
@@ -49,13 +44,44 @@ set(EXTENSION_NAME ${TARGET_NAME}_extension)
 set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
 
 project(${TARGET_NAME})
+
+include(CheckCXXSourceCompiles)
+set(CMAKE_REQUIRED_INCLUDES ${OCI_INCLUDE_DIR})
+check_cxx_source_compiles("
+#include <oci.h>
+#ifndef SQLT_JSON
+#error SQLT_JSON missing
+#endif
+#ifndef SQLT_VEC
+#error SQLT_VEC missing
+#endif
+#ifndef SQLT_BOL
+#error SQLT_BOL missing
+#endif
+int main() {
+    return SQLT_JSON == 0 || SQLT_VEC == 0 || SQLT_BOL == 0;
+}
+" ORACLE_OCI_HAS_NATIVE_JSON_VECTOR_TYPES)
+unset(CMAKE_REQUIRED_INCLUDES)
+if (NOT ORACLE_OCI_HAS_NATIVE_JSON_VECTOR_TYPES)
+    message(FATAL_ERROR "Oracle Instant Client SDK headers must define SQLT_JSON, SQLT_VEC, and SQLT_BOL. Install Oracle Instant Client SDK 23.6 or newer; the setup scripts target the current 23.26 line.")
+endif()
+
 include_directories(src/include)
 
 set(EXTENSION_SOURCES
     src/oracle_extension.cpp
     src/oracle_connection.cpp
+    src/oracle_connection_resolver.cpp
     src/oracle_connection_manager.cpp
+    src/oracle_debug_stats.cpp
     src/oracle_secret.cpp
+    src/oracle_scan.cpp
+    src/oracle_pushdown.cpp
+    src/oracle_functions.cpp
+    src/oracle_settings.cpp
+    src/oracle_type_conversion.cpp
+    src/oracle_type_registry.cpp
     src/storage/oracle_catalog.cpp
     src/storage/oracle_schema_entry.cpp
     src/storage/oracle_table_entry.cpp
@@ -68,10 +94,6 @@ set(EXTENSION_SOURCES
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
-
-# Link OpenSSL in both the static library as the loadable extension
-target_link_libraries(${EXTENSION_NAME} OpenSSL::SSL OpenSSL::Crypto)
-target_link_libraries(${LOADABLE_EXTENSION_NAME} OpenSSL::SSL OpenSSL::Crypto)
 
 # Link OCI in both the static library as the loadable extension
 target_link_libraries(${EXTENSION_NAME} ${OCI_LIBRARY})

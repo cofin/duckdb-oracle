@@ -4,8 +4,8 @@
 $ErrorActionPreference = "Stop"
 
 # Oracle Instant Client Version
-$OCI_VER_FULL = "23.6.0.24.10"
-$BASE_URL = "https://download.oracle.com/otn_software/nt/instantclient/2360000"
+$OCI_VER_FULL = "23.26.2.0.0"
+$BASE_URL = "https://download.oracle.com/otn_software/nt/instantclient/2326200"
 
 # Detect architecture
 $ARCH = $env:PROCESSOR_ARCHITECTURE

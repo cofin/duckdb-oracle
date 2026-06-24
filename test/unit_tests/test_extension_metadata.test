@@ -1,0 +1,12 @@
+# name: test/unit_tests/test_extension_metadata.test
+# description: Extension metadata should report the canonical description.yml version
+# group: [unit_tests]
+
+require oracle
+
+query I
+SELECT extension_version
+FROM duckdb_extensions()
+WHERE extension_name = 'oracle';
+----
+0.2.1

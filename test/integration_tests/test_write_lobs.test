@@ -1,5 +1,5 @@
 # name: test/integration_tests/test_write_lobs.test
-# description: Test Oracle Write (COPY) for LOBs
+# description: Test Oracle Write (attached INSERT) for LOBs
 # group: [integration_tests]
 
 require oracle
@@ -31,17 +31,16 @@ SELECT oracle_clear_cache();
 # We use repeat to generate a reasonably large string/blob (e.g. > 4k)
 # DuckDB repeat('a', 5000) -> 5000 chars.
 statement ok
-COPY (
-    SELECT 
+INSERT INTO ora.write_lobs (id, val_clob, val_blob)
+SELECT
         1 as id, 
         repeat('a', 5000) as val_clob, 
         'ABC'::BLOB as val_blob
-    UNION ALL
-    SELECT 
+UNION ALL
+SELECT
         2, 
         'short', 
         '\x00\x01\x02'::BLOB
-) TO 'write_lobs' (FORMAT ORACLE, CONNECTION_STRING '${ORACLE_CONNECTION_STRING}');
 
 # Verify
 # We read back and check lengths/content

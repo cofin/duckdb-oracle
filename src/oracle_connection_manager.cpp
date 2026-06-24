@@ -1,9 +1,46 @@
 #include "oracle_connection_manager.hpp"
 #include "oracle_utils.hpp"
 #include "duckdb/common/string_util.hpp"
+#include <cstdlib>
 #include <cstdio>
 
 namespace duckdb {
+
+namespace {
+
+static std::mutex &WalletEnvLock() {
+	static std::mutex lock;
+	return lock;
+}
+
+struct ScopedTnsAdmin {
+	explicit ScopedTnsAdmin(const std::string &wallet_path) {
+		if (wallet_path.empty()) {
+			return;
+		}
+		const auto *current = getenv("TNS_ADMIN");
+		if (current) {
+			previous = current;
+		}
+		changed = true;
+		setenv("TNS_ADMIN", wallet_path.c_str(), 1);
+	}
+
+	~ScopedTnsAdmin() {
+		if (changed) {
+			if (previous.empty()) {
+				unsetenv("TNS_ADMIN");
+			} else {
+				setenv("TNS_ADMIN", previous.c_str(), 1);
+			}
+		}
+	}
+
+	std::string previous;
+	bool changed = false;
+};
+
+} // namespace
 
 static void ParseOracleConnectionString(const std::string &connection_string, std::string &user, std::string &password,
                                         std::string &db) {
@@ -19,10 +56,6 @@ static void ParseOracleConnectionString(const std::string &connection_string, st
 }
 
 OracleContext::~OracleContext() {
-	if (stmthp) {
-		OCIHandleFree(stmthp, OCI_HTYPE_STMT);
-		stmthp = nullptr;
-	}
 	if (svchp && authp && errhp) {
 		OCISessionEnd(svchp, errhp, authp, OCI_DEFAULT);
 	}
@@ -52,15 +85,25 @@ OracleContext::~OracleContext() {
 }
 
 OracleConnectionHandle::OracleConnectionHandle(std::shared_ptr<OracleConnectionPool> pool_p,
-                                               std::shared_ptr<OracleContext> ctx_p)
-    : pool(std::move(pool_p)), ctx(std::move(ctx_p)) {
+                                               std::shared_ptr<OracleContext> ctx_p, idx_t pool_generation_p)
+    : pool(std::move(pool_p)), ctx(std::move(ctx_p)), pool_generation(pool_generation_p) {
 }
 
 OracleConnectionHandle::~OracleConnectionHandle() {
 	if (pool && ctx) {
-		std::lock_guard<std::mutex> lock(pool->lock);
-		pool->idle.push_back(std::move(ctx));
-		pool->cv.notify_one();
+		std::shared_ptr<OracleContext> ctx_to_close;
+		{
+			std::lock_guard<std::mutex> lock(pool->lock);
+			if (unusable || pool->stale || pool_generation != pool->generation || pool->total > pool->limit) {
+				if (pool->total > 0) {
+					pool->total--;
+				}
+				ctx_to_close = std::move(ctx);
+			} else {
+				pool->idle.push_back(std::move(ctx));
+			}
+			pool->cv.notify_one();
+		}
 	}
 }
 
@@ -84,69 +127,135 @@ OracleConnectionManager::~OracleConnectionManager() {
 }
 
 void OracleConnectionManager::Clear() {
-	std::lock_guard<std::mutex> lock(manager_mutex);
-	pools.clear();
+	std::vector<std::shared_ptr<OracleConnectionPool>> old_pools;
+	{
+		std::lock_guard<std::mutex> lock(manager_mutex);
+		generation++;
+		old_pools.reserve(pools.size());
+		for (auto &entry : pools) {
+			old_pools.push_back(entry.second);
+		}
+		pools.clear();
+	}
+
+	for (auto &pool : old_pools) {
+		std::vector<std::shared_ptr<OracleContext>> idle_to_close;
+		{
+			std::lock_guard<std::mutex> lock(pool->lock);
+			pool->stale = true;
+			pool->generation++;
+			idle_to_close.swap(pool->idle);
+			if (pool->total >= idle_to_close.size()) {
+				pool->total -= idle_to_close.size();
+			} else {
+				pool->total = 0;
+			}
+			pool->cv.notify_all();
+		}
+	}
 }
 
 std::shared_ptr<OracleConnectionHandle> OracleConnectionManager::Acquire(const std::string &connection_string,
+                                                                         const std::string &wallet_path,
                                                                          const OracleSettings &settings,
                                                                          idx_t wait_timeout_ms) {
 	// If caching disabled, create a standalone connection
 	if (!settings.connection_cache) {
-		auto ctx = CreateConnection(connection_string, settings);
+		auto ctx = CreateConnection(connection_string, wallet_path, settings);
 		return std::make_shared<OracleConnectionHandle>(nullptr, std::move(ctx));
 	}
 
 	auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(wait_timeout_ms);
-	std::shared_ptr<OracleConnectionPool> pool;
-
-	{
-		std::unique_lock<std::mutex> lock(manager_mutex);
-		auto &p = pools[connection_string];
-		if (!p) {
-			p = std::make_shared<OracleConnectionPool>();
-		}
-		pool = p;
-	}
-
-	// Lock the specific pool
-	std::unique_lock<std::mutex> lock(pool->lock);
-
-	// Update pool limit from settings
-	if (settings.connection_limit > pool->limit) {
-		pool->limit = settings.connection_limit;
-	}
 
 	while (true) {
-		if (!pool->idle.empty()) {
-			auto ctx = pool->idle.back();
-			pool->idle.pop_back();
-			return std::make_shared<OracleConnectionHandle>(pool, std::move(ctx));
+		std::vector<std::shared_ptr<OracleContext>> idle_to_close;
+		std::shared_ptr<OracleConnectionPool> pool;
+
+		{
+			std::unique_lock<std::mutex> lock(manager_mutex);
+			OraclePoolKey key {connection_string, wallet_path};
+			auto &p = pools[key];
+			if (!p) {
+				p = std::make_shared<OracleConnectionPool>();
+				p->generation = generation;
+			}
+			pool = p;
 		}
 
-		if (pool->total < pool->limit) {
-			// Reserve a slot
-			pool->total++;
-			lock.unlock(); // Unlock pool to create connection
-			try {
-				auto ctx = CreateConnection(connection_string, settings);
-				return std::make_shared<OracleConnectionHandle>(pool, std::move(ctx));
-			} catch (...) {
-				// Rollback reservation
-				lock.lock();
-				pool->total--;
-				pool->cv.notify_one();
-				throw;
+		// Lock the specific pool
+		std::unique_lock<std::mutex> lock(pool->lock);
+		if (pool->stale) {
+			continue;
+		}
+
+		// Update pool limit from the latest settings and close excess idle contexts.
+		auto requested_limit = OracleEffectiveConnectionLimit(settings);
+		pool->limit = requested_limit;
+		while (!pool->idle.empty() && pool->total > pool->limit) {
+			idle_to_close.push_back(std::move(pool->idle.back()));
+			pool->idle.pop_back();
+			pool->total--;
+		}
+		if (!idle_to_close.empty()) {
+			pool->cv.notify_all();
+			lock.unlock();
+			idle_to_close.clear();
+			lock.lock();
+			if (pool->stale) {
+				continue;
 			}
 		}
 
-		if (pool->cv.wait_until(lock, deadline) == std::cv_status::timeout) {
-			throw IOException("Oracle connection pool timeout waiting for available session");
+		while (true) {
+			if (pool->stale) {
+				break;
+			}
+
+			if (!pool->idle.empty()) {
+				auto ctx = pool->idle.back();
+				pool->idle.pop_back();
+				return std::make_shared<OracleConnectionHandle>(pool, std::move(ctx), pool->generation);
+			}
+
+			if (pool->total < pool->limit) {
+				// Reserve a slot
+				pool->total++;
+				lock.unlock(); // Unlock pool to create connection
+				std::shared_ptr<OracleContext> ctx;
+				try {
+					ctx = CreateConnection(connection_string, wallet_path, settings);
+				} catch (...) {
+					// Rollback reservation
+					lock.lock();
+					pool->total--;
+					pool->cv.notify_one();
+					throw;
+				}
+
+				lock.lock();
+				if (pool->stale) {
+					if (pool->total > 0) {
+						pool->total--;
+					}
+					pool->cv.notify_all();
+					lock.unlock();
+					ctx.reset();
+					break;
+				}
+				auto handle_generation = pool->generation;
+				lock.unlock();
+				return std::make_shared<OracleConnectionHandle>(pool, std::move(ctx), handle_generation);
+			}
+
+			if (pool->cv.wait_until(lock, deadline) == std::cv_status::timeout) {
+				throw IOException("Oracle connection pool timeout waiting for available session");
+			}
 		}
 	}
 }
 
 std::shared_ptr<OracleContext> OracleConnectionManager::CreateConnection(const std::string &connection_string,
+                                                                         const std::string &wallet_path,
                                                                          const OracleSettings &settings) {
 	auto ctx = std::make_shared<OracleContext>();
 	ctx->envhp = envhp;
@@ -154,6 +263,8 @@ std::shared_ptr<OracleContext> OracleConnectionManager::CreateConnection(const s
 
 	std::string user, password, db;
 	ParseOracleConnectionString(connection_string, user, password, db);
+	std::unique_lock<std::mutex> wallet_lock(WalletEnvLock());
+	ScopedTnsAdmin tns_admin(wallet_path);
 
 	CheckOCIError(OCIHandleAlloc(ctx->envhp, (dvoid **)&ctx->errhp, OCI_HTYPE_ERROR, 0, nullptr), nullptr,
 	              "Failed to allocate OCI error handle");
@@ -164,9 +275,13 @@ std::shared_ptr<OracleContext> OracleConnectionManager::CreateConnection(const s
 
 	// Set call/connection timeouts on server handle before attach
 	ub4 call_timeout_ms = 10000;
-	OCIAttrSet(ctx->srvhp, OCI_HTYPE_SERVER, &call_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp);
+	CheckOCIOptionalAttributeORA24315(
+	    OCIAttrSet(ctx->srvhp, OCI_HTYPE_SERVER, &call_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp), ctx->errhp,
+	    "Failed to set pre-attach OCI server call timeout");
 	ub4 conn_timeout_ms = 10000;
-	OCIAttrSet(ctx->srvhp, OCI_HTYPE_SERVER, &conn_timeout_ms, 0, OCI_ATTR_CONN_TIMEOUT, ctx->errhp);
+	CheckOCIOptionalAttributeORA24315(
+	    OCIAttrSet(ctx->srvhp, OCI_HTYPE_SERVER, &conn_timeout_ms, 0, OCI_ATTR_CONN_TIMEOUT, ctx->errhp), ctx->errhp,
+	    "Failed to set pre-attach OCI server connection timeout");
 
 	// Attach to server
 	CheckOCIError(OCIServerAttach(ctx->srvhp, ctx->errhp, (OraText *)db.c_str(), (sb4)db.size(), OCI_DEFAULT),
@@ -195,25 +310,25 @@ std::shared_ptr<OracleContext> OracleConnectionManager::CreateConnection(const s
 
 	// Set NLS date/timestamp format to ISO
 	{
-		OCIStmt *stmt = nullptr;
-		CheckOCIError(OCIHandleAlloc(ctx->envhp, (dvoid **)&stmt, OCI_HTYPE_STMT, 0, nullptr), ctx->errhp,
-		              "Failed to allocate statement handle for NLS setup");
+		auto stmt = AllocateOCIStatement(ctx->envhp, ctx->errhp, "Failed to allocate statement handle for NLS setup");
 		std::string sql = "ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY-MM-DD HH24:MI:SS' NLS_TIMESTAMP_FORMAT = "
 		                  "'YYYY-MM-DD HH24:MI:SS.FF'";
-		CheckOCIError(OCIStmtPrepare(stmt, ctx->errhp, (OraText *)sql.c_str(), sql.size(), OCI_NTV_SYNTAX, OCI_DEFAULT),
-		              ctx->errhp, "Failed to prepare NLS setup statement");
-		CheckOCIError(OCIStmtExecute(ctx->svchp, stmt, ctx->errhp, 1, 0, nullptr, nullptr, OCI_DEFAULT), ctx->errhp,
-		              "Failed to execute NLS setup statement");
-		OCIHandleFree(stmt, OCI_HTYPE_STMT);
+		CheckOCIError(
+		    OCIStmtPrepare(stmt.get(), ctx->errhp, (OraText *)sql.c_str(), sql.size(), OCI_NTV_SYNTAX, OCI_DEFAULT),
+		    ctx->errhp, "Failed to prepare NLS setup statement");
+		CheckOCIError(OCIStmtExecute(ctx->svchp, stmt.get(), ctx->errhp, 1, 0, nullptr, nullptr, OCI_DEFAULT),
+		              ctx->errhp, "Failed to execute NLS setup statement");
 	}
 
 	// Enable statement cache (Disable for debugging shift issue)
 	ub4 stmt_cache_size = 0;
-	OCIAttrSet(ctx->svchp, OCI_HTYPE_SVCCTX, &stmt_cache_size, 0, OCI_ATTR_STMTCACHESIZE, ctx->errhp);
+	CheckOCIError(OCIAttrSet(ctx->svchp, OCI_HTYPE_SVCCTX, &stmt_cache_size, 0, OCI_ATTR_STMTCACHESIZE, ctx->errhp),
+	              ctx->errhp, "Failed to set OCI statement cache size");
 
 	// Default call timeout for operations on this service context
 	ub4 svc_call_timeout_ms = 30000;
-	OCIAttrSet(ctx->svchp, OCI_HTYPE_SVCCTX, &svc_call_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp);
+	CheckOCIError(OCIAttrSet(ctx->svchp, OCI_HTYPE_SVCCTX, &svc_call_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp),
+	              ctx->errhp, "Failed to set OCI call timeout on service context");
 
 	ctx->connected = true;
 	return ctx;

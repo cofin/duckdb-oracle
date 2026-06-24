@@ -1,29 +1,23 @@
 # name: test/integration_tests/oracle/write.test
-# description: Integration tests for Oracle write (INSERT/COPY) support
+# description: Integration tests for Oracle attached INSERT write support
 # group: [oracle]
 
 require oracle
 
+require json
+
 # Build connection string from environment
 statement ok
-CREATE OR REPLACE MACRO oracle_test_conn() AS (
-    concat(
-        oracle_env('ORACLE_USER', 'duckdb_test'), '/',
-        oracle_env('ORACLE_PASSWORD', 'duckdb_test'), '@//',
-        oracle_env('ORACLE_HOST', 'localhost'), ':',
-        oracle_env('ORACLE_PORT', '1521'), '/',
-        oracle_env('ORACLE_SERVICE', 'FREEPDB1')
-    )
-);
+CREATE OR REPLACE MACRO oracle_test_conn() AS '${ORACLE_CONNECTION_STRING}';
 
 statement ok
 CREATE OR REPLACE SECRET test_oracle (
     TYPE ORACLE,
-    USER oracle_env('ORACLE_USER', 'duckdb_test'),
-    PASSWORD oracle_env('ORACLE_PASSWORD', 'duckdb_test'),
-    HOST oracle_env('ORACLE_HOST', 'localhost'),
-    PORT CAST(oracle_env('ORACLE_PORT', '1521') AS INTEGER),
-    SERVICE oracle_env('ORACLE_SERVICE', 'FREEPDB1')
+    USER '${ORACLE_USER}',
+    PASSWORD '${ORACLE_PASSWORD}',
+    HOST '${ORACLE_HOST}',
+    PORT ${ORACLE_PORT},
+    SERVICE '${ORACLE_SERVICE}'
 );
 
 statement ok
@@ -34,6 +28,18 @@ statement ok
 SELECT oracle_execute(oracle_test_conn(), '
     BEGIN
        EXECUTE IMMEDIATE ''DROP TABLE test_write_types'';
+    EXCEPTION
+       WHEN OTHERS THEN
+          IF SQLCODE != -942 THEN
+             RAISE;
+          END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), '
+    BEGIN
+       EXECUTE IMMEDIATE ''DROP TABLE write_json_types'';
     EXCEPTION
        WHEN OTHERS THEN
           IF SQLCODE != -942 THEN
@@ -56,14 +62,37 @@ SELECT oracle_execute(oracle_test_conn(), '
     )
 ')
 
-# Insert data utilizing duckdb insert -> oracle copy logic
+statement ok
+SELECT oracle_execute(oracle_test_conn(), '
+    CREATE TABLE write_json_types (
+        id NUMBER PRIMARY KEY,
+        payload JSON
+    )
+')
+
+statement ok
+SELECT oracle_clear_cache();
+
+# Insert data through the attached Oracle table
 statement ok
 INSERT INTO ora.test_write_types (id, int_col, float_col, double_col, date_col, ts_col, blob_col, str_col)
 VALUES (1, 42, 3.14, 2.718, '2023-01-01'::DATE, '2023-01-01 12:34:56.789'::TIMESTAMP, '\xAB\xCD\xEF'::BLOB, 'hello world');
 
+statement ok
+INSERT INTO ora.test_write_types (id, int_col, float_col, double_col, date_col, ts_col, blob_col, str_col)
+VALUES (5, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+
+statement ok
+INSERT INTO ora.write_json_types (id, payload)
+VALUES (1, '{"name":"flow","n":1}');
+
+statement ok
+INSERT INTO ora.write_json_types (id, payload)
+VALUES (2, '{"name":"duckdb-json","n":2}'::JSON);
+
 # Fetch and verify data
 query TTTTTTTT
-SELECT * FROM ora.test_write_types ORDER BY id;
+SELECT * FROM ora.test_write_types WHERE id = 1 ORDER BY id;
 ----
 1.0
 42
@@ -74,6 +103,44 @@ SELECT * FROM ora.test_write_types ORDER BY id;
 \xAB\xCD\xEF
 hello world
 
-# Clean up
+query I
+SELECT * FROM oracle_query(oracle_test_conn(), 'SELECT COUNT(*) FROM test_write_types WHERE id = 5 AND int_col IS NULL AND float_col IS NULL AND double_col IS NULL AND date_col IS NULL AND ts_col IS NULL AND blob_col IS NULL AND str_col IS NULL');
+----
+1
+
+query I
+SELECT * FROM oracle_query(oracle_test_conn(), 'SELECT COUNT(*) FROM write_json_types WHERE JSON_VALUE(payload, ''$.name'') = ''flow''');
+----
+1
+
+query I
+SELECT * FROM oracle_query(oracle_test_conn(), 'SELECT COUNT(*) FROM write_json_types WHERE JSON_VALUE(payload, ''$.name'') = ''duckdb-json''');
+----
+1
+
+statement ok
+INSERT INTO ora.duckdb_test.test_write_types (id, int_col, float_col, double_col, date_col, ts_col, blob_col, str_col)
+VALUES (4, 7, 1.25, 9.5, '2024-02-03'::DATE, '2024-02-03 04:05:06.789'::TIMESTAMP, '\x01\x02'::BLOB, 'schema-qualified-ok');
+
+query I
+SELECT * FROM oracle_query(oracle_test_conn(), 'SELECT COUNT(*) FROM test_write_types WHERE id = 4 AND str_col = ''schema-qualified-ok''');
+----
+1
+
+query I
+INSERT INTO ora.test_write_types (id, int_col, str_col)
+SELECT i::INTEGER AS id, i::INTEGER AS int_col, 'multi-chunk-owned' AS str_col
+FROM range(10000, 15100) tbl(i);
+----
+5100
+
+query I
+SELECT * FROM oracle_query(oracle_test_conn(), 'SELECT COUNT(*) FROM test_write_types WHERE str_col = ''multi-chunk-owned''');
+----
+5100
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), 'DROP TABLE write_json_types')
+
 statement ok
 SELECT oracle_execute(oracle_test_conn(), 'DROP TABLE test_write_types')

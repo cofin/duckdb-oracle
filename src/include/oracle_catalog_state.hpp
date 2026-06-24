@@ -22,24 +22,39 @@ struct OracleVersionInfo {
 	bool supports_vector_serialize = false; // Oracle 23.4+ has VECTOR_SERIALIZE function
 };
 
+//! Bounded Oracle partition metadata used for planning diagnostics.
+struct OraclePartitionMetadata {
+	bool is_partitioned = false;
+	string partitioning_type;
+	string subpartitioning_type;
+	vector<string> partition_keys;
+	vector<string> subpartition_keys;
+	vector<string> partition_names;
+	vector<string> subpartition_names;
+
+	string ToDebugString() const;
+};
+
 //! Shared state per attached Oracle database used by generators for schemas/tables.
 class OracleCatalogState {
 public:
-	explicit OracleCatalogState(std::string connection_string_p)
-	    : connection_string(std::move(connection_string_p)), connection(make_uniq<OracleConnection>()) {
+	explicit OracleCatalogState(std::string connection_string_p, std::string wallet_path_p = "")
+	    : connection_string(std::move(connection_string_p)), wallet_path(std::move(wallet_path_p)),
+	      connection(make_uniq<OracleConnection>()) {
 	}
 
 	void Connect();
 	OracleResult Query(const std::string &query);
+	OracleResult QueryWithStringBinds(const std::string &query, const std::vector<std::string> &bind_values);
 	void ApplyOptions(const unordered_map<string, Value> &options);
 	void ClearCaches();
 
-	static void Register(const shared_ptr<OracleCatalogState> &state);
 	static void Register(const shared_ptr<OracleCatalogState> &state, const string &alias);
 	static void ClearAllCaches();
 	static shared_ptr<OracleCatalogState> LookupByAlias(const string &alias);
 
 	OracleSettings settings;
+	string wallet_path;
 
 	// Current schema detection
 	void DetectCurrentSchema();
@@ -59,14 +74,13 @@ public:
 
 	// Metadata enumeration
 	vector<string> ListSchemas();
-	vector<string> ListTables(const string &schema);
 	vector<string> ListObjects(const string &schema, const string &object_types);
+	OraclePartitionMetadata LoadPartitionMetadata(const string &schema, const string &table);
 
 	// Synonym resolution (returns empty pair if not found)
 	pair<string, string> ResolveSynonym(const string &schema, const string &synonym_name, bool &found);
 
 	// On-demand table loading
-	bool ObjectExists(const string &schema, const string &object_name, const string &object_types);
 	string GetObjectName(const string &schema, const string &object_name, const string &object_types);
 	string GetRealSchemaName(const string &name);
 

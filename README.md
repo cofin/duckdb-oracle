@@ -10,7 +10,7 @@ This extension allows DuckDB to directly read from and write to Oracle databases
 
 > **Note**: This extension is currently **unsigned**. You must start DuckDB with `-unsigned` to load it.
 >
-> **Supported DuckDB version**: v1.5.1 — see [Compatibility Matrix](docs/COMPATIBILITY.md) for details.
+> **Supported DuckDB version**: v1.5.4 — see [Compatibility Matrix](docs/COMPATIBILITY.md) for details.
 
 ```bash
 ./duckdb -unsigned
@@ -28,10 +28,6 @@ LOAD oracle;
 **2. Attach**
 
 ```sql
--- Basic connection
-ATTACH 'user/password@//localhost:1521/FREEPDB1' AS ora (TYPE oracle);
-
--- Using Secrets (Recommended)
 CREATE SECRET my_oracle (
     TYPE oracle,
     USER 'scott',
@@ -42,6 +38,8 @@ CREATE SECRET my_oracle (
 );
 ATTACH '' AS ora (TYPE oracle, SECRET my_oracle);
 ```
+
+Direct credential strings remain supported for `oracle_query`, `oracle_scan`, and `oracle_execute`, but prefer secrets and attached aliases for normal use.
 
 **3. Query (Read)**
 
@@ -58,14 +56,11 @@ JOIN local_departments d ON e.department_id = d.id;
 SELECT id, ST_Area(geom) FROM ora.gis_parcels;
 ```
 
-**4. Write (Insert/Copy)**
+**4. Write**
 
 ```sql
 -- Insert from DuckDB query
 INSERT INTO ora.target_table SELECT * FROM source_parquet_file;
-
--- Copy to Oracle
-COPY (SELECT * FROM my_table) TO 'target_table' (FORMAT ORACLE, SECRET my_oracle);
 ```
 
 ## Features
@@ -83,10 +78,13 @@ Set these variables to tune performance or behavior:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `oracle_enable_pushdown` | `true` | Push filters/projections to Oracle. |
-| `oracle_prefetch_rows` | `1024` | Rows to prefetch per round-trip. |
-| `oracle_array_size` | `256` | Batch size for OCI fetch/bind. |
+| `oracle_prefetch_rows` | `1024` | Rows to prefetch per round-trip; validated between 1 and 1,000,000. |
+| `oracle_prefetch_memory` | `0` | OCI prefetch memory in bytes; `0` lets OCI choose, otherwise max 1 GiB. |
+| `oracle_array_size` | `256` | Batch size for OCI fetch/bind; validated between 1 and DuckDB's vector capacity. |
 | `oracle_enable_spatial_types` | `true` | Map `SDO_GEOMETRY` to `GEOMETRY` type. |
 | `oracle_connection_cache` | `true` | Enable connection pooling. |
+| `oracle_connection_limit` | `8` | Maximum cached Oracle sessions per connection key; validated between 1 and 1024. |
+| `oracle_metadata_result_limit` | `10000` | Bounded metadata discovery limit; `0` uses the bounded default. |
 
 ## Authentication
 
@@ -97,12 +95,20 @@ CREATE SECRET prod (TYPE oracle, USER 'admin', PASSWORD 'secret', SERVICE 'PROD'
 ATTACH '' AS prod_db (TYPE oracle, SECRET prod);
 ```
 
+`oracle_query` and `oracle_execute` run raw Oracle SQL. Treat those SQL strings as trusted input; do not build them by interpolating untrusted user values.
+
 ### Oracle Wallet
 
 ```sql
--- Point to wallet directory containing tnsnames.ora and ewallet.p12
-SELECT oracle_attach_wallet('/path/to/wallet');
-ATTACH 'TNS_ALIAS' AS ora (TYPE oracle);
+-- Point WALLET_PATH to a local directory containing tnsnames.ora and ewallet.p12.
+CREATE SECRET adb_prod (
+    TYPE oracle,
+    USER 'admin',
+    PASSWORD 'secret',
+    SERVICE 'adb_alias',
+    WALLET_PATH '/path/to/wallet'
+);
+ATTACH '' AS ora (TYPE oracle, SECRET adb_prod);
 ```
 
 ## Development
@@ -123,5 +129,7 @@ make integration
 
 ## Limitations
 
-- **Transaction Management**: Currently auto-commits read/write operations.
+- **Transaction Management**: Oracle writes are statement-atomic: a successful DuckDB write statement commits to
+  Oracle, a failed write statement rolls back its Oracle work, and Oracle writes are rejected inside explicit DuckDB
+  transaction blocks until true cross-system transaction integration exists.
 - **Views**: Visible only if present in `ALL_TABLES` (standard behavior).

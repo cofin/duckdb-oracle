@@ -40,7 +40,7 @@ SELECT current_setting('oracle_metadata_result_limit');
 ----
 5000
 
-# Test 5: Test metadata result limit set to 0 (unlimited)
+# Test 5: Test metadata result limit set to 0 (runtime uses default bounded limit)
 statement ok
 SET oracle_metadata_result_limit = 0;
 

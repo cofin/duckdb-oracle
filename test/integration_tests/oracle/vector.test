@@ -1,0 +1,80 @@
+# name: test/integration_tests/oracle/vector.test
+# description: Canonical Oracle VECTOR read policy coverage
+# group: [oracle]
+
+require oracle
+
+statement ok
+CREATE OR REPLACE MACRO oracle_vector_conn() AS '${ORACLE_CONNECTION_STRING}';
+
+statement ok
+CREATE OR REPLACE SECRET oracle_vector_test (
+    TYPE ORACLE,
+    USER '${ORACLE_USER}',
+    PASSWORD '${ORACLE_PASSWORD}',
+    HOST '${ORACLE_HOST}',
+    PORT ${ORACLE_PORT},
+    SERVICE '${ORACLE_SERVICE}'
+);
+
+statement ok
+ATTACH '' AS ora_vector (TYPE ORACLE, SECRET 'oracle_vector_test')
+
+statement ok
+SELECT oracle_execute(oracle_vector_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE vector_read_docs'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_vector_conn(), '
+    CREATE TABLE vector_read_docs (
+        id NUMBER PRIMARY KEY,
+        embedding VECTOR(3, FLOAT32),
+        flexible_embedding VECTOR(*, FLOAT32),
+        nullable_embedding VECTOR(3, FLOAT32)
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_vector_conn(), '
+    INSERT INTO vector_read_docs VALUES (1, ''[1.1, 2.2, 3.3]'', ''[4.4, 5.5]'', NULL)
+')
+
+statement ok
+SELECT oracle_clear_cache();
+
+query TTTR
+SELECT typeof(embedding), typeof(flexible_embedding), typeof(nullable_embedding), embedding[2]
+FROM ora_vector.duckdb_test.vector_read_docs
+WHERE id = 1
+----
+FLOAT[]	FLOAT[]	FLOAT[]	2.2
+
+query IR
+SELECT id, embedding[3]
+FROM oracle_query(oracle_vector_conn(), 'SELECT id, embedding FROM vector_read_docs WHERE id = 1')
+----
+1	3.3
+
+query I
+SELECT (nullable_embedding IS NULL)::INTEGER
+FROM ora_vector.duckdb_test.vector_read_docs
+WHERE id = 1
+----
+1
+
+statement ok
+SELECT oracle_execute(oracle_vector_conn(), 'DROP TABLE vector_read_docs')
+
+statement ok
+DETACH ora_vector;
+
+statement ok
+DROP SECRET oracle_vector_test;

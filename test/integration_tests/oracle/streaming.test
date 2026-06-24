@@ -1,0 +1,216 @@
+# name: test/integration_tests/oracle/streaming.test
+# description: Bounded Oracle scan/write streaming instrumentation
+# group: [oracle]
+
+require oracle
+
+require json
+
+statement ok
+CREATE OR REPLACE MACRO oracle_streaming_conn() AS '${ORACLE_CONNECTION_STRING}';
+
+statement ok
+CREATE OR REPLACE SECRET oracle_streaming_test (
+    TYPE ORACLE,
+    USER '${ORACLE_USER}',
+    PASSWORD '${ORACLE_PASSWORD}',
+    HOST '${ORACLE_HOST}',
+    PORT ${ORACLE_PORT},
+    SERVICE '${ORACLE_SERVICE}'
+);
+
+statement ok
+SET oracle_array_size = 3;
+
+statement ok
+SET oracle_prefetch_rows = 7;
+
+statement ok
+SET oracle_prefetch_memory = 4096;
+
+statement ok
+ATTACH '' AS ora_streaming (TYPE ORACLE, SECRET 'oracle_streaming_test', ARRAY_SIZE 3)
+
+statement error
+ATTACH '' AS ora_streaming_bad_option (TYPE ORACLE, SECRET 'oracle_streaming_test', NOT_A_SETTING 1)
+----
+Unknown Oracle attach option
+
+statement ok
+SELECT oracle_execute(oracle_streaming_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE streaming_rows'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_streaming_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE streaming_clob_docs'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_streaming_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE streaming_json_docs'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_streaming_conn(), '
+    CREATE TABLE streaming_rows (
+        id NUMBER PRIMARY KEY,
+        payload VARCHAR2(100)
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_streaming_conn(), '
+    CREATE TABLE streaming_clob_docs (
+        id NUMBER PRIMARY KEY,
+        payload CLOB
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_streaming_conn(), '
+    CREATE TABLE streaming_json_docs (
+        id NUMBER PRIMARY KEY,
+        payload JSON
+    )
+')
+
+statement ok
+SELECT oracle_clear_cache();
+
+statement ok
+SELECT oracle_debug_reset_stats();
+
+query I
+INSERT INTO ora_streaming.streaming_rows (id, payload)
+SELECT i::INTEGER AS id, 'bounded-write' AS payload
+FROM range(1, 11) tbl(i);
+----
+10
+
+query III
+SELECT
+    (oracle_debug_counter('write_execute_calls') >= 4)::INTEGER,
+    (oracle_debug_counter('max_write_iters') <= 3)::INTEGER,
+    (oracle_debug_counter('write_buffer_bytes') > 0)::INTEGER;
+----
+1	1	1
+
+query IIIII
+SELECT
+    oracle_debug_counter('effective_array_size')::INTEGER,
+    oracle_debug_counter('effective_prefetch_rows')::INTEGER,
+    oracle_debug_counter('effective_prefetch_memory')::INTEGER,
+    (oracle_debug_counter('effective_connection_limit') >= 1)::INTEGER,
+    oracle_debug_counter('effective_metadata_result_limit')::INTEGER;
+----
+3	7	4096	1	10000
+
+statement ok
+SELECT oracle_debug_reset_stats();
+
+query I
+SELECT COUNT(*)
+FROM oracle_query(oracle_streaming_conn(), 'SELECT id FROM streaming_rows ORDER BY id');
+----
+10
+
+query III
+SELECT
+    (oracle_debug_counter('fetch_calls') >= 4)::INTEGER,
+    (oracle_debug_counter('max_rows_per_fetch') <= 3)::INTEGER,
+    (oracle_debug_counter('scan_buffer_bytes') > 0)::INTEGER;
+----
+1	1	1
+
+statement ok
+SET oracle_array_size = 0;
+
+statement error
+SELECT oracle_execute(oracle_streaming_conn(), 'SELECT 1 FROM dual');
+----
+oracle_array_size
+
+statement ok
+SET oracle_array_size = 3;
+
+statement ok
+SET oracle_prefetch_rows = 1000001;
+
+statement error
+SELECT oracle_execute(oracle_streaming_conn(), 'SELECT 1 FROM dual');
+----
+oracle_prefetch_rows
+
+statement ok
+SET oracle_prefetch_rows = 7;
+
+statement ok
+SELECT oracle_execute(oracle_streaming_conn(), '
+    INSERT INTO streaming_clob_docs VALUES (1, TO_CLOB(RPAD(''x'', 3999, ''x'')))
+')
+
+query I
+SELECT LENGTH(payload)
+FROM ora_streaming.duckdb_test.streaming_clob_docs
+WHERE id = 1;
+----
+3999
+
+statement ok
+INSERT INTO ora_streaming.streaming_json_docs (id, payload)
+SELECT 1, ('{"payload":"' || repeat('x', 4096) || '"}')::JSON;
+
+statement ok
+INSERT INTO ora_streaming.streaming_json_docs (id, payload)
+SELECT 2, ('{"payload":"' || repeat('x', 64000) || '"}')::JSON;
+
+query I
+SELECT LENGTH(payload->>'payload')
+FROM ora_streaming.duckdb_test.streaming_json_docs
+WHERE id = 1;
+----
+4096
+
+statement error
+SELECT LENGTH(payload->>'payload')
+FROM ora_streaming.duckdb_test.streaming_json_docs
+WHERE id = 2;
+----
+ORA-40478
+
+statement ok
+SELECT oracle_execute(oracle_streaming_conn(), 'DROP TABLE streaming_json_docs')
+
+statement ok
+SELECT oracle_execute(oracle_streaming_conn(), 'DROP TABLE streaming_clob_docs')
+
+statement ok
+SELECT oracle_execute(oracle_streaming_conn(), 'DROP TABLE streaming_rows')
+
+statement ok
+DETACH ora_streaming;
+
+statement ok
+DROP SECRET oracle_streaming_test;

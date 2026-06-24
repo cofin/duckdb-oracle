@@ -1,0 +1,35 @@
+# name: test/unit_tests/test_connection_resolver.test
+# description: Oracle connection resolver rejects secret names on direct SQL surfaces
+# group: [unit_tests]
+
+require oracle
+
+statement ok
+CREATE SECRET resolver_secret (
+    TYPE oracle,
+    HOST 'localhost',
+    PORT 1521,
+    SERVICE 'FREEPDB1',
+    USER 'duckdb_test',
+    PASSWORD 'duckdb_test'
+);
+
+statement error
+SELECT oracle_execute('resolver_secret', 'SELECT 1 FROM DUAL');
+----
+does not accept bare Oracle secret names
+
+statement error
+SELECT * FROM oracle_query('resolver_secret', 'SELECT 1 FROM DUAL');
+----
+does not accept bare Oracle secret names
+
+statement error
+SELECT oracle_execute('user/password', 'SELECT 1 FROM DUAL');
+----
+malformed direct connection strings without an '@'
+
+statement error
+SELECT * FROM oracle_query('user/password', 'SELECT 1 FROM DUAL');
+----
+malformed direct connection strings without an '@'

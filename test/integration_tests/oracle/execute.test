@@ -6,15 +6,7 @@ require oracle
 
 # Build connection string from environment (no oracle_test_conn() anymore)
 statement ok
-CREATE OR REPLACE MACRO oracle_test_conn() AS (
-    concat(
-        oracle_env('ORACLE_USER', 'duckdb_test'), '/',
-        oracle_env('ORACLE_PASSWORD', 'duckdb_test'), '@//',
-        oracle_env('ORACLE_HOST', 'localhost'), ':',
-        oracle_env('ORACLE_PORT', '1521'), '/',
-        oracle_env('ORACLE_SERVICE', 'FREEPDB1')
-    )
-);
+CREATE OR REPLACE MACRO oracle_test_conn() AS '${ORACLE_CONNECTION_STRING}';
 
 # Ensure a clean slate if the test is rerun against an existing container
 statement ok
@@ -25,15 +17,15 @@ SELECT oracle_execute(oracle_test_conn(),
        IF SQLCODE != -942 THEN RAISE; END IF;
      END;');
 
-# Derive connection params from environment with defaults (uses oracle_env helper).
+# Connection params are rendered by scripts/test_integration.sh.
 statement ok
 CREATE SECRET oracle_test_secret (
     TYPE oracle,
-    HOST oracle_env('ORACLE_HOST', 'localhost'),
-    PORT CAST(oracle_env('ORACLE_PORT', '1521') AS INTEGER),
-    SERVICE oracle_env('ORACLE_SERVICE', 'FREEPDB1'),
-    USER oracle_env('ORACLE_USER', 'duckdb_test'),
-    PASSWORD oracle_env('ORACLE_PASSWORD', 'duckdb_test')
+    HOST '${ORACLE_HOST}',
+    PORT ${ORACLE_PORT},
+    SERVICE '${ORACLE_SERVICE}',
+    USER '${ORACLE_USER}',
+    PASSWORD '${ORACLE_PASSWORD}'
 );
 
 # Test 1: Execute simple DDL - CREATE TABLE
@@ -186,12 +178,32 @@ SELECT oracle_execute(oracle_test_conn(),
 statement ok
 ATTACH '' AS ora_exec (TYPE oracle, SECRET oracle_test_secret);
 
-# Test 22: Execute via attached database with oracle_execute
+# Test 22: Execute via attached database alias with oracle_execute
 query I
-SELECT oracle_execute(oracle_test_conn(),
+SELECT oracle_execute('ora_exec',
     'BEGIN NULL; END;');
 ----
 <REGEX>:.*executed successfully.*
+
+# Test 23: Query via attached database alias with oracle_query
+query I
+SELECT COUNT(*) FROM oracle_query('ora_exec', 'SELECT 1 AS id FROM dual');
+----
+1
+
+# Test 24: Bare secret names are not accepted by direct SQL surfaces
+statement error
+SELECT oracle_execute('oracle_test_secret', 'SELECT 1 FROM dual');
+----
+does not accept bare Oracle secret names
+
+statement error
+SELECT * FROM oracle_query('oracle_test_secret', 'SELECT 1 FROM dual');
+----
+does not accept bare Oracle secret names
+
+statement ok
+DETACH ora_exec;
 
 # Cleanup: Drop the test secret
 statement ok

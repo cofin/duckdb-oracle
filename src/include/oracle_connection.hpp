@@ -12,8 +12,6 @@ namespace duckdb {
 struct OracleResult {
 	std::vector<std::string> columns;
 	std::vector<std::vector<std::string>> rows;
-
-	std::string GetString(idx_t row, idx_t col) const;
 };
 
 class OracleConnection {
@@ -21,20 +19,19 @@ public:
 	OracleConnection();
 	~OracleConnection();
 
-	void Connect(const std::string &connection_string);
+	void Connect(const std::string &connection_string, const std::string &wallet_path, const OracleSettings &settings);
 	bool IsConnected() const;
 
 	//! Execute a query and return all rows as strings (used for metadata discovery).
 	OracleResult Query(const std::string &query);
+	//! Execute a metadata query with positional string bind values and return all rows as strings.
+	OracleResult QueryWithStringBinds(const std::string &query, const std::vector<std::string> &bind_values);
 
 	//! Commit the current transaction
 	void Commit();
 
 	//! Rollback the current transaction
 	void Rollback();
-
-	//! Get the underlying connection handle
-	std::shared_ptr<OracleConnectionHandle> GetHandle() const;
 
 private:
 	std::shared_ptr<OracleConnectionHandle> conn_handle;

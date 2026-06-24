@@ -2,10 +2,9 @@
 set -e
 
 # Oracle Instant Client Version
-# macOS ARM64 uses version 23.3.0.23.09 (latest available as of Nov 2024)
 OCI_VER_MAJOR=23
-OCI_VER_FULL=23.3.0.23.09
-OCI_VER_SHORT=233023
+OCI_VER_FULL=23.26.1.0.0
+OCI_VER_SHORT=2326100
 BASE_URL="https://download.oracle.com/otn_software/mac/instantclient/${OCI_VER_SHORT}"
 
 # Detect architecture - only ARM64 is supported (Apple Silicon M1/M2/M3)
@@ -13,7 +12,7 @@ ARCH=$(uname -m)
 case "$ARCH" in
     arm64)
         OCI_ARCH="arm64"
-        BASIC_FILE="instantclient-basic-macos.${OCI_ARCH}-${OCI_VER_FULL}-2.dmg"
+        BASIC_FILE="instantclient-basic-macos.${OCI_ARCH}-${OCI_VER_FULL}.dmg"
         SDK_FILE="instantclient-sdk-macos.${OCI_ARCH}-${OCI_VER_FULL}.dmg"
         ;;
     x86_64)

@@ -2,15 +2,19 @@
 
 #include "duckdb.hpp"
 #include "oracle_connection.hpp"
-#include "duckdb/function/copy_function.hpp"
+#include "oracle_utils.hpp"
+#include "oracle_settings.hpp"
 #include "duckdb/common/vector.hpp"
+#include <mutex>
 #include <vector>
 
 namespace duckdb {
 
-struct OracleWriteBindData : public FunctionData {
+struct OracleWriteBindData {
 	string table_name;
 	string connection_string;
+	string wallet_path;
+	OracleSettings settings;
 
 	// Helper to reconstruct SQL
 	string schema_name;
@@ -22,52 +26,39 @@ struct OracleWriteBindData : public FunctionData {
 	// Oracle metadata for smart binding
 	vector<string> oracle_types; // e.g., "NUMBER", "BLOB", "SDO_GEOMETRY"
 	vector<ub2> bind_types;      // OCI bind type (e.g., SQLT_INT)
-
-public:
-	unique_ptr<FunctionData> Copy() const override {
-		auto result = make_uniq<OracleWriteBindData>();
-		result->table_name = table_name;
-		result->connection_string = connection_string;
-		result->schema_name = schema_name;
-		result->object_name = object_name;
-		result->column_names = column_names;
-		result->column_types = column_types;
-		result->oracle_types = oracle_types;
-		result->bind_types = bind_types;
-		return std::move(result);
-	}
-
-	bool Equals(const FunctionData &other_p) const override {
-		auto &other = other_p.Cast<OracleWriteBindData>();
-		return table_name == other.table_name && connection_string == other.connection_string;
-	}
 };
 
-class OracleWriteGlobalState : public GlobalFunctionData {
+class OracleWriteGlobalState {
 public:
-	OracleWriteGlobalState(std::shared_ptr<OracleConnectionHandle> conn, const string &query);
-	~OracleWriteGlobalState() override;
+	OracleWriteGlobalState(std::shared_ptr<OracleConnectionHandle> conn, const string &query, idx_t max_batch_size);
+	~OracleWriteGlobalState();
+
+	void MarkUncommittedWork() {
+		has_uncommitted_work = true;
+	}
+	void MarkCommitted() {
+		has_uncommitted_work = false;
+		committed = true;
+	}
+	bool ShouldCommit() const {
+		return has_uncommitted_work && !committed && !aborted;
+	}
+	void RollbackUncommitted() noexcept;
+	void Sink(DataChunk &chunk, const vector<string> &column_names, const vector<string> &oracle_types,
+	          const vector<ub2> &bind_types);
 
 	std::shared_ptr<OracleConnectionHandle> connection;
-	OCIStmt *stmthp;
-};
-
-class OracleWriteLocalState : public LocalFunctionData {
-public:
-	OracleWriteLocalState(std::shared_ptr<OracleConnectionHandle> conn, OCIStmt *stmthp);
-	~OracleWriteLocalState() override;
-
-	void Sink(DataChunk &chunk, const vector<string> &oracle_types, const vector<ub2> &bind_types);
-
-	friend void OracleWriteSink(ExecutionContext &context, FunctionData &bind_data, GlobalFunctionData &gstate,
-	                            LocalFunctionData &lstate, DataChunk &input);
+	OCIHandlePtr<OCIStmt> stmthp;
 
 private:
-	void BindColumn(Vector &col, idx_t col_idx, idx_t count, ub2 bind_type);
+	void BindColumn(Vector &col, idx_t col_idx, idx_t offset, idx_t count, const string &column_name,
+	                const string &oracle_type, ub2 bind_type);
 	void ExecuteBatch(idx_t count);
 
-	std::shared_ptr<OracleConnectionHandle> connection;
-	OCIStmt *stmthp;
+	std::mutex sink_lock;
+	bool has_uncommitted_work = false;
+	bool committed = false;
+	bool aborted = false;
 
 	// Buffers for binding
 	std::vector<std::vector<char>> bind_buffers;
@@ -76,21 +67,24 @@ private:
 	std::vector<OCIBind *> binds;
 	std::vector<size_t> current_buffer_sizes;
 
-	static constexpr idx_t MAX_BATCH_SIZE = STANDARD_VECTOR_SIZE;
+	idx_t max_batch_size = STANDARD_VECTOR_SIZE;
 };
 
-// CopyFunction implementations
-unique_ptr<FunctionData> OracleWriteBind(ClientContext &context, CopyFunctionBindInput &input,
-                                         const vector<string> &names, const vector<LogicalType> &sql_types);
+class OracleWriteLocalState {
+public:
+	OracleWriteLocalState();
+	~OracleWriteLocalState();
+};
 
-unique_ptr<GlobalFunctionData> OracleWriteInitGlobal(ClientContext &context, FunctionData &bind_data,
-                                                     const string &file_path);
+void RejectOracleWriteInExplicitTransaction(ClientContext &context);
+//! Populate writer-owned bind metadata and resolve Oracle target names/types.
+void PrepareOracleWriteBindData(OracleWriteBindData &data);
 
-unique_ptr<LocalFunctionData> OracleWriteInitLocal(ExecutionContext &context, FunctionData &bind_data);
+unique_ptr<OracleWriteGlobalState> OracleWriteInitGlobal(ClientContext &context, OracleWriteBindData &bind_data);
 
-void OracleWriteSink(ExecutionContext &context, FunctionData &bind_data, GlobalFunctionData &gstate,
-                     LocalFunctionData &lstate, DataChunk &input);
+void OracleWriteSink(ExecutionContext &context, OracleWriteBindData &bind_data, OracleWriteGlobalState &gstate,
+                     OracleWriteLocalState &lstate, DataChunk &input);
 
-void OracleWriteFinalize(ClientContext &context, FunctionData &bind_data, GlobalFunctionData &gstate);
+void OracleWriteFinalize(OracleWriteGlobalState &gstate);
 
 } // namespace duckdb

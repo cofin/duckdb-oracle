@@ -1,7 +1,7 @@
 extension:
   name: oracle
   description: Native Oracle database extension for DuckDB enabling read and write access to Oracle tables via OCI.
-  version: 0.2.0
+  version: 0.2.1
   language: C++
   build: cmake
   license: Apache-2.0
@@ -16,28 +16,38 @@ repo:
 
 docs:
   hello_world: |
-    -- Attach Oracle database
-    ATTACH 'user/password@//host:1521/service' AS ora (TYPE oracle);
+    -- Store credentials in DuckDB's SecretManager
+    CREATE SECRET oracle_prod (
+        TYPE oracle,
+        USER 'app_user',
+        PASSWORD 'secret',
+        HOST 'host',
+        PORT 1521,
+        SERVICE 'service'
+    );
+
+    -- Attach Oracle database through the secret
+    ATTACH '' AS ora (TYPE oracle, SECRET oracle_prod);
 
     -- Query Oracle table
     SELECT * FROM ora.HR.EMPLOYEES WHERE employee_id = 101;
 
-    -- Use table function
-    SELECT * FROM oracle_scan('user/pass@host:1521/service', 'HR', 'EMPLOYEES');
+    -- Use raw SQL only with trusted query strings
+    SELECT * FROM oracle_query('ora', 'SELECT employee_id FROM HR.EMPLOYEES WHERE ROWNUM <= 5');
 
     -- Write data to Oracle table
-    COPY (SELECT * FROM my_table) TO 'target_table' (FORMAT ORACLE, CONNECTION_STRING 'user/pass@host:1521/service');
+    INSERT INTO ora.target_table SELECT * FROM my_table;
 
   extended_description: |
     This extension provides native Oracle connectivity through Oracle Call Interface (OCI).
 
     Features:
-    - High performance read and write access to Oracle tables via ATTACH syntax and COPY
+    - High performance read and write access to Oracle tables via ATTACH syntax
     - Table and query functions (oracle_scan, oracle_query)
     - Oracle Wallet support for Autonomous Database
     - Secret Manager integration for credential management
     - Filter pushdown optimization
-    - OCI Array Binding and Direct Path Loads for fast writes
+    - OCI Array Binding for fast writes
     - Configurable fetch parameters for performance tuning
 
     Platform Support:
@@ -57,7 +67,7 @@ docs:
           type: VARCHAR
         - name: query
           type: VARCHAR
-      description: Execute arbitrary SQL query against Oracle database returning a result set.
+      description: Execute trusted arbitrary SQL query against Oracle database returning a result set.
 
     - name: oracle_scan
       parameters:
@@ -69,12 +79,6 @@ docs:
           type: VARCHAR
       description: Scan an Oracle table (equivalent to SELECT * FROM schema.table).
 
-    - name: oracle_attach_wallet
-      parameters:
-        - name: wallet_path
-          type: VARCHAR
-      description: Set TNS_ADMIN for Oracle Wallet (Autonomous Database support).
-
     - name: oracle_clear_cache
       description: Clear cached Oracle metadata and connections.
 
@@ -84,15 +88,7 @@ docs:
           type: VARCHAR
         - name: query
           type: VARCHAR
-      description: Execute arbitrary SQL without expecting a result set.
-
-    - name: oracle_env
-      parameters:
-        - name: key
-          type: VARCHAR
-        - name: default_value
-          type: VARCHAR
-      description: Retrieve the value of an environment variable.
+      description: Execute trusted arbitrary SQL without expecting a result set.
 
   settings:
     - name: oracle_enable_pushdown
@@ -143,7 +139,7 @@ docs:
     - name: oracle_metadata_result_limit
       type: UBIGINT
       default: 10000
-      description: Maximum rows returned from metadata queries (0=unlimited)
+      description: Maximum rows returned from metadata queries (0=default bounded limit)
 
     - name: oracle_use_current_schema
       type: BOOLEAN

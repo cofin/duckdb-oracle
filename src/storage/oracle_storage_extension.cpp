@@ -6,6 +6,7 @@
 #include "duckdb/main/secret/secret_manager.hpp"
 #include "oracle_storage_extension.hpp"
 #include "oracle_transaction_manager.hpp"
+#include "oracle_connection_resolver.hpp"
 #include "oracle_secret.hpp"
 
 namespace duckdb {
@@ -17,6 +18,7 @@ static unique_ptr<Catalog> OracleAttach(optional_ptr<StorageExtensionInfo> stora
 	options.access_mode = AccessMode::READ_ONLY;
 
 	string connection_string;
+	string wallet_path;
 
 	// Decision logic: path vs secret
 	if (!info.path.empty()) {
@@ -61,6 +63,12 @@ static unique_ptr<Catalog> OracleAttach(optional_ptr<StorageExtensionInfo> stora
 
 		// Build connection string from secret parameters
 		connection_string = BuildConnectionStringFromSecret(*kv_secret);
+		wallet_path = GetWalletPathFromSecret(*kv_secret);
+	}
+	auto wallet_option = options.options.find("wallet_path");
+	if (wallet_option != options.options.end()) {
+		wallet_path = wallet_option->second.ToString();
+		ValidateOracleWalletPath(wallet_path);
 	}
 
 	// Use in-memory storage underneath the DuckDB catalog
@@ -68,17 +76,24 @@ static unique_ptr<Catalog> OracleAttach(optional_ptr<StorageExtensionInfo> stora
 
 	auto *oracle_info = storage_info ? dynamic_cast<duckdb::OracleStorageInfo *>(storage_info.get()) : nullptr;
 	shared_ptr<OracleCatalogState> state;
+	bool new_state = false;
 	if (oracle_info && oracle_info->state) {
 		state = oracle_info->state;
 	} else {
-		state = make_shared_ptr<OracleCatalogState>(connection_string);
+		state = make_shared_ptr<OracleCatalogState>(connection_string, wallet_path);
+		new_state = true;
+	}
+	// Map attach options to state settings before exposing a new alias.
+	state->ApplyOptions(options.options);
+	auto resolved = ResolveOracleConnection(context, state->connection_string, state.get());
+	state->settings = resolved.settings;
+	state->wallet_path = resolved.wallet_path;
+	if (new_state) {
 		OracleCatalogState::Register(state, name);
 		if (oracle_info) {
 			oracle_info->state = state;
 		}
 	}
-	// Map attach options to state settings (best-effort, ignore unknown keys).
-	state->ApplyOptions(options.options);
 	return CreateOracleCatalog(db, state);
 }
 

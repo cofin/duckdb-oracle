@@ -17,6 +17,8 @@
 #include "duckdb/execution/physical_plan_generator.hpp"
 #include "oracle_catalog_state.hpp"
 #include "oracle_insert.hpp"
+#include "oracle_write.hpp"
+#include "oracle_connection_resolver.hpp"
 #include <memory>
 #include "oracle_table_entry.hpp"
 
@@ -162,6 +164,8 @@ public:
 
 	PhysicalOperator &PlanInsert(ClientContext &context, PhysicalPlanGenerator &planner, LogicalInsert &op,
 	                             optional_ptr<PhysicalOperator> plan) override {
+		RejectOracleWriteInExplicitTransaction(context);
+
 		// Use the table name directly — schema resolution happens in the write init
 		string insert_table_name = op.table.name;
 
@@ -178,9 +182,10 @@ public:
 			plan = planner.ResolveDefaultsProjection(op, *plan);
 		}
 
-		auto &insert =
-		    planner.Make<PhysicalOracleInsert>(op.types, std::move(insert_table_name), state->connection_string,
-		                                       std::move(col_names), std::move(col_types), op.estimated_cardinality);
+		auto resolved = ResolveOracleConnection(context, state->connection_string, state.get());
+		auto &insert = planner.Make<PhysicalOracleInsert>(
+		    op.types, std::move(insert_table_name), resolved.connection_string, resolved.wallet_path, resolved.settings,
+		    std::move(col_names), std::move(col_types), op.estimated_cardinality);
 		if (plan) {
 			insert.children.push_back(*plan);
 		}
@@ -204,7 +209,7 @@ private:
 unique_ptr<Catalog> CreateOracleCatalog(AttachedDatabase &db, shared_ptr<OracleCatalogState> state) {
 	auto catalog = make_uniq<OracleCatalog>(db, std::move(state));
 	catalog->Initialize(false);
-	return std::move(catalog);
+	return catalog;
 }
 
 } // namespace duckdb

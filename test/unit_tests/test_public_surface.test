@@ -1,0 +1,15 @@
+# name: test/unit_tests/test_public_surface.test
+# description: Unsafe public helper functions should not be registered
+# group: [unit_tests]
+
+require oracle
+
+statement error
+SELECT oracle_env('ORACLE_PASSWORD', '');
+----
+Catalog Error
+
+statement error
+SELECT oracle_attach_wallet('.');
+----
+Catalog Error

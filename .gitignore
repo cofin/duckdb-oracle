@@ -20,6 +20,7 @@ specs
 .gemini
 .claude
 AGENT.md
+AGENTS.md
 CLAUDE.md
 GEMINI.md
 oracle_sdk/
@@ -33,4 +34,12 @@ test/integration_temp.test
 .beads/
 .beads
 .geminiignore
+.codex
+.cursor
+.opencode
 .cache/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key

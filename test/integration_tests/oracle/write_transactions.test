@@ -1,0 +1,110 @@
+# name: test/integration_tests/oracle/write_transactions.test
+# description: Statement-atomic Oracle write transaction behavior
+# group: [oracle]
+
+require oracle
+
+statement ok
+CREATE OR REPLACE MACRO oracle_test_conn() AS '${ORACLE_CONNECTION_STRING}';
+
+statement ok
+CREATE OR REPLACE SECRET test_oracle_txn (
+    TYPE ORACLE,
+    USER '${ORACLE_USER}',
+    PASSWORD '${ORACLE_PASSWORD}',
+    HOST '${ORACLE_HOST}',
+    PORT ${ORACLE_PORT},
+    SERVICE '${ORACLE_SERVICE}'
+);
+
+statement ok
+ATTACH '' AS ora (TYPE ORACLE, SECRET 'test_oracle_txn')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), '
+    BEGIN
+       EXECUTE IMMEDIATE ''DROP TABLE write_txn_behavior'';
+    EXCEPTION
+       WHEN OTHERS THEN
+          IF SQLCODE != -942 THEN
+             RAISE;
+          END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), '
+    CREATE TABLE write_txn_behavior (
+        id NUMBER PRIMARY KEY,
+        value_col NUMBER
+    )
+')
+
+statement ok
+INSERT INTO ora.write_txn_behavior VALUES (1, 10);
+
+query I
+SELECT * FROM oracle_query(oracle_test_conn(), 'SELECT COUNT(*) FROM write_txn_behavior WHERE id = 1');
+----
+1
+
+statement ok
+BEGIN TRANSACTION;
+
+statement ok
+CREATE TEMP TABLE write_txn_local_marker AS SELECT 1 AS id;
+
+statement ok
+ROLLBACK;
+
+statement ok
+SELECT oracle_clear_cache();
+
+query I
+SELECT * FROM oracle_query(oracle_test_conn(), 'SELECT COUNT(*) FROM write_txn_behavior WHERE id = 1');
+----
+1
+
+statement ok
+BEGIN TRANSACTION;
+
+statement error
+INSERT INTO ora.write_txn_behavior VALUES (9999, 9999);
+----
+<REGEX>:.*Oracle writes are statement-atomic.*explicit DuckDB transaction block.*
+
+statement ok
+ROLLBACK;
+
+query I
+SELECT * FROM oracle_query(oracle_test_conn(), 'SELECT COUNT(*) FROM write_txn_behavior WHERE id = 9999');
+----
+0
+
+statement ok
+BEGIN TRANSACTION;
+
+statement error
+INSERT INTO ora.write_txn_behavior
+SELECT 10000 AS id, 10000 AS value_col;
+----
+<REGEX>:.*Oracle writes are statement-atomic.*explicit DuckDB transaction block.*
+
+statement ok
+ROLLBACK;
+
+query I
+SELECT * FROM oracle_query(oracle_test_conn(), 'SELECT COUNT(*) FROM write_txn_behavior WHERE id = 10000');
+----
+0
+
+statement ok
+INSERT INTO ora.write_txn_behavior VALUES (2, 20);
+
+query I
+SELECT * FROM oracle_query(oracle_test_conn(), 'SELECT COUNT(*) FROM write_txn_behavior WHERE id IN (1, 2)');
+----
+2
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), 'DROP TABLE write_txn_behavior')

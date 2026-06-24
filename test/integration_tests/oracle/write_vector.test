@@ -1,0 +1,104 @@
+# name: test/integration_tests/oracle/write_vector.test
+# description: Canonical Oracle VECTOR attached INSERT coverage
+# group: [oracle]
+
+require oracle
+
+statement ok
+CREATE OR REPLACE MACRO oracle_write_vector_conn() AS '${ORACLE_CONNECTION_STRING}';
+
+statement ok
+CREATE OR REPLACE SECRET oracle_write_vector_test (
+    TYPE ORACLE,
+    USER '${ORACLE_USER}',
+    PASSWORD '${ORACLE_PASSWORD}',
+    HOST '${ORACLE_HOST}',
+    PORT ${ORACLE_PORT},
+    SERVICE '${ORACLE_SERVICE}'
+);
+
+statement ok
+ATTACH '' AS ora_write_vector (TYPE ORACLE, SECRET 'oracle_write_vector_test')
+
+statement ok
+SELECT oracle_execute(oracle_write_vector_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE write_vector_docs'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_write_vector_conn(), '
+    CREATE TABLE write_vector_docs (
+        id NUMBER PRIMARY KEY,
+        embedding VECTOR(3, FLOAT32)
+    )
+')
+
+statement ok
+SELECT oracle_clear_cache();
+
+statement ok
+INSERT INTO ora_write_vector.write_vector_docs (id, embedding)
+VALUES (1, [1.1, 2.2, 3.3]::FLOAT[]);
+
+statement ok
+INSERT INTO ora_write_vector.write_vector_docs (id, embedding)
+VALUES (2, '[4.4, 5.5, 6.6]');
+
+statement ok
+INSERT INTO ora_write_vector.write_vector_docs (id, embedding)
+VALUES (3, NULL);
+
+statement error
+INSERT INTO ora_write_vector.write_vector_docs (id, embedding)
+VALUES (4, '[1.0, nope, 3.0]');
+----
+Could not convert string 'nope' to FLOAT
+
+statement error
+INSERT INTO ora_write_vector.write_vector_docs (id, embedding)
+VALUES (5, '[Infinity, 2.0, 3.0]');
+----
+Invalid Oracle VECTOR value
+
+statement error
+INSERT INTO ora_write_vector.write_vector_docs (id, embedding)
+VALUES (6, [1.0, 2.0]::FLOAT[]);
+----
+OCIStmtExecute Insert
+
+query I
+SELECT * FROM oracle_query(oracle_write_vector_conn(), 'SELECT COUNT(*) FROM write_vector_docs WHERE id IN (4, 5, 6)')
+----
+0
+
+query IR
+SELECT id, embedding[2]
+FROM ora_write_vector.duckdb_test.write_vector_docs
+WHERE id IN (1, 2)
+ORDER BY id
+----
+1	2.2
+2	5.5
+
+query I
+SELECT (embedding IS NULL)::INTEGER
+FROM ora_write_vector.duckdb_test.write_vector_docs
+WHERE id = 3
+----
+1
+
+statement ok
+SELECT oracle_execute(oracle_write_vector_conn(), 'DROP TABLE write_vector_docs')
+
+statement ok
+DETACH ora_write_vector;
+
+statement ok
+DROP SECRET oracle_write_vector_test;

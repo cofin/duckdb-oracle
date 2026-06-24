@@ -1,0 +1,98 @@
+# name: test/integration_tests/oracle/write_json.test
+# description: Canonical Oracle JSON attached INSERT coverage
+# group: [oracle]
+
+require oracle
+
+require json
+
+statement ok
+CREATE OR REPLACE MACRO oracle_write_json_conn() AS '${ORACLE_CONNECTION_STRING}';
+
+statement ok
+CREATE OR REPLACE SECRET oracle_write_json_test (
+    TYPE ORACLE,
+    USER '${ORACLE_USER}',
+    PASSWORD '${ORACLE_PASSWORD}',
+    HOST '${ORACLE_HOST}',
+    PORT ${ORACLE_PORT},
+    SERVICE '${ORACLE_SERVICE}'
+);
+
+statement ok
+ATTACH '' AS ora_write_json (TYPE ORACLE, SECRET 'oracle_write_json_test')
+
+statement ok
+SELECT oracle_execute(oracle_write_json_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE write_json_docs'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_write_json_conn(), '
+    CREATE TABLE write_json_docs (
+        id NUMBER PRIMARY KEY,
+        payload JSON
+    )
+')
+
+statement ok
+SELECT oracle_clear_cache();
+
+statement ok
+INSERT INTO ora_write_json.write_json_docs (id, payload)
+VALUES (1, '{"name":"varchar-json","n":1}');
+
+statement ok
+INSERT INTO ora_write_json.write_json_docs (id, payload)
+VALUES (2, '{"name":"duckdb-json","n":2}'::JSON);
+
+statement ok
+INSERT INTO ora_write_json.write_json_docs (id, payload)
+SELECT 3, ('{"payload":"' || repeat('x', 5000) || '"}')::JSON;
+
+statement error
+INSERT INTO ora_write_json.write_json_docs (id, payload)
+VALUES (4, '{"name":');
+----
+Malformed JSON
+
+query I
+SELECT * FROM oracle_query(oracle_write_json_conn(), 'SELECT COUNT(*) FROM write_json_docs WHERE id = 4')
+----
+0
+
+query T
+SELECT payload->>'name'
+FROM ora_write_json.duckdb_test.write_json_docs
+WHERE id = 1
+----
+varchar-json
+
+query T
+SELECT payload->>'name'
+FROM oracle_query(oracle_write_json_conn(), 'SELECT payload FROM write_json_docs WHERE id = 2')
+----
+duckdb-json
+
+query I
+SELECT LENGTH(payload->>'payload')
+FROM ora_write_json.duckdb_test.write_json_docs
+WHERE id = 3
+----
+5000
+
+statement ok
+SELECT oracle_execute(oracle_write_json_conn(), 'DROP TABLE write_json_docs')
+
+statement ok
+DETACH ora_write_json;
+
+statement ok
+DROP SECRET oracle_write_json_test;

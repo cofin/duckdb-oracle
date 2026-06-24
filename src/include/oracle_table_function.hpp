@@ -13,10 +13,16 @@ class OracleCatalogState;
 
 struct OracleBindData : public FunctionData {
 	string connection_string;
+	string wallet_path;
 	string base_query;
 	string query;
+	string direct_from_sql;
+	string direct_select_list_sql;
 	vector<ub2> oci_types;
 	vector<ub4> oci_sizes;
+	vector<string> oracle_type_names;
+	vector<bool> pushdown_eligible;
+	vector<string> pushdown_clauses;
 	vector<string> column_names;
 	vector<LogicalType> original_types;
 	vector<string> original_names;
@@ -25,8 +31,6 @@ struct OracleBindData : public FunctionData {
 
 	// Statement prepared in bind; executed in global scan state
 	std::shared_ptr<OCIStmt> stmt;
-	// Metadata kept in bind data
-	bool finished = false;
 
 	OracleBindData();
 
@@ -36,7 +40,6 @@ struct OracleBindData : public FunctionData {
 
 struct OracleScanState : public GlobalTableFunctionState {
 	std::shared_ptr<OracleConnectionHandle> conn_handle;
-	OCISvcCtx *svc = nullptr;
 	std::shared_ptr<OCIStmt> stmt;
 	OCIError *err = nullptr;
 	vector<vector<char>> buffers;
@@ -44,8 +47,8 @@ struct OracleScanState : public GlobalTableFunctionState {
 	vector<vector<sb2>> indicators;
 	vector<vector<ub2>> return_lens;
 	vector<idx_t> column_mapping; // Map output column index to buffer index
+	idx_t fetch_size = STANDARD_VECTOR_SIZE;
 	bool executed = false;
-	bool defines_bound = false;
 	bool finished = false;
 
 	explicit OracleScanState(idx_t column_count) {
@@ -63,13 +66,17 @@ struct OracleScanState : public GlobalTableFunctionState {
 unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string connection_string, string query,
                                             vector<LogicalType> &return_types, vector<string> &names,
                                             OracleBindData *bind_data_ptr = nullptr,
-                                            OracleCatalogState *state = nullptr);
+                                            OracleCatalogState *state = nullptr, bool reject_bare_identifier = false,
+                                            const char *surface = "Oracle table function");
 
 void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataChunk &output);
 
-void OraclePushdownComplexFilter(ClientContext &context, LogicalGet &get, FunctionData *bind_data_p,
-                                 vector<unique_ptr<Expression>> &expressions);
-
 unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &context, TableFunctionInitInput &input);
+
+unique_ptr<FunctionData> OracleScanBind(ClientContext &context, TableFunctionBindInput &input,
+                                        vector<LogicalType> &return_types, vector<string> &names);
+
+unique_ptr<FunctionData> OracleQueryBind(ClientContext &context, TableFunctionBindInput &input,
+                                         vector<LogicalType> &return_types, vector<string> &names);
 
 } // namespace duckdb

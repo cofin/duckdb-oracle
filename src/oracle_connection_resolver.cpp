@@ -1,0 +1,106 @@
+#include "oracle_connection_resolver.hpp"
+#include "oracle_catalog_state.hpp"
+#include "duckdb/common/exception.hpp"
+#include "duckdb/common/limits.hpp"
+#include "duckdb/main/client_context.hpp"
+
+namespace duckdb {
+
+namespace {
+
+static bool HasDirectConnectionStringShape(const string &connection_ref) {
+	auto slash_pos = connection_ref.find('/');
+	auto at_pos = connection_ref.find('@', slash_pos == string::npos ? 0 : slash_pos);
+	return slash_pos != string::npos && at_pos != string::npos && slash_pos > 0 && at_pos > slash_pos + 1 &&
+	       at_pos < connection_ref.size() - 1;
+}
+
+} // namespace
+
+OracleSettings GetOracleSettings(ClientContext &context, OracleCatalogState *state) {
+	OracleSettings settings;
+	if (state) {
+		settings = state->settings;
+	}
+
+	Value option_value;
+	if (context.TryGetCurrentSetting("oracle_enable_pushdown", option_value)) {
+		settings.enable_pushdown = option_value.GetValue<bool>();
+	}
+	if (context.TryGetCurrentSetting("oracle_prefetch_rows", option_value)) {
+		auto val = option_value.GetValue<int64_t>();
+		settings.prefetch_rows = OracleValidatedSettingValue(val, "oracle_prefetch_rows", 1, MAX_ORACLE_PREFETCH_ROWS);
+	}
+	if (context.TryGetCurrentSetting("oracle_prefetch_memory", option_value)) {
+		auto val = option_value.GetValue<int64_t>();
+		settings.prefetch_memory =
+		    OracleValidatedSettingValue(val, "oracle_prefetch_memory", 0, MAX_ORACLE_PREFETCH_MEMORY);
+	}
+	if (context.TryGetCurrentSetting("oracle_array_size", option_value)) {
+		auto val = option_value.GetValue<int64_t>();
+		settings.array_size = OracleValidatedSettingValue(val, "oracle_array_size", 1, STANDARD_VECTOR_SIZE);
+	}
+	if (context.TryGetCurrentSetting("oracle_connection_cache", option_value)) {
+		settings.connection_cache = option_value.GetValue<bool>();
+	}
+	if (context.TryGetCurrentSetting("oracle_connection_limit", option_value)) {
+		auto val = option_value.GetValue<int64_t>();
+		settings.connection_limit =
+		    OracleValidatedSettingValue(val, "oracle_connection_limit", 1, MAX_ORACLE_CONNECTION_LIMIT);
+	}
+	if (context.TryGetCurrentSetting("oracle_debug_show_queries", option_value)) {
+		settings.debug_show_queries = option_value.GetValue<bool>();
+	}
+	if (context.TryGetCurrentSetting("oracle_lazy_schema_loading", option_value)) {
+		settings.lazy_schema_loading = option_value.GetValue<bool>();
+	}
+	if (context.TryGetCurrentSetting("oracle_metadata_object_types", option_value)) {
+		settings.metadata_object_types = option_value.ToString();
+	}
+	if (context.TryGetCurrentSetting("oracle_metadata_result_limit", option_value)) {
+		auto val = option_value.GetValue<int64_t>();
+		settings.metadata_result_limit = OracleValidatedMetadataResultLimit(val);
+	}
+	if (context.TryGetCurrentSetting("oracle_use_current_schema", option_value)) {
+		settings.use_current_schema = option_value.GetValue<bool>();
+	}
+	if (context.TryGetCurrentSetting("oracle_enable_spatial_types", option_value)) {
+		settings.enable_spatial_types = option_value.GetValue<bool>();
+	}
+	return settings;
+}
+
+OracleResolvedConnection ResolveOracleConnection(ClientContext &context, const string &connection_ref,
+                                                 OracleCatalogState *state_hint, bool reject_bare_identifier,
+                                                 const char *surface) {
+	OracleResolvedConnection resolved;
+	if (state_hint) {
+		resolved.connection_string = state_hint->connection_string;
+		resolved.wallet_path = state_hint->wallet_path;
+		resolved.settings = GetOracleSettings(context, state_hint);
+		return resolved;
+	}
+
+	auto catalog_state = OracleCatalogState::LookupByAlias(connection_ref);
+	if (catalog_state) {
+		resolved.connection_string = catalog_state->connection_string;
+		resolved.wallet_path = catalog_state->wallet_path;
+		resolved.settings = GetOracleSettings(context, catalog_state.get());
+		resolved.catalog_state = std::move(catalog_state);
+		return resolved;
+	}
+
+	if (reject_bare_identifier && !connection_ref.empty() && !HasDirectConnectionStringShape(connection_ref)) {
+		throw InvalidInputException(
+		    "%s does not accept bare Oracle secret names or malformed direct connection strings without an '@'. Use "
+		    "ATTACH ... (TYPE oracle, SECRET ...) AS an alias and pass that alias, or pass a full "
+		    "user/password@connect_identifier connection string.",
+		    surface ? surface : "Oracle connection");
+	}
+
+	resolved.connection_string = connection_ref;
+	resolved.settings = GetOracleSettings(context);
+	return resolved;
+}
+
+} // namespace duckdb

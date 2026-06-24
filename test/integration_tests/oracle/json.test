@@ -1,0 +1,137 @@
+# name: test/integration_tests/oracle/json.test
+# description: Canonical Oracle JSON read policy coverage
+# group: [oracle]
+
+require oracle
+
+require json
+
+statement ok
+CREATE OR REPLACE MACRO oracle_json_conn() AS '${ORACLE_CONNECTION_STRING}';
+
+statement ok
+CREATE OR REPLACE SECRET oracle_json_test (
+    TYPE ORACLE,
+    USER '${ORACLE_USER}',
+    PASSWORD '${ORACLE_PASSWORD}',
+    HOST '${ORACLE_HOST}',
+    PORT ${ORACLE_PORT},
+    SERVICE '${ORACLE_SERVICE}'
+);
+
+statement ok
+ATTACH '' AS ora_json (TYPE ORACLE, SECRET 'oracle_json_test')
+
+statement ok
+SELECT oracle_execute(oracle_json_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE json_native_docs'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_json_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE json_varchar_docs'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_json_conn(), '
+    CREATE TABLE json_native_docs (
+        id NUMBER PRIMARY KEY,
+        payload JSON
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_json_conn(), '
+    INSERT INTO json_native_docs VALUES (1, JSON(''{"name":"attached","n":1}''))
+')
+
+statement ok
+SELECT oracle_execute(oracle_json_conn(), '
+    INSERT INTO json_native_docs VALUES (3, NULL)
+')
+
+statement ok
+SELECT oracle_execute(oracle_json_conn(), '
+    CREATE TABLE json_varchar_docs (
+        id NUMBER PRIMARY KEY,
+        payload VARCHAR2(4000) CHECK (payload IS JSON)
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_json_conn(), '
+    INSERT INTO json_varchar_docs VALUES (1, ''{"name":"opaque-text"}'')
+')
+
+statement ok
+SELECT oracle_clear_cache();
+
+statement ok
+INSERT INTO ora_json.json_native_docs (id, payload)
+SELECT 2, ('{"payload":"' || repeat('x', 5000) || '"}')::JSON;
+
+query TT
+SELECT typeof(payload), payload->>'name'
+FROM ora_json.duckdb_test.json_native_docs
+WHERE id = 1
+----
+JSON	attached
+
+query I
+SELECT LENGTH(payload->>'payload')
+FROM ora_json.duckdb_test.json_native_docs
+WHERE id = 2
+----
+5000
+
+query I
+SELECT (payload IS NULL)::INTEGER
+FROM ora_json.duckdb_test.json_native_docs
+WHERE id = 3
+----
+1
+
+query TT
+SELECT typeof(payload), payload->>'name'
+FROM oracle_query(oracle_json_conn(), 'SELECT payload FROM json_native_docs WHERE id = 1')
+----
+JSON	attached
+
+query I
+SELECT LENGTH(payload->>'payload')
+FROM oracle_query(oracle_json_conn(), 'SELECT payload FROM json_native_docs WHERE id = 2')
+----
+5000
+
+query TT
+SELECT typeof(payload), CAST(payload AS JSON)->>'name'
+FROM ora_json.duckdb_test.json_varchar_docs
+WHERE id = 1
+----
+VARCHAR	opaque-text
+
+statement ok
+SELECT oracle_execute(oracle_json_conn(), 'DROP TABLE json_varchar_docs')
+
+statement ok
+SELECT oracle_execute(oracle_json_conn(), 'DROP TABLE json_native_docs')
+
+statement ok
+DETACH ora_json;
+
+statement ok
+DROP SECRET oracle_json_test;

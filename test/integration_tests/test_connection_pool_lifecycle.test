@@ -1,0 +1,150 @@
+# name: test/integration_tests/test_connection_pool_lifecycle.test
+# description: Pool lifecycle and dirty-session cleanup behavior
+# group: [integration_tests]
+
+require oracle
+
+statement ok
+ATTACH '${ORACLE_CONNECTION_STRING}' AS ora (TYPE ORACLE);
+
+statement ok
+SELECT oracle_execute('ora', '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE pool_failed_write PURGE'';
+    EXCEPTION WHEN OTHERS THEN
+        IF SQLCODE != -942 THEN RAISE; END IF;
+    END;
+');
+
+statement ok
+SELECT oracle_execute('ora', '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE pool_vector_write PURGE'';
+    EXCEPTION WHEN OTHERS THEN
+        IF SQLCODE != -942 THEN RAISE; END IF;
+    END;
+');
+
+statement ok
+SELECT oracle_execute('ora', '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE pool_cache_state PURGE'';
+    EXCEPTION WHEN OTHERS THEN
+        IF SQLCODE != -942 THEN RAISE; END IF;
+    END;
+');
+
+statement ok
+SELECT oracle_execute('ora', '
+    CREATE GLOBAL TEMPORARY TABLE pool_cache_state (
+        id NUMBER
+    ) ON COMMIT PRESERVE ROWS
+');
+
+statement ok
+SET oracle_connection_cache = false;
+
+query I
+SELECT oracle_execute('ora', 'INSERT INTO pool_cache_state VALUES (1)');
+----
+<REGEX>:.*1 rows? affected.*
+
+query I
+SELECT * FROM oracle_query('ora', 'SELECT COUNT(*) FROM pool_cache_state');
+----
+0
+
+statement ok
+SET oracle_connection_cache = true;
+
+statement ok
+SET oracle_connection_limit = 1;
+
+statement ok
+SELECT oracle_clear_cache();
+
+query I
+SELECT oracle_execute('ora', 'INSERT INTO pool_cache_state VALUES (2)');
+----
+<REGEX>:.*1 rows? affected.*
+
+query I
+SELECT * FROM oracle_query('ora', 'SELECT COUNT(*) FROM pool_cache_state');
+----
+1
+
+statement ok
+SELECT oracle_clear_cache();
+
+query I
+SELECT * FROM oracle_query('ora', 'SELECT COUNT(*) FROM pool_cache_state');
+----
+0
+
+statement ok
+SELECT oracle_debug_reset_stats();
+
+query I
+SELECT * FROM oracle_query('ora', 'SELECT 1 FROM dual');
+----
+1
+
+query I
+SELECT oracle_debug_counter('effective_connection_limit')::INTEGER;
+----
+1
+
+statement ok
+SET oracle_connection_limit = 8;
+
+statement ok
+SELECT oracle_clear_cache();
+
+statement ok
+SELECT oracle_execute('ora', '
+    CREATE TABLE pool_failed_write (
+        id NUMBER PRIMARY KEY
+    )
+');
+
+statement error
+INSERT INTO ora.pool_failed_write
+SELECT CASE WHEN i = 2049 THEN 1 ELSE i END::INTEGER AS id
+FROM range(1, 4097) tbl(i);
+----
+ORA-00001
+
+query I
+SELECT * FROM oracle_query('ora', 'SELECT COUNT(*) FROM pool_failed_write');
+----
+0
+
+statement ok
+SELECT oracle_execute('ora', '
+    CREATE TABLE pool_vector_write (
+        id NUMBER PRIMARY KEY,
+        embedding VECTOR(3, FLOAT32)
+    )
+');
+
+query I
+SELECT oracle_execute('ora', 'INSERT INTO pool_cache_state VALUES (3)');
+----
+<REGEX>:.*1 rows? affected.*
+
+statement error
+INSERT INTO ora.pool_vector_write (id, embedding)
+VALUES (1, '[Infinity, 2.0, 3.0]');
+----
+Invalid Oracle VECTOR value
+
+query I
+SELECT * FROM oracle_query('ora', 'SELECT COUNT(*) FROM pool_cache_state');
+----
+1
+
+statement ok
+SELECT oracle_execute('ora', 'DROP TABLE pool_vector_write PURGE');
+
+statement ok
+SELECT oracle_execute('ora', 'DROP TABLE pool_failed_write PURGE');

@@ -52,7 +52,7 @@ jobs:
     - name: Run Unit Tests
       run: |
         # Run smoke tests that don't require Oracle connection
-        make test/unit_tests
+        make test-unit
 
     - name: Run Integration Tests
       run: |

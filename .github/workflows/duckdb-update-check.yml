@@ -34,8 +34,15 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Ensure labels exist
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create duckdb-update --color 1d76db --description "Automated DuckDB version bump" --force
+          gh label create automated --color ededed --description "Opened by automation" --force
+
       - name: Install Dependencies
-        run: pip install requests semantic_version pyyaml
+        run: pip install requests semantic_version pyyaml uv
 
       - name: Check for Updates
         id: check
@@ -43,7 +50,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Create a python script to check versions
-          cat <<PYTHON_SCRIPT > check_version.py
+          cat <<PYTHON_SCRIPT > "$RUNNER_TEMP/check_version.py"
           import os
           import re
           import sys
@@ -102,7 +109,7 @@ jobs:
                   print(f"update_available=false", file=fh)
           PYTHON_SCRIPT
           
-          python check_version.py
+          python "$RUNNER_TEMP/check_version.py"
 
       - name: Close Stale PRs
         if: steps.check.outputs.update_available == 'true'
@@ -147,33 +154,9 @@ jobs:
             git checkout -b "$BRANCH_NAME" origin/main
           fi
           
-          # Update submodule
-          cd duckdb
-          git fetch --tags
-          git checkout "v${NEW_VERSION}"
-          cd ..
-          
-          # Update workflow file
-          sed -i "s/duckdb_version: v[0-9.]*/duckdb_version: v${NEW_VERSION}/g" .github/workflows/main-distribution-pipeline.yml
-          sed -i "s/ci_tools_version: v[0-9.]*/ci_tools_version: v${NEW_VERSION}/g" .github/workflows/main-distribution-pipeline.yml
-          sed -i "s/@v[0-9.]*/@v${NEW_VERSION}/g" .github/workflows/main-distribution-pipeline.yml
-          
-          # Bump extension patch version in description.yml so auto-tag creates a new release
-          CURRENT_EXT_VERSION=$(grep '^  version:' description.yml | awk '{print $2}')
-          if [ -z "$CURRENT_EXT_VERSION" ]; then
-            echo "::error::Could not read extension version from description.yml -- cannot bump version for release"
-            exit 1
-          fi
-          if [[ ! "$CURRENT_EXT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Cannot bump version: '$CURRENT_EXT_VERSION' is not a simple X.Y.Z semver"
-            exit 1
-          fi
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_EXT_VERSION"
-          NEW_EXT_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
-          sed -i "s/^  version: ${CURRENT_EXT_VERSION}/  version: ${NEW_EXT_VERSION}/" description.yml
-          echo "Bumped extension version: ${CURRENT_EXT_VERSION} -> ${NEW_EXT_VERSION}"
+          ./scripts/bump_duckdb_version.sh "v${NEW_VERSION}"
 
-          git add duckdb .github/workflows/main-distribution-pipeline.yml description.yml
+          git add -A
           git commit -m "feat: Upgrade DuckDB to v${NEW_VERSION}"
           
           # Force push to overwrite if it existed
@@ -208,7 +191,4 @@ jobs:
             # Comment on existing PR to notify of update
             gh pr comment "$EXISTING_PR" --body "Force-updated branch with fresh changes for v${NEW_VERSION}."
           fi
-          
-          # Enable auto-merge
-          # This requires "Allow auto-merge" to be enabled in repo settings
-          gh pr merge "$EXISTING_PR" --auto --merge --delete-branch
+          echo "PR opened for v${NEW_VERSION}. Review CI, then merge manually."

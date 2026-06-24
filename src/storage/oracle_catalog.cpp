@@ -3,6 +3,7 @@
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/limits.hpp"
+#include "duckdb/common/vector_size.hpp"
 #include <mutex>
 #include <memory>
 
@@ -22,7 +23,27 @@ static unordered_map<string, weak_ptr<OracleCatalogState>> &AliasRegistry() {
 	static unordered_map<string, weak_ptr<OracleCatalogState>> registry;
 	return registry;
 }
+
+static vector<string> FirstColumnValues(const OracleResult &result) {
+	vector<string> values;
+	values.reserve(result.rows.size());
+	for (auto &row : result.rows) {
+		if (!row.empty()) {
+			values.push_back(row[0]);
+		}
+	}
+	return values;
+}
 } // namespace
+
+string OraclePartitionMetadata::ToDebugString() const {
+	return StringUtil::Format(
+	    "partitioned=%s;partitioning=%s;subpartitioning=%s;keys=%s;subkeys=%s;partitions=%s;"
+	    "subpartitions=%s",
+	    is_partitioned ? "true" : "false", partitioning_type.c_str(), subpartitioning_type.c_str(),
+	    StringUtil::Join(partition_keys, ",").c_str(), StringUtil::Join(subpartition_keys, ",").c_str(),
+	    StringUtil::Join(partition_names, ",").c_str(), StringUtil::Join(subpartition_names, ",").c_str());
+}
 
 void OracleCatalogState::Connect() {
 	lock_guard<std::mutex> guard(lock);
@@ -34,12 +55,18 @@ OracleResult OracleCatalogState::Query(const std::string &query) {
 	return EnsureConnectionInternal().Query(query);
 }
 
+OracleResult OracleCatalogState::QueryWithStringBinds(const std::string &query,
+                                                      const std::vector<std::string> &bind_values) {
+	lock_guard<std::mutex> guard(lock);
+	return EnsureConnectionInternal().QueryWithStringBinds(query, bind_values);
+}
+
 OracleConnection &OracleCatalogState::EnsureConnectionInternal() {
 	if (!settings.connection_cache) {
 		connection = make_uniq<OracleConnection>();
 	}
 	if (!connection->IsConnected()) {
-		connection->Connect(connection_string);
+		connection->Connect(connection_string, wallet_path, settings);
 	}
 	return *connection;
 }
@@ -48,22 +75,28 @@ void OracleCatalogState::ApplyOptions(const unordered_map<string, Value> &option
 	// Options are case-insensitive; normalize by lowering.
 	for (auto &entry : options) {
 		auto key = StringUtil::Lower(entry.first);
+		if (key == "secret" || key == "wallet_path") {
+			continue;
+		}
 		if (key == "enable_pushdown") {
 			settings.enable_pushdown = entry.second.GetValue<bool>();
 		} else if (key == "prefetch_rows") {
 			auto val = entry.second.GetValue<int64_t>();
-			settings.prefetch_rows = MaxValue<idx_t>(1, static_cast<idx_t>(val));
+			settings.prefetch_rows =
+			    OracleValidatedSettingValue(val, "oracle_prefetch_rows", 1, MAX_ORACLE_PREFETCH_ROWS);
 		} else if (key == "prefetch_memory") {
 			auto val = entry.second.GetValue<int64_t>();
-			settings.prefetch_memory = val <= 0 ? 0 : static_cast<idx_t>(val);
+			settings.prefetch_memory =
+			    OracleValidatedSettingValue(val, "oracle_prefetch_memory", 0, MAX_ORACLE_PREFETCH_MEMORY);
 		} else if (key == "array_size") {
 			auto val = entry.second.GetValue<int64_t>();
-			settings.array_size = MaxValue<idx_t>(1, static_cast<idx_t>(val));
+			settings.array_size = OracleValidatedSettingValue(val, "oracle_array_size", 1, STANDARD_VECTOR_SIZE);
 		} else if (key == "connection_cache") {
 			settings.connection_cache = entry.second.GetValue<bool>();
 		} else if (key == "connection_limit") {
 			auto val = entry.second.GetValue<int64_t>();
-			settings.connection_limit = MaxValue<idx_t>(1, static_cast<idx_t>(val));
+			settings.connection_limit =
+			    OracleValidatedSettingValue(val, "oracle_connection_limit", 1, MAX_ORACLE_CONNECTION_LIMIT);
 		} else if (key == "debug_show_queries") {
 			settings.debug_show_queries = entry.second.GetValue<bool>();
 		} else if (key == "lazy_schema_loading") {
@@ -72,17 +105,13 @@ void OracleCatalogState::ApplyOptions(const unordered_map<string, Value> &option
 			settings.metadata_object_types = entry.second.ToString();
 		} else if (key == "metadata_result_limit") {
 			auto val = entry.second.GetValue<int64_t>();
-			settings.metadata_result_limit = val <= 0 ? 0 : static_cast<idx_t>(val);
+			settings.metadata_result_limit = OracleValidatedMetadataResultLimit(val);
 		} else if (key == "use_current_schema") {
 			settings.use_current_schema = entry.second.GetValue<bool>();
-		} else if (key == "try_native_lobs") {
-			settings.try_native_lobs = entry.second.GetValue<bool>();
-		} else if (key == "vector_to_list") {
-			settings.vector_to_list = entry.second.GetValue<bool>();
-		} else if (key == "enable_type_conversion") {
-			settings.enable_type_conversion = entry.second.GetValue<bool>();
 		} else if (key == "enable_spatial_types") {
 			settings.enable_spatial_types = entry.second.GetValue<bool>();
+		} else {
+			throw InvalidInputException("Unknown Oracle attach option \"%s\"", entry.first.c_str());
 		}
 	}
 }
@@ -97,11 +126,6 @@ void OracleCatalogState::ClearCaches() {
 	version_info = OracleVersionInfo();
 	// Reset connection if caching is enabled; a fresh connect will be created lazily.
 	connection = make_uniq<OracleConnection>();
-}
-
-void OracleCatalogState::Register(const shared_ptr<OracleCatalogState> &state) {
-	lock_guard<std::mutex> guard(RegistryLock());
-	Registry().push_back(weak_ptr<OracleCatalogState>(state));
 }
 
 void OracleCatalogState::Register(const shared_ptr<OracleCatalogState> &state, const string &alias) {
@@ -259,31 +283,6 @@ vector<string> OracleCatalogState::ListSchemas() {
 	return schema_cache;
 }
 
-vector<string> OracleCatalogState::ListTables(const string &schema) {
-	lock_guard<std::mutex> guard(lock);
-	auto entry = table_cache.find(schema);
-	if (entry != table_cache.end()) {
-		return entry->second;
-	}
-	EnsureConnectionInternal();
-
-	if (schema.empty()) {
-		return {};
-	}
-
-	auto query = StringUtil::Format("SELECT table_name FROM all_tables WHERE owner = UPPER(%s) ORDER BY table_name",
-	                                Value(schema).ToSQLString().c_str());
-	auto result = connection->Query(query);
-	vector<string> tables;
-	for (auto &row : result.rows) {
-		if (!row.empty()) {
-			tables.push_back(row[0]);
-		}
-	}
-	table_cache.emplace(schema, tables);
-	return tables;
-}
-
 vector<string> OracleCatalogState::ListObjects(const string &schema, const string &object_types) {
 	lock_guard<std::mutex> guard(lock);
 
@@ -310,11 +309,10 @@ vector<string> OracleCatalogState::ListObjects(const string &schema, const strin
 	                                  "ORDER BY object_name",
 	                                  Value(schema).ToSQLString().c_str(), types_sql.c_str());
 
-	// Apply metadata result limit
-	if (settings.metadata_result_limit > 0) {
-		query = StringUtil::Format("SELECT * FROM (%s) WHERE ROWNUM <= %llu", query.c_str(),
-		                           static_cast<uint64_t>(settings.metadata_result_limit));
-	}
+	// Apply metadata result limit. A configured zero maps to the default bounded limit.
+	auto metadata_result_limit = OracleEffectiveMetadataResultLimit(settings);
+	query = StringUtil::Format("SELECT * FROM (%s) WHERE ROWNUM <= %llu", query.c_str(),
+	                           static_cast<uint64_t>(metadata_result_limit));
 
 	auto result = connection->Query(query);
 	vector<string> objects;
@@ -325,17 +323,83 @@ vector<string> OracleCatalogState::ListObjects(const string &schema, const strin
 	}
 
 	// Log warning if limit reached
-	if (settings.metadata_result_limit > 0 && objects.size() >= settings.metadata_result_limit) {
+	if (objects.size() >= metadata_result_limit) {
 		fprintf(stderr,
 		        "[oracle] Warning: Metadata enumeration limit reached (%lu objects). "
 		        "Tables beyond this limit are still accessible via on-demand loading, "
 		        "but may not appear in autocomplete. Increase oracle_metadata_result_limit "
 		        "or filter with oracle_metadata_object_types for better discovery.\n",
-		        (unsigned long)settings.metadata_result_limit);
+		        (unsigned long)metadata_result_limit);
 	}
 
 	object_cache.emplace(cache_key, objects);
 	return objects;
+}
+
+OraclePartitionMetadata OracleCatalogState::LoadPartitionMetadata(const string &schema, const string &table) {
+	lock_guard<std::mutex> guard(lock);
+	EnsureConnectionInternal();
+
+	OraclePartitionMetadata metadata;
+	try {
+		auto table_result =
+		    connection->QueryWithStringBinds("SELECT partitioning_type, subpartitioning_type "
+		                                     "FROM all_part_tables WHERE owner = :1 AND table_name = :2",
+		                                     {StringUtil::Upper(schema), StringUtil::Upper(table)});
+		if (table_result.rows.empty() || table_result.rows[0].size() < 2) {
+			return metadata;
+		}
+
+		metadata.is_partitioned = true;
+		metadata.partitioning_type = table_result.rows[0][0];
+		metadata.subpartitioning_type = table_result.rows[0][1];
+
+		auto key_result = connection->QueryWithStringBinds("SELECT column_name FROM all_part_key_columns "
+		                                                   "WHERE owner = :1 AND name = :2 AND object_type = 'TABLE' "
+		                                                   "ORDER BY column_position",
+		                                                   {StringUtil::Upper(schema), StringUtil::Upper(table)});
+		metadata.partition_keys = FirstColumnValues(key_result);
+
+		try {
+			auto subkey_result =
+			    connection->QueryWithStringBinds("SELECT column_name FROM all_subpart_key_columns "
+			                                     "WHERE owner = :1 AND name = :2 AND object_type = 'TABLE' "
+			                                     "ORDER BY column_position",
+			                                     {StringUtil::Upper(schema), StringUtil::Upper(table)});
+			metadata.subpartition_keys = FirstColumnValues(subkey_result);
+		} catch (...) {
+			metadata.subpartition_keys.clear();
+		}
+
+		auto metadata_result_limit = OracleEffectiveMetadataResultLimit(settings);
+		auto limit_sql = std::to_string(metadata_result_limit);
+		auto partition_query = StringUtil::Format("SELECT partition_name FROM ("
+		                                          "SELECT partition_name FROM all_tab_partitions "
+		                                          "WHERE table_owner = :1 AND table_name = :2 "
+		                                          "ORDER BY partition_position"
+		                                          ") WHERE ROWNUM <= %s",
+		                                          limit_sql.c_str());
+		auto partition_result =
+		    connection->QueryWithStringBinds(partition_query, {StringUtil::Upper(schema), StringUtil::Upper(table)});
+		metadata.partition_names = FirstColumnValues(partition_result);
+
+		try {
+			auto subpartition_query = StringUtil::Format("SELECT subpartition_name FROM ("
+			                                             "SELECT subpartition_name FROM all_tab_subpartitions "
+			                                             "WHERE table_owner = :1 AND table_name = :2 "
+			                                             "ORDER BY subpartition_position"
+			                                             ") WHERE ROWNUM <= %s",
+			                                             limit_sql.c_str());
+			auto subpartition_result = connection->QueryWithStringBinds(
+			    subpartition_query, {StringUtil::Upper(schema), StringUtil::Upper(table)});
+			metadata.subpartition_names = FirstColumnValues(subpartition_result);
+		} catch (...) {
+			metadata.subpartition_names.clear();
+		}
+	} catch (...) {
+		return OraclePartitionMetadata();
+	}
+	return metadata;
 }
 
 pair<string, string> OracleCatalogState::ResolveSynonym(const string &schema, const string &synonym_name, bool &found) {
@@ -359,31 +423,21 @@ pair<string, string> OracleCatalogState::ResolveSynonym(const string &schema, co
 	return std::make_pair(result.rows[0][0], result.rows[0][1]);
 }
 
-bool OracleCatalogState::ObjectExists(const string &schema, const string &object_name, const string &object_types) {
-	lock_guard<std::mutex> guard(lock);
-	EnsureConnectionInternal();
-
-	auto query = StringUtil::Format("SELECT 1 FROM all_objects "
-	                                "WHERE owner = UPPER(%s) AND object_name = UPPER(%s) "
-	                                "AND object_type IN (%s)",
-	                                Value(schema).ToSQLString().c_str(), Value(object_name).ToSQLString().c_str(),
-	                                object_types.c_str());
-
-	auto result = connection->Query(query);
-	return !result.rows.empty();
-}
-
 string OracleCatalogState::GetObjectName(const string &schema, const string &object_name, const string &object_types) {
 	lock_guard<std::mutex> guard(lock);
 	EnsureConnectionInternal();
 
 	auto query = StringUtil::Format("SELECT object_name FROM all_objects "
-	                                "WHERE owner = UPPER(%s) AND UPPER(object_name) = UPPER(%s) "
-	                                "AND object_type IN (%s)",
-	                                Value(schema).ToSQLString().c_str(), Value(object_name).ToSQLString().c_str(),
+	                                "WHERE (owner = :1 OR owner = UPPER(:2)) "
+	                                "AND (object_name = :3 OR object_name = UPPER(:4)) "
+	                                "AND object_type IN (%s) "
+	                                "ORDER BY CASE WHEN owner = :5 THEN 0 WHEN owner = UPPER(:6) THEN 1 ELSE 2 END, "
+	                                "CASE WHEN object_name = :7 THEN 0 WHEN object_name = UPPER(:8) THEN 1 ELSE 2 END, "
+	                                "owner, object_name",
 	                                object_types.c_str());
 
-	auto result = connection->Query(query);
+	auto result = connection->QueryWithStringBinds(
+	    query, {schema, schema, object_name, object_name, schema, schema, object_name, object_name});
 	if (!result.rows.empty()) {
 		return result.rows[0][0];
 	}
