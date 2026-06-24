@@ -16,6 +16,8 @@ struct OracleBindData : public FunctionData {
 	string wallet_path;
 	string base_query;
 	string query;
+	string direct_from_sql;
+	string direct_select_list_sql;
 	vector<ub2> oci_types;
 	vector<ub4> oci_sizes;
 	vector<string> oracle_type_names;

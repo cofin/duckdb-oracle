@@ -49,6 +49,11 @@ void OracleDebugRecordWriteBufferBytes(idx_t bytes) {
 	stats.write_buffer_bytes = MaxValue<idx_t>(stats.write_buffer_bytes, bytes);
 }
 
+void OracleDebugRecordQuery(const string &query) {
+	lock_guard<std::mutex> guard(StatsLock());
+	MutableStats().last_query = query;
+}
+
 OracleDebugStatsSnapshot OracleDebugGetStats() {
 	lock_guard<std::mutex> guard(StatsLock());
 	return MutableStats();
@@ -76,6 +81,10 @@ idx_t OracleDebugGetCounter(const string &name) {
 		return stats.write_buffer_bytes;
 	}
 	throw InvalidInputException("Unknown Oracle debug counter \"%s\"", name.c_str());
+}
+
+string OracleDebugGetLastQuery() {
+	return OracleDebugGetStats().last_query;
 }
 
 } // namespace duckdb

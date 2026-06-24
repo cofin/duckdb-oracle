@@ -32,6 +32,8 @@ unique_ptr<FunctionData> OracleBindData::Copy() const {
 	copy->wallet_path = wallet_path;
 	copy->base_query = base_query;
 	copy->query = query;
+	copy->direct_from_sql = direct_from_sql;
+	copy->direct_select_list_sql = direct_select_list_sql;
 	copy->oci_types = oci_types;
 	copy->oci_sizes = oci_sizes;
 	copy->oracle_type_names = oracle_type_names;
@@ -213,8 +215,19 @@ unique_ptr<FunctionData> OracleScanBind(ClientContext &context, TableFunctionBin
 	auto quoted_schema = KeywordHelper::WriteQuoted(schema_name, '"');
 	auto quoted_table = KeywordHelper::WriteQuoted(table_name, '"');
 	string query = StringUtil::Format("SELECT * FROM %s.%s", quoted_schema.c_str(), quoted_table.c_str());
-	return OracleBindInternal(context, connection_string, query, return_types, names, nullptr, nullptr, true,
-	                          "oracle_scan");
+	auto result = OracleBindInternal(context, connection_string, query, return_types, names, nullptr, nullptr, true,
+	                                 "oracle_scan");
+	auto &bind = result->Cast<OracleBindData>();
+	if (bind.base_query == query) {
+		vector<string> select_list;
+		select_list.reserve(bind.original_names.size());
+		for (auto &name : bind.original_names) {
+			select_list.push_back(KeywordHelper::WriteQuoted(name, '"'));
+		}
+		bind.direct_from_sql = StringUtil::Format("%s.%s", quoted_schema.c_str(), quoted_table.c_str());
+		bind.direct_select_list_sql = StringUtil::Join(select_list, ", ");
+	}
+	return result;
 }
 
 unique_ptr<FunctionData> OracleQueryBind(ClientContext &context, TableFunctionBindInput &input,
@@ -401,6 +414,7 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 		if (bind_data.settings.debug_show_queries || getenv("ORACLE_DEBUG")) {
 			fprintf(stderr, "[oracle] executing SQL (once): %s\n", bind_data.query.c_str());
 		}
+		OracleDebugRecordQuery(bind_data.query);
 		status = OCIStmtExecute(ctx->svchp, gstate.stmt.get(), ctx->errhp, 0, 0, nullptr, nullptr, OCI_DEFAULT);
 		CheckOCIError(status, ctx->errhp, "Failed to execute OCI statement (open cursor)");
 		gstate.executed = true;

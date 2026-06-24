@@ -128,6 +128,39 @@ static void OracleDebugCounterFunction(DataChunk &args, ExpressionState &, Vecto
 	}
 }
 
+static void OracleDebugLastQueryFunction(DataChunk &, ExpressionState &, Vector &result) {
+	result.SetValue(0, Value(OracleDebugGetLastQuery()));
+}
+
+static void OracleDebugPartitionMetadataFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto count = args.size();
+	for (idx_t i = 0; i < count; i++) {
+		auto connection_value = args.data[0].GetValue(i);
+		auto schema_value = args.data[1].GetValue(i);
+		auto table_value = args.data[2].GetValue(i);
+		if (connection_value.IsNull() || schema_value.IsNull() || table_value.IsNull()) {
+			result.SetValue(i, Value());
+			continue;
+		}
+
+		auto connection_ref = connection_value.ToString();
+		auto schema = schema_value.ToString();
+		auto table = table_value.ToString();
+
+		auto catalog_state = OracleCatalogState::LookupByAlias(connection_ref);
+		if (catalog_state) {
+			result.SetValue(i, Value(catalog_state->LoadPartitionMetadata(schema, table).ToDebugString()));
+			continue;
+		}
+
+		auto resolved = ResolveOracleConnection(state.GetContext(), connection_ref, nullptr, true,
+		                                        "oracle_debug_partition_metadata");
+		OracleCatalogState transient_state(resolved.connection_string, resolved.wallet_path);
+		transient_state.settings = resolved.settings;
+		result.SetValue(i, Value(transient_state.LoadPartitionMetadata(schema, table).ToDebugString()));
+	}
+}
+
 void RegisterOracleFunctions(ExtensionLoader &loader) {
 	SecretType secret_type;
 	secret_type.name = "oracle";
@@ -174,6 +207,15 @@ void RegisterOracleFunctions(ExtensionLoader &loader) {
 	auto debug_counter_func = ScalarFunction("oracle_debug_counter", {LogicalType::VARCHAR}, LogicalType::UBIGINT,
 	                                         OracleDebugCounterFunction);
 	loader.RegisterFunction(debug_counter_func);
+
+	auto debug_last_query_func =
+	    ScalarFunction("oracle_debug_last_query", {}, LogicalType::VARCHAR, OracleDebugLastQueryFunction);
+	loader.RegisterFunction(debug_last_query_func);
+
+	auto debug_partition_metadata_func = ScalarFunction(
+	    "oracle_debug_partition_metadata", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
+	    LogicalType::VARCHAR, OracleDebugPartitionMetadataFunction);
+	loader.RegisterFunction(debug_partition_metadata_func);
 
 	auto oracle_execute_func = ScalarFunction("oracle_execute", {LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                                          LogicalType::VARCHAR, OracleExecuteFunction);

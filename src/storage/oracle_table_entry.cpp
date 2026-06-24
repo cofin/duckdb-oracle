@@ -143,9 +143,11 @@ static void LoadColumns(OracleCatalogState &state, const string &schema, const s
 
 OracleTableEntry::OracleTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, unique_ptr<CreateTableInfo> info,
                                    shared_ptr<OracleCatalogState> state, const string &schema_name,
-                                   const string &table_name, vector<OracleColumnMetadata> metadata)
+                                   const string &table_name, vector<OracleColumnMetadata> metadata,
+                                   OraclePartitionMetadata partition_metadata_p)
     : TableCatalogEntry(catalog, schema, *info), state(std::move(state)), schema_name(schema_name),
-      table_name(table_name), column_metadata(std::move(metadata)) {
+      table_name(table_name), column_metadata(std::move(metadata)),
+      partition_metadata(std::move(partition_metadata_p)) {
 	// info consumed by base; nothing else to store
 }
 
@@ -159,12 +161,13 @@ unique_ptr<OracleTableEntry> OracleTableEntry::Create(Catalog &catalog, SchemaCa
 	vector<ColumnDefinition> cols;
 	vector<OracleColumnMetadata> metadata;
 	LoadColumns(*state, schema_name, table_name, cols, metadata);
+	auto partition_metadata = state->LoadPartitionMetadata(schema_name, table_name);
 	for (auto &col : cols) {
 		info->columns.AddColumn(col.Copy());
 	}
 	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
 	return make_uniq<OracleTableEntry>(catalog, schema, std::move(info), std::move(state), schema_name, table_name,
-	                                   std::move(metadata));
+	                                   std::move(metadata), std::move(partition_metadata));
 }
 
 TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) {
@@ -214,6 +217,8 @@ TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_p
 	    StringUtil::Format("SELECT %s FROM %s.%s", column_list.c_str(), quoted_schema.c_str(), quoted_table.c_str());
 
 	auto bind = make_uniq<OracleBindData>();
+	bind->direct_from_sql = StringUtil::Format("%s.%s", quoted_schema.c_str(), quoted_table.c_str());
+	bind->direct_select_list_sql = column_list;
 	bind_data =
 	    OracleBindInternal(context, state->connection_string, query, return_types, names, bind.release(), state.get());
 	auto &oracle_bind = bind_data->Cast<OracleBindData>();

@@ -11,7 +11,7 @@ class OracleTableEntry : public TableCatalogEntry {
 public:
 	OracleTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, unique_ptr<CreateTableInfo> info,
 	                 shared_ptr<OracleCatalogState> state, const string &schema_name, const string &table_name,
-	                 vector<OracleColumnMetadata> metadata);
+	                 vector<OracleColumnMetadata> metadata, OraclePartitionMetadata partition_metadata);
 
 	TableFunction GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) override;
 	TableStorageInfo GetStorageInfo(ClientContext &context) override;
@@ -26,6 +26,7 @@ private:
 	string schema_name;
 	string table_name;
 	vector<OracleColumnMetadata> column_metadata;
+	OraclePartitionMetadata partition_metadata;
 };
 
 } // namespace duckdb

@@ -22,6 +22,19 @@ struct OracleVersionInfo {
 	bool supports_vector_serialize = false; // Oracle 23.4+ has VECTOR_SERIALIZE function
 };
 
+//! Bounded Oracle partition metadata used for planning diagnostics.
+struct OraclePartitionMetadata {
+	bool is_partitioned = false;
+	string partitioning_type;
+	string subpartitioning_type;
+	vector<string> partition_keys;
+	vector<string> subpartition_keys;
+	vector<string> partition_names;
+	vector<string> subpartition_names;
+
+	string ToDebugString() const;
+};
+
 //! Shared state per attached Oracle database used by generators for schemas/tables.
 class OracleCatalogState {
 public:
@@ -62,6 +75,7 @@ public:
 	// Metadata enumeration
 	vector<string> ListSchemas();
 	vector<string> ListObjects(const string &schema, const string &object_types);
+	OraclePartitionMetadata LoadPartitionMetadata(const string &schema, const string &table);
 
 	// Synonym resolution (returns empty pair if not found)
 	pair<string, string> ResolveSynonym(const string &schema, const string &synonym_name, bool &found);

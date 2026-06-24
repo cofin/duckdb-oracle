@@ -1,0 +1,163 @@
+# name: test/integration_tests/oracle/partition_pruning.test
+# description: Oracle partition metadata and pruning-aware predicate placement
+# group: [oracle]
+
+require oracle
+
+statement ok
+CREATE OR REPLACE MACRO oracle_partition_conn() AS '${ORACLE_CONNECTION_STRING}';
+
+statement ok
+CREATE OR REPLACE SECRET oracle_partition_test (
+    TYPE ORACLE,
+    USER '${ORACLE_USER}',
+    PASSWORD '${ORACLE_PASSWORD}',
+    HOST '${ORACLE_HOST}',
+    PORT ${ORACLE_PORT},
+    SERVICE '${ORACLE_SERVICE}'
+);
+
+statement ok
+SELECT oracle_execute(oracle_partition_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE partition_range_probe PURGE'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_partition_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE partition_list_probe PURGE'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_partition_conn(), '
+    CREATE TABLE partition_range_probe (
+        sale_id NUMBER,
+        sale_date DATE,
+        amount NUMBER
+    )
+    PARTITION BY RANGE (sale_date) (
+        PARTITION pr_q1_2024 VALUES LESS THAN (TO_DATE(''2024-04-01'', ''YYYY-MM-DD'')),
+        PARTITION pr_q2_2024 VALUES LESS THAN (TO_DATE(''2024-07-01'', ''YYYY-MM-DD'')),
+        PARTITION pr_q3_2024 VALUES LESS THAN (TO_DATE(''2024-10-01'', ''YYYY-MM-DD'')),
+        PARTITION pr_q4_2024 VALUES LESS THAN (TO_DATE(''2025-01-01'', ''YYYY-MM-DD''))
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_partition_conn(), 'INSERT INTO partition_range_probe VALUES (1, DATE ''2024-01-15'', 100)')
+
+statement ok
+SELECT oracle_execute(oracle_partition_conn(), 'INSERT INTO partition_range_probe VALUES (2, DATE ''2024-05-20'', 200)')
+
+statement ok
+SELECT oracle_execute(oracle_partition_conn(), 'INSERT INTO partition_range_probe VALUES (3, DATE ''2024-11-10'', 300)')
+
+statement ok
+SELECT oracle_execute(oracle_partition_conn(), '
+    CREATE TABLE partition_list_probe (
+        cust_id NUMBER,
+        region VARCHAR2(20)
+    )
+    PARTITION BY LIST (region) (
+        PARTITION pl_east VALUES (''NY'', ''MA''),
+        PARTITION pl_west VALUES (''CA'', ''WA''),
+        PARTITION pl_south VALUES (''TX'', ''FL'')
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_partition_conn(), 'INSERT INTO partition_list_probe VALUES (1, ''NY'')')
+
+statement ok
+SELECT oracle_execute(oracle_partition_conn(), 'INSERT INTO partition_list_probe VALUES (2, ''CA'')')
+
+statement ok
+SELECT oracle_clear_cache();
+
+statement ok
+ATTACH '' AS ora_partition (TYPE ORACLE, SECRET 'oracle_partition_test');
+
+query T
+SELECT oracle_debug_partition_metadata('ora_partition', 'DUCKDB_TEST', 'PARTITION_RANGE_PROBE');
+----
+partitioned=true;partitioning=RANGE;subpartitioning=NONE;keys=SALE_DATE;subkeys=;partitions=PR_Q1_2024,PR_Q2_2024,PR_Q3_2024,PR_Q4_2024;subpartitions=
+
+query T
+SELECT oracle_debug_partition_metadata('ora_partition', 'DUCKDB_TEST', 'PARTITION_LIST_PROBE');
+----
+partitioned=true;partitioning=LIST;subpartitioning=NONE;keys=REGION;subkeys=;partitions=PL_EAST,PL_WEST,PL_SOUTH;subpartitions=
+
+statement ok
+SELECT oracle_debug_reset_stats();
+
+query III
+SELECT sale_id, sale_date, amount
+FROM ora_partition.duckdb_test.partition_range_probe
+WHERE sale_date >= DATE '2024-04-01'
+ORDER BY sale_id;
+----
+2	2024-05-20 00:00:00	200
+3	2024-11-10 00:00:00	300
+
+query I
+SELECT CASE
+    WHEN contains(oracle_debug_last_query(), 'FROM "DUCKDB_TEST"."PARTITION_RANGE_PROBE" WHERE "SALE_DATE" >=')
+    THEN 1 ELSE 0 END;
+----
+1
+
+query IT
+SELECT cust_id, region
+FROM ora_partition.duckdb_test.partition_list_probe
+WHERE region IN ('CA', 'WA')
+ORDER BY cust_id;
+----
+2	CA
+
+query I
+SELECT CASE
+    WHEN contains(oracle_debug_last_query(), 'FROM "DUCKDB_TEST"."PARTITION_LIST_PROBE" WHERE "REGION" IN')
+    THEN 1 ELSE 0 END;
+----
+1
+
+query III
+SELECT sale_id, sale_date, amount
+FROM oracle_scan(oracle_partition_conn(), 'DUCKDB_TEST', 'PARTITION_RANGE_PROBE')
+WHERE sale_date >= DATE '2024-04-01'
+ORDER BY sale_id;
+----
+2	2024-05-20 00:00:00	200
+3	2024-11-10 00:00:00	300
+
+query I
+SELECT CASE
+    WHEN contains(oracle_debug_last_query(), 'FROM "DUCKDB_TEST"."PARTITION_RANGE_PROBE" WHERE "SALE_DATE" >=')
+    THEN 1 ELSE 0 END;
+----
+1
+
+statement ok
+DETACH ora_partition;
+
+statement ok
+SELECT oracle_execute(oracle_partition_conn(), 'DROP TABLE partition_range_probe PURGE')
+
+statement ok
+SELECT oracle_execute(oracle_partition_conn(), 'DROP TABLE partition_list_probe PURGE')
+
+statement ok
+DROP SECRET oracle_partition_test;

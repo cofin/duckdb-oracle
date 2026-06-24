@@ -22,7 +22,27 @@ static unordered_map<string, weak_ptr<OracleCatalogState>> &AliasRegistry() {
 	static unordered_map<string, weak_ptr<OracleCatalogState>> registry;
 	return registry;
 }
+
+static vector<string> FirstColumnValues(const OracleResult &result) {
+	vector<string> values;
+	values.reserve(result.rows.size());
+	for (auto &row : result.rows) {
+		if (!row.empty()) {
+			values.push_back(row[0]);
+		}
+	}
+	return values;
+}
 } // namespace
+
+string OraclePartitionMetadata::ToDebugString() const {
+	return StringUtil::Format(
+	    "partitioned=%s;partitioning=%s;subpartitioning=%s;keys=%s;subkeys=%s;partitions=%s;"
+	    "subpartitions=%s",
+	    is_partitioned ? "true" : "false", partitioning_type.c_str(), subpartitioning_type.c_str(),
+	    StringUtil::Join(partition_keys, ",").c_str(), StringUtil::Join(subpartition_keys, ",").c_str(),
+	    StringUtil::Join(partition_names, ",").c_str(), StringUtil::Join(subpartition_names, ",").c_str());
+}
 
 void OracleCatalogState::Connect() {
 	lock_guard<std::mutex> guard(lock);
@@ -311,6 +331,72 @@ vector<string> OracleCatalogState::ListObjects(const string &schema, const strin
 
 	object_cache.emplace(cache_key, objects);
 	return objects;
+}
+
+OraclePartitionMetadata OracleCatalogState::LoadPartitionMetadata(const string &schema, const string &table) {
+	lock_guard<std::mutex> guard(lock);
+	EnsureConnectionInternal();
+
+	OraclePartitionMetadata metadata;
+	try {
+		auto table_result =
+		    connection->QueryWithStringBinds("SELECT partitioning_type, subpartitioning_type "
+		                                     "FROM all_part_tables WHERE owner = :1 AND table_name = :2",
+		                                     {StringUtil::Upper(schema), StringUtil::Upper(table)});
+		if (table_result.rows.empty() || table_result.rows[0].size() < 2) {
+			return metadata;
+		}
+
+		metadata.is_partitioned = true;
+		metadata.partitioning_type = table_result.rows[0][0];
+		metadata.subpartitioning_type = table_result.rows[0][1];
+
+		auto key_result = connection->QueryWithStringBinds("SELECT column_name FROM all_part_key_columns "
+		                                                   "WHERE owner = :1 AND name = :2 AND object_type = 'TABLE' "
+		                                                   "ORDER BY column_position",
+		                                                   {StringUtil::Upper(schema), StringUtil::Upper(table)});
+		metadata.partition_keys = FirstColumnValues(key_result);
+
+		try {
+			auto subkey_result =
+			    connection->QueryWithStringBinds("SELECT column_name FROM all_subpart_key_columns "
+			                                     "WHERE owner = :1 AND name = :2 AND object_type = 'TABLE' "
+			                                     "ORDER BY column_position",
+			                                     {StringUtil::Upper(schema), StringUtil::Upper(table)});
+			metadata.subpartition_keys = FirstColumnValues(subkey_result);
+		} catch (...) {
+			metadata.subpartition_keys.clear();
+		}
+
+		auto metadata_result_limit = OracleEffectiveMetadataResultLimit(settings);
+		auto limit_sql = std::to_string(metadata_result_limit);
+		auto partition_query = StringUtil::Format("SELECT partition_name FROM ("
+		                                          "SELECT partition_name FROM all_tab_partitions "
+		                                          "WHERE table_owner = :1 AND table_name = :2 "
+		                                          "ORDER BY partition_position"
+		                                          ") WHERE ROWNUM <= %s",
+		                                          limit_sql.c_str());
+		auto partition_result =
+		    connection->QueryWithStringBinds(partition_query, {StringUtil::Upper(schema), StringUtil::Upper(table)});
+		metadata.partition_names = FirstColumnValues(partition_result);
+
+		try {
+			auto subpartition_query = StringUtil::Format("SELECT subpartition_name FROM ("
+			                                             "SELECT subpartition_name FROM all_tab_subpartitions "
+			                                             "WHERE table_owner = :1 AND table_name = :2 "
+			                                             "ORDER BY subpartition_position"
+			                                             ") WHERE ROWNUM <= %s",
+			                                             limit_sql.c_str());
+			auto subpartition_result = connection->QueryWithStringBinds(
+			    subpartition_query, {StringUtil::Upper(schema), StringUtil::Upper(table)});
+			metadata.subpartition_names = FirstColumnValues(subpartition_result);
+		} catch (...) {
+			metadata.subpartition_names.clear();
+		}
+	} catch (...) {
+		return OraclePartitionMetadata();
+	}
+	return metadata;
 }
 
 pair<string, string> OracleCatalogState::ResolveSynonym(const string &schema, const string &synonym_name, bool &found) {

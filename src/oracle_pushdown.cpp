@@ -161,13 +161,23 @@ struct OraclePushdownPlan {
 		return " WHERE " + StringUtil::Join(clauses, " AND ");
 	}
 
-	void BuildQuery(const string &base_query) {
+	string ProjectedSelectListSQL() const {
 		vector<string> select_list;
 		select_list.reserve(projected_names.size());
 		for (auto &name : projected_names) {
 			select_list.push_back(ColumnRefSQL(name));
 		}
-		query = "SELECT " + StringUtil::Join(select_list, ", ") + " FROM (" + base_query + ")" + WhereSQL();
+		return StringUtil::Join(select_list, ", ");
+	}
+
+	void BuildQuery(const OracleBindData &bind) {
+		auto projected_select_list = ProjectedSelectListSQL();
+		if (!bind.direct_from_sql.empty() && !bind.direct_select_list_sql.empty()) {
+			auto inner_query = "SELECT " + bind.direct_select_list_sql + " FROM " + bind.direct_from_sql + WhereSQL();
+			query = "SELECT " + projected_select_list + " FROM (" + inner_query + ")";
+			return;
+		}
+		query = "SELECT " + projected_select_list + " FROM (" + bind.base_query + ")" + WhereSQL();
 	}
 };
 
@@ -501,7 +511,7 @@ void OraclePushdownComplexFilter(ClientContext &, LogicalGet &get, FunctionData 
 		get.returned_types = plan.projected_types;
 	}
 
-	plan.BuildQuery(bind.base_query);
+	plan.BuildQuery(bind);
 
 	bind.column_names = plan.projected_names;
 	bind.oci_types = plan.projected_oci_types;
