@@ -35,6 +35,8 @@ unique_ptr<FunctionData> OracleBindData::Copy() const {
 	copy->oci_types = oci_types;
 	copy->oci_sizes = oci_sizes;
 	copy->oracle_type_names = oracle_type_names;
+	copy->pushdown_eligible = pushdown_eligible;
+	copy->pushdown_clauses = pushdown_clauses;
 	copy->column_names = column_names;
 	copy->original_types = original_types;
 	copy->original_names = original_names;
@@ -165,6 +167,7 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
 		auto decision = OracleTypeRegistry::ResolveOciDescribe(type_metadata, result->settings);
 		OracleTypeRegistry::ValidateSupported(decision, type_metadata);
 		result->oracle_type_names.push_back(decision.normalized_type);
+		result->pushdown_eligible.push_back(decision.pushdown_eligible);
 		if (decision.category == OracleTypeCategory::JSON) {
 			result->oci_sizes.back() = MaxValue<ub4>(result->oci_sizes.back(), 32767);
 		}

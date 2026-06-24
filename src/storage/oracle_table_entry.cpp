@@ -221,6 +221,9 @@ TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_p
 		if (i < oracle_bind.oracle_type_names.size() && !column_metadata[i].decision.normalized_type.empty()) {
 			oracle_bind.oracle_type_names[i] = column_metadata[i].decision.normalized_type;
 		}
+		if (i < oracle_bind.pushdown_eligible.size()) {
+			oracle_bind.pushdown_eligible[i] = column_metadata[i].decision.pushdown_eligible;
+		}
 		if (column_metadata[i].Category() == OracleTypeCategory::JSON) {
 			if (oracle_bind.oci_sizes[i] < 32767) {
 				oracle_bind.oci_sizes[i] = 32767;

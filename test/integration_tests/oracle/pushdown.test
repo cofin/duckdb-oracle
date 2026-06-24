@@ -36,23 +36,29 @@ SELECT oracle_execute(oracle_pushdown_conn(), '
         category VARCHAR2(20),
         amount NUMBER(10,2),
         created_at DATE,
-        note VARCHAR2(100)
+        note VARCHAR2(100),
+        description CLOB
     )
 ')
 
 statement ok
 SELECT oracle_execute(oracle_pushdown_conn(), '
-    INSERT INTO read_pushdown_baseline VALUES (1, ''alpha'', 10.50, DATE ''2024-01-01'', ''Alpha Row'')
+    INSERT INTO read_pushdown_baseline VALUES (1, ''alpha'', 10.50, DATE ''2024-01-01'', ''Alpha Row'', ''lob alpha'')
 ')
 
 statement ok
 SELECT oracle_execute(oracle_pushdown_conn(), '
-    INSERT INTO read_pushdown_baseline VALUES (2, ''beta'', 200.25, DATE ''2024-02-01'', ''Beta Row'')
+    INSERT INTO read_pushdown_baseline VALUES (2, ''beta'', 200.25, DATE ''2024-02-01'', ''Beta Row'', ''lob beta'')
 ')
 
 statement ok
 SELECT oracle_execute(oracle_pushdown_conn(), '
-    INSERT INTO read_pushdown_baseline VALUES (3, ''beta'', 300.00, DATE ''2024-03-01'', NULL)
+    INSERT INTO read_pushdown_baseline VALUES (3, ''beta'', 300.00, DATE ''2024-03-01'', NULL, ''lob beta null note'')
+')
+
+statement ok
+SELECT oracle_execute(oracle_pushdown_conn(), '
+    INSERT INTO read_pushdown_baseline VALUES (4, '''', 50.00, DATE ''2024-04-01'', '''', ''lob null category'')
 ')
 
 statement ok
@@ -123,6 +129,14 @@ ORDER BY id;
 2	200.25
 3	300.0
 
+query I
+SELECT id
+FROM ora_pushdown_on.duckdb_test.read_pushdown_baseline
+WHERE category <> 'beta'
+ORDER BY id;
+----
+1
+
 query IT
 SELECT id, note
 FROM ora_pushdown_on.duckdb_test.read_pushdown_baseline
@@ -130,6 +144,158 @@ WHERE note IS NULL
 ORDER BY id;
 ----
 3	NULL
+4	NULL
+
+query IT
+SELECT id, note
+FROM ora_pushdown_on.duckdb_test.read_pushdown_baseline
+WHERE note IS NOT NULL
+ORDER BY id;
+----
+1	Alpha Row
+2	Beta Row
+
+query I
+SELECT id
+FROM ora_pushdown_on.duckdb_test.read_pushdown_baseline
+WHERE amount BETWEEN 100 AND 250
+ORDER BY id;
+----
+2
+
+query I
+SELECT id
+FROM ora_pushdown_on.duckdb_test.read_pushdown_baseline
+WHERE created_at BETWEEN DATE '2024-02-01' AND DATE '2024-03-01'
+ORDER BY id;
+----
+2
+3
+
+query I
+SELECT id
+FROM ora_pushdown_on.duckdb_test.read_pushdown_baseline
+WHERE id IN (1, 3)
+ORDER BY id;
+----
+1
+3
+
+query I
+SELECT id
+FROM ora_pushdown_on.duckdb_test.read_pushdown_baseline
+WHERE category LIKE 'b%'
+ORDER BY id;
+----
+2
+3
+
+query I
+SELECT COUNT(*)
+FROM ora_pushdown_on.duckdb_test.read_pushdown_baseline
+WHERE category = '';
+----
+0
+
+query I
+SELECT id
+FROM ora_pushdown_on.duckdb_test.read_pushdown_baseline
+WHERE category IS NULL
+ORDER BY id;
+----
+4
+
+query TIR
+SELECT note, id, amount
+FROM ora_pushdown_on.duckdb_test.read_pushdown_baseline
+WHERE id IN (1, 2)
+ORDER BY id;
+----
+Alpha Row	1	10.5
+Beta Row	2	200.25
+
+query IT
+SELECT id, description
+FROM ora_pushdown_on.duckdb_test.read_pushdown_baseline
+WHERE description = 'lob beta'
+ORDER BY id;
+----
+2	lob beta
+
+query I
+SELECT id
+FROM ora_pushdown_off.duckdb_test.read_pushdown_baseline
+WHERE category <> 'beta'
+ORDER BY id;
+----
+1
+
+query IT
+SELECT id, note
+FROM ora_pushdown_off.duckdb_test.read_pushdown_baseline
+WHERE note IS NOT NULL
+ORDER BY id;
+----
+1	Alpha Row
+2	Beta Row
+
+query I
+SELECT id
+FROM ora_pushdown_off.duckdb_test.read_pushdown_baseline
+WHERE amount BETWEEN 100 AND 250
+ORDER BY id;
+----
+2
+
+query I
+SELECT id
+FROM ora_pushdown_off.duckdb_test.read_pushdown_baseline
+WHERE created_at BETWEEN DATE '2024-02-01' AND DATE '2024-03-01'
+ORDER BY id;
+----
+2
+3
+
+query I
+SELECT id
+FROM ora_pushdown_off.duckdb_test.read_pushdown_baseline
+WHERE id IN (1, 3)
+ORDER BY id;
+----
+1
+3
+
+query I
+SELECT id
+FROM ora_pushdown_off.duckdb_test.read_pushdown_baseline
+WHERE category LIKE 'b%'
+ORDER BY id;
+----
+2
+3
+
+query I
+SELECT COUNT(*)
+FROM ora_pushdown_off.duckdb_test.read_pushdown_baseline
+WHERE category = '';
+----
+0
+
+query I
+SELECT id
+FROM ora_pushdown_off.duckdb_test.read_pushdown_baseline
+WHERE category IS NULL
+ORDER BY id;
+----
+4
+
+query IT
+SELECT id, description
+FROM ora_pushdown_off.duckdb_test.read_pushdown_baseline
+WHERE description = 'lob beta'
+ORDER BY id;
+----
+2	lob beta
 
 query IT
 SELECT id, note
@@ -155,6 +321,7 @@ ORDER BY id;
 ----
 2
 3
+4
 
 query I
 SELECT id
@@ -164,6 +331,7 @@ ORDER BY id;
 ----
 2
 3
+4
 
 query ITR
 SELECT id, category, amount

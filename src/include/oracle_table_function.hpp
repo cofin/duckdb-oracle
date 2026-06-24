@@ -19,6 +19,8 @@ struct OracleBindData : public FunctionData {
 	vector<ub2> oci_types;
 	vector<ub4> oci_sizes;
 	vector<string> oracle_type_names;
+	vector<bool> pushdown_eligible;
+	vector<string> pushdown_clauses;
 	vector<string> column_names;
 	vector<LogicalType> original_types;
 	vector<string> original_names;
