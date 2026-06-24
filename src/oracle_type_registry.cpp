@@ -108,7 +108,7 @@ static bool IsIntervalType(const string &type) {
 
 } // namespace
 
-bool OracleTypeDecision::RequiresQueryRewrite(const OracleVersionInfo &version, bool try_native_lobs) const {
+bool OracleTypeDecision::RequiresQueryRewrite(const OracleVersionInfo &version) const {
 	if (!supported) {
 		return false;
 	}
@@ -123,7 +123,7 @@ bool OracleTypeDecision::RequiresQueryRewrite(const OracleVersionInfo &version, 
 	case OracleTypeCategory::LOB_BLOB:
 	case OracleTypeCategory::RAW:
 	case OracleTypeCategory::LONG_RAW:
-		return !try_native_lobs || needs_server_conversion;
+		return needs_server_conversion;
 	case OracleTypeCategory::LOB_CLOB:
 		return needs_server_conversion;
 	default:
@@ -189,8 +189,7 @@ OracleTypeDecision OracleTypeRegistry::ResolveMetadata(const OracleTypeMetadata 
 			                   "VECTOR INT8 and BINARY formats are not supported by the DuckDB conversion path yet");
 		}
 		auto child_type = StringUtil::Contains(type, "FLOAT64") ? LogicalType::DOUBLE : LogicalType::FLOAT;
-		auto logical = settings.vector_to_list ? LogicalType::LIST(child_type) : LogicalType::VARCHAR;
-		return Supported(OracleTypeCategory::VECTOR, type, logical, true, false);
+		return Supported(OracleTypeCategory::VECTOR, type, LogicalType::LIST(child_type), true, false);
 	}
 	if (type == "JSON") {
 		return Supported(OracleTypeCategory::JSON, type, LogicalType::JSON(), true, false);
@@ -307,8 +306,7 @@ OracleTypeDecision OracleTypeRegistry::ResolveOciDescribe(const OracleTypeMetada
 	case SQLT_JSON:
 		return Supported(OracleTypeCategory::JSON, "OCI JSON", LogicalType::JSON(), true, false);
 	case SQLT_VEC: {
-		auto logical = settings.vector_to_list ? LogicalType::LIST(LogicalType::FLOAT) : LogicalType::VARCHAR;
-		return Supported(OracleTypeCategory::VECTOR, "OCI VECTOR", logical, true, false);
+		return Supported(OracleTypeCategory::VECTOR, "OCI VECTOR", LogicalType::LIST(LogicalType::FLOAT), true, false);
 	}
 	case SQLT_NTY:
 	case SQLT_REF:

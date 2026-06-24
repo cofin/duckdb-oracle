@@ -2,8 +2,21 @@
 #include "oracle_utils.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include <cstdlib>
+#include <sys/stat.h>
+
+#ifdef _WIN32
+#include <direct.h>
+#define S_ISDIR(mode) (((mode) & _S_IFDIR) == _S_IFDIR)
+#endif
 
 namespace duckdb {
+
+namespace {
+static bool PathIsDirectory(const string &path) {
+	struct stat st {};
+	return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+}
+} // namespace
 
 OracleSecretParameters ParseOracleSecret(const CreateSecretInput &input) {
 	OracleSecretParameters params;
@@ -60,6 +73,12 @@ OracleSecretParameters ParseOracleSecret(const CreateSecretInput &input) {
 	return params;
 }
 
+void ValidateOracleWalletPath(const string &wallet_path) {
+	if (!wallet_path.empty() && !PathIsDirectory(wallet_path)) {
+		throw InvalidInputException("WALLET_PATH does not exist or is not a directory: %s", wallet_path.c_str());
+	}
+}
+
 void ValidateOracleSecret(const OracleSecretParameters &params) {
 	// Validate required parameters
 	if (params.user.empty()) {
@@ -84,6 +103,7 @@ void ValidateOracleSecret(const OracleSecretParameters &params) {
 	if (params.port == 0 || params.port > 65535) {
 		throw InvalidInputException("Oracle secret: PORT must be between 1 and 65535, got %llu", params.port);
 	}
+	ValidateOracleWalletPath(params.wallet_path);
 }
 
 string BuildConnectionStringFromSecret(const KeyValueSecret &secret) {

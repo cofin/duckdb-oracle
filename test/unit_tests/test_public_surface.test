@@ -8,3 +8,8 @@ statement error
 SELECT oracle_env('ORACLE_PASSWORD', '');
 ----
 Catalog Error
+
+statement error
+SELECT oracle_attach_wallet('.');
+----
+Catalog Error

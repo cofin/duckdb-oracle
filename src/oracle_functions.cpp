@@ -13,19 +13,8 @@
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 #include <oci.h>
 #include <cstdio>
-#include <sys/stat.h>
-
-#ifdef _WIN32
-#include <direct.h>
-#define S_ISDIR(mode) (((mode) & _S_IFDIR) == _S_IFDIR)
-#endif
 
 namespace duckdb {
-
-static bool PathIsDirectory(const string &path) {
-	struct stat st {};
-	return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
-}
 
 static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto connection_value = args.data[0].GetValue(0);
@@ -94,15 +83,6 @@ static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vecto
 	}
 
 	result.SetValue(0, Value(result_msg));
-}
-
-static void OracleAttachWallet(DataChunk &args, ExpressionState &, Vector &result) {
-	auto wallet_path = args.data[0].GetValue(0).ToString();
-	if (!PathIsDirectory(wallet_path)) {
-		throw IOException("Wallet path does not exist or is not a directory: " + wallet_path);
-	}
-	setenv("TNS_ADMIN", wallet_path.c_str(), 1);
-	result.SetValue(0, Value("Wallet attached: " + wallet_path));
 }
 
 static void OracleClearCache(DataChunk &, ExpressionState &, Vector &result) {
@@ -192,10 +172,6 @@ void RegisterOracleFunctions(ExtensionLoader &loader) {
 	oracle_query_func.pushdown_complex_filter = OraclePushdownComplexFilter;
 	oracle_query_func.projection_pushdown = true;
 	loader.RegisterFunction(oracle_query_func);
-
-	auto attach_wallet_func =
-	    ScalarFunction("oracle_attach_wallet", {LogicalType::VARCHAR}, LogicalType::VARCHAR, OracleAttachWallet);
-	loader.RegisterFunction(attach_wallet_func);
 
 	auto clear_cache_func = ScalarFunction("oracle_clear_cache", {}, LogicalType::VARCHAR, OracleClearCache);
 	loader.RegisterFunction(clear_cache_func);

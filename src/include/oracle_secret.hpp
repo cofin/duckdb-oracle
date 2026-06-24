@@ -24,6 +24,9 @@ OracleSecretParameters ParseOracleSecret(const CreateSecretInput &input);
 //! Validate Oracle secret parameters
 void ValidateOracleSecret(const OracleSecretParameters &params);
 
+//! Validate an optional Oracle wallet directory path.
+void ValidateOracleWalletPath(const string &wallet_path);
+
 //! Build Oracle connection string from secret parameters
 //! Returns EZConnect format: user/password@host:port/service
 string BuildConnectionStringFromSecret(const KeyValueSecret &secret);

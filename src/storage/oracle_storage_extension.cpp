@@ -65,6 +65,11 @@ static unique_ptr<Catalog> OracleAttach(optional_ptr<StorageExtensionInfo> stora
 		connection_string = BuildConnectionStringFromSecret(*kv_secret);
 		wallet_path = GetWalletPathFromSecret(*kv_secret);
 	}
+	auto wallet_option = options.options.find("wallet_path");
+	if (wallet_option != options.options.end()) {
+		wallet_path = wallet_option->second.ToString();
+		ValidateOracleWalletPath(wallet_path);
+	}
 
 	// Use in-memory storage underneath the DuckDB catalog
 	info.path = ":memory:";

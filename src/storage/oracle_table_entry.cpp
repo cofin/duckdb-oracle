@@ -185,9 +185,7 @@ TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_p
 	const auto &version_info = state->GetVersionInfo();
 	const auto &settings = state->settings;
 
-	// Build column list with type conversions for problematic Oracle types
-	// This handles: SPATIAL, VECTOR, JSON, XML, LOB, RAW types
-	// Controlled by enable_type_conversion setting
+	// Build column list with required type conversions for problematic Oracle types.
 	string column_list;
 	idx_t col_idx = 0;
 	for (auto &col : columns.Physical()) {
@@ -197,10 +195,10 @@ TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_p
 
 		auto quoted_col = KeywordHelper::WriteQuoted(col.Name(), '"');
 
-		// Apply type-specific conversion if enabled and needed
-		if (settings.enable_type_conversion && col_idx < column_metadata.size()) {
+		// Apply type-specific conversion when needed.
+		if (col_idx < column_metadata.size()) {
 			const auto &meta = column_metadata[col_idx];
-			if (meta.RequiresQueryRewrite(version_info, settings.try_native_lobs)) {
+			if (meta.RequiresQueryRewrite(version_info)) {
 				// Generate conversion expression and alias
 				auto converted = meta.ConversionExpression(quoted_col, version_info);
 				column_list += StringUtil::Format("%s AS %s", converted.c_str(), quoted_col.c_str());

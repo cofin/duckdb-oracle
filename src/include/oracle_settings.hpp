@@ -34,11 +34,8 @@ struct OracleSettings {
 	idx_t metadata_result_limit = DEFAULT_ORACLE_METADATA_RESULT_LIMIT;
 	bool use_current_schema = true;
 
-	// Type conversion settings (for OCI array fetch buffer alignment issues)
-	bool try_native_lobs = true;        // Try native LOB/RAW fetch first, fallback on corruption
-	bool vector_to_list = true;         // Parse VECTOR JSON to LIST<FLOAT> (vs raw VARCHAR)
-	bool enable_type_conversion = true; // Enable server-side type conversion for problematic types
-	bool enable_spatial_types = true;   // Map SDO_GEOMETRY to GEOMETRY type (requires spatial extension)
+	// Type conversion settings
+	bool enable_spatial_types = true; // Map SDO_GEOMETRY to GEOMETRY type (requires spatial extension)
 };
 
 //! Return the effective OCI array size, capped to one DuckDB output chunk.

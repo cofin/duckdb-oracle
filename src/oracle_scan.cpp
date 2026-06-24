@@ -185,7 +185,7 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string conne
 	for (idx_t i = 0; i < result->column_names.size(); i++) {
 		auto quoted_col = KeywordHelper::WriteQuoted(result->column_names[i], '"');
 		auto &decision = type_decisions[i];
-		if (decision.RequiresQueryRewrite(conversion_version, result->settings.try_native_lobs)) {
+		if (decision.RequiresQueryRewrite(conversion_version)) {
 			needs_wrapper = true;
 			converted_select_list.push_back(StringUtil::Format(
 			    "%s AS %s", decision.ConversionExpression(quoted_col, conversion_version).c_str(), quoted_col.c_str()));

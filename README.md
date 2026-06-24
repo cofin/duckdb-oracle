@@ -28,10 +28,6 @@ LOAD oracle;
 **2. Attach**
 
 ```sql
--- Basic connection
-ATTACH 'user/password@//localhost:1521/FREEPDB1' AS ora (TYPE oracle);
-
--- Using Secrets (Recommended)
 CREATE SECRET my_oracle (
     TYPE oracle,
     USER 'scott',
@@ -42,6 +38,8 @@ CREATE SECRET my_oracle (
 );
 ATTACH '' AS ora (TYPE oracle, SECRET my_oracle);
 ```
+
+Direct credential strings remain supported for `oracle_query`, `oracle_scan`, and `oracle_execute`, but prefer secrets and attached aliases for normal use.
 
 **3. Query (Read)**
 
@@ -97,12 +95,20 @@ CREATE SECRET prod (TYPE oracle, USER 'admin', PASSWORD 'secret', SERVICE 'PROD'
 ATTACH '' AS prod_db (TYPE oracle, SECRET prod);
 ```
 
+`oracle_query` and `oracle_execute` run raw Oracle SQL. Treat those SQL strings as trusted input; do not build them by interpolating untrusted user values.
+
 ### Oracle Wallet
 
 ```sql
--- Point to wallet directory containing tnsnames.ora and ewallet.p12
-SELECT oracle_attach_wallet('/path/to/wallet');
-ATTACH 'TNS_ALIAS' AS ora (TYPE oracle);
+-- Point WALLET_PATH to a local directory containing tnsnames.ora and ewallet.p12.
+CREATE SECRET adb_prod (
+    TYPE oracle,
+    USER 'admin',
+    PASSWORD 'secret',
+    SERVICE 'adb_alias',
+    WALLET_PATH '/path/to/wallet'
+);
+ATTACH '' AS ora (TYPE oracle, SECRET adb_prod);
 ```
 
 ## Development

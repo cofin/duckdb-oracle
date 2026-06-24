@@ -16,14 +16,24 @@ repo:
 
 docs:
   hello_world: |
-    -- Attach Oracle database
-    ATTACH 'user/password@//host:1521/service' AS ora (TYPE oracle);
+    -- Store credentials in DuckDB's SecretManager
+    CREATE SECRET oracle_prod (
+        TYPE oracle,
+        USER 'app_user',
+        PASSWORD 'secret',
+        HOST 'host',
+        PORT 1521,
+        SERVICE 'service'
+    );
+
+    -- Attach Oracle database through the secret
+    ATTACH '' AS ora (TYPE oracle, SECRET oracle_prod);
 
     -- Query Oracle table
     SELECT * FROM ora.HR.EMPLOYEES WHERE employee_id = 101;
 
-    -- Use table function
-    SELECT * FROM oracle_scan('user/pass@host:1521/service', 'HR', 'EMPLOYEES');
+    -- Use raw SQL only with trusted query strings
+    SELECT * FROM oracle_query('ora', 'SELECT employee_id FROM HR.EMPLOYEES WHERE ROWNUM <= 5');
 
     -- Write data to Oracle table
     INSERT INTO ora.target_table SELECT * FROM my_table;
@@ -57,7 +67,7 @@ docs:
           type: VARCHAR
         - name: query
           type: VARCHAR
-      description: Execute arbitrary SQL query against Oracle database returning a result set.
+      description: Execute trusted arbitrary SQL query against Oracle database returning a result set.
 
     - name: oracle_scan
       parameters:
@@ -69,12 +79,6 @@ docs:
           type: VARCHAR
       description: Scan an Oracle table (equivalent to SELECT * FROM schema.table).
 
-    - name: oracle_attach_wallet
-      parameters:
-        - name: wallet_path
-          type: VARCHAR
-      description: Set TNS_ADMIN for Oracle Wallet (Autonomous Database support).
-
     - name: oracle_clear_cache
       description: Clear cached Oracle metadata and connections.
 
@@ -84,7 +88,7 @@ docs:
           type: VARCHAR
         - name: query
           type: VARCHAR
-      description: Execute arbitrary SQL without expecting a result set.
+      description: Execute trusted arbitrary SQL without expecting a result set.
 
   settings:
     - name: oracle_enable_pushdown

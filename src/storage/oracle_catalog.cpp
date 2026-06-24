@@ -75,7 +75,7 @@ void OracleCatalogState::ApplyOptions(const unordered_map<string, Value> &option
 	// Options are case-insensitive; normalize by lowering.
 	for (auto &entry : options) {
 		auto key = StringUtil::Lower(entry.first);
-		if (key == "secret") {
+		if (key == "secret" || key == "wallet_path") {
 			continue;
 		}
 		if (key == "enable_pushdown") {
@@ -108,12 +108,6 @@ void OracleCatalogState::ApplyOptions(const unordered_map<string, Value> &option
 			settings.metadata_result_limit = OracleValidatedMetadataResultLimit(val);
 		} else if (key == "use_current_schema") {
 			settings.use_current_schema = entry.second.GetValue<bool>();
-		} else if (key == "try_native_lobs") {
-			settings.try_native_lobs = entry.second.GetValue<bool>();
-		} else if (key == "vector_to_list") {
-			settings.vector_to_list = entry.second.GetValue<bool>();
-		} else if (key == "enable_type_conversion") {
-			settings.enable_type_conversion = entry.second.GetValue<bool>();
 		} else if (key == "enable_spatial_types") {
 			settings.enable_spatial_types = entry.second.GetValue<bool>();
 		} else {

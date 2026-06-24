@@ -63,7 +63,7 @@ struct OracleTypeDecision {
 	ub2 fetch_type = SQLT_STR;
 	ub2 write_bind_type = SQLT_CHR;
 
-	bool RequiresQueryRewrite(const OracleVersionInfo &version, bool try_native_lobs = true) const;
+	bool RequiresQueryRewrite(const OracleVersionInfo &version) const;
 	string ConversionExpression(const string &quoted_col, const OracleVersionInfo &version) const;
 	string UnsupportedError(const OracleTypeMetadata &metadata) const;
 };
@@ -82,8 +82,8 @@ struct OracleColumnMetadata {
 	OracleTypeCategory Category() const {
 		return decision.category;
 	}
-	bool RequiresQueryRewrite(const OracleVersionInfo &version, bool try_native_lobs = true) const {
-		return decision.RequiresQueryRewrite(version, try_native_lobs);
+	bool RequiresQueryRewrite(const OracleVersionInfo &version) const {
+		return decision.RequiresQueryRewrite(version);
 	}
 	string ConversionExpression(const string &quoted_col, const OracleVersionInfo &version) const {
 		return decision.ConversionExpression(quoted_col, version);
