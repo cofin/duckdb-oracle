@@ -6,7 +6,7 @@
 
 #ifdef _WIN32
 #include <direct.h>
-#define S_ISDIR(mode) (((mode) & _S_IFDIR) == _S_IFDIR)
+#define S_ISDIR(mode) (((mode)&_S_IFDIR) == _S_IFDIR)
 #endif
 
 namespace duckdb {
