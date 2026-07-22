@@ -2,9 +2,9 @@
 # Mirrors the litestar-ecosystem convention (uv run bump-my-version), adapted
 # for this C++ project which has no pyproject.toml.
 #
-#   make release bump=patch        # 0.2.1 -> 0.2.2
-#   make release bump=minor        # 0.2.1 -> 0.3.0
-#   make pre-release version=0.3.0-alpha.1
+#   make bump-version bump=patch
+#   make bump-version bump=minor
+#   make bump-prerelease version=0.3.0-alpha.1
 #
 # description.yml is the single source of truth for the extension version;
 # auto-tag.yml reads it to create the v{version} release tag.
@@ -12,7 +12,7 @@
 allow_dirty = true
 commit = false
 commit_args = "--no-verify"
-current_version = "0.2.1"
+current_version = "0.2.2"
 ignore_missing_files = false
 ignore_missing_version = false
 message = "chore(release): bump to v{new_version}"
@@ -42,3 +42,9 @@ first_value = "1"
 filename = "description.yml"
 search = "version: {current_version}"
 replace = "version: {new_version}"
+
+# Keep the runtime metadata assertion aligned with the canonical version.
+[[tool.bumpversion.files]]
+filename = "test/unit_tests/test_extension_metadata.test"
+search = "{current_version}"
+replace = "{new_version}"

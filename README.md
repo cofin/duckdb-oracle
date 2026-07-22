@@ -10,7 +10,7 @@ This extension allows DuckDB to directly read from and write to Oracle databases
 
 > **Note**: This extension is currently **unsigned**. You must start DuckDB with `-unsigned` to load it.
 >
-> **Supported DuckDB version**: v1.5.4 — see [Compatibility Matrix](docs/COMPATIBILITY.md) for details.
+> **Supported DuckDB version**: v1.5.5 — see [Compatibility Matrix](docs/COMPATIBILITY.md) for details.
 
 ```bash
 ./duckdb -unsigned

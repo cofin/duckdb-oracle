@@ -9,24 +9,49 @@ The `.github/workflows/duckdb-update-check.yml` workflow runs daily at 6:00 UTC.
 1.  **Check**: Queries the GitHub API for the latest stable DuckDB release.
 2.  **Compare**: Compares the latest version with the current version used in `main-distribution-pipeline.yml`.
 3.  **Branch**: If a new version is found, it creates a new branch `feat/duckdb-v{version}`.
-4.  **Update**: Updates the `duckdb` submodule and the version in `main-distribution-pipeline.yml`.
-5.  **PR**: Creates a Pull Request to `main`.
+4.  **Update**: Runs the repository's canonical bump script to align both submodules, CI references, extension metadata, the README support banner, and the compatibility matrix.
+5.  **PR**: Creates a Pull Request to `main` for human review. The workflow never auto-merges an engine upgrade.
 
 ## Handling Updates
 
 When a new Pull Request is created by the automation:
 
-1.  **Review CI**: Check the checks on the Pull Request. The `main-distribution-pipeline.yml` will run automatically.
+1.  **Review CI**: Check the distribution, code-quality, unit-test, and Oracle integration checks on the Pull Request.
 2.  **If CI Passes**:
-    *   Review the changes (usually just submodule and workflow file).
+    *   Confirm the version surfaces and both submodules agree.
     *   Merge the PR.
-    *   Tag a new release (e.g., `v0.1.1`) to trigger the `release-unsigned.yml` workflow.
+    *   The change to `description.yml` makes `auto-tag.yml` create the extension tag. That tag triggers `release-unsigned.yml`; do not create a second tag manually.
 3.  **If CI Fails**:
     *   Check out the branch locally.
     *   Investigate build or test failures.
     *   Apply fixes.
     *   Push fixes to the branch.
-    *   Once CI passes, merge and release.
+    *   Once CI passes, merge. The automatic tag and release workflows handle publication.
+
+## Manual Updates
+
+Preview a DuckDB upgrade without changing files or submodules:
+
+```bash
+make bump-duckdb VERSION=vX.Y.Z ARGS=--dry-run
+```
+
+Apply the upgrade locally:
+
+```bash
+make bump-duckdb VERSION=vX.Y.Z
+```
+
+The command updates the DuckDB and `extension-ci-tools` submodules, all six distribution-workflow references, the README banner, the compatibility matrix, and the extension patch version. It does not commit or push; review the diff and open a PR.
+
+For an extension-only release, use the version targets directly:
+
+```bash
+make bump-version bump=patch
+make bump-prerelease version=0.3.0-alpha.1
+```
+
+These targets keep `description.yml`, `.bumpversion.toml`, and the extension metadata test aligned.
 
 ## Manual Trigger
 
