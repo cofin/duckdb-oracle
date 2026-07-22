@@ -6,8 +6,8 @@ This document outlines how releases are created and deployed for the DuckDB Orac
 
 This project uses two independent version tracks:
 
-- **Extension version** (e.g., `v0.2.1`): Defined in `description.yml`. Used for git tags, GitHub Releases, and the runtime version reported by `duckdb_extensions()`.
-- **DuckDB version** (e.g., `v1.5.4`): The DuckDB version the extension is built against. Used for the GitHub Pages directory structure that DuckDB's extension loader expects.
+- **Extension version** (e.g., `v0.2.2`): Defined in `description.yml`. Used for git tags, GitHub Releases, and the runtime version reported by `duckdb_extensions()`.
+- **DuckDB version** (e.g., `v1.5.5`): The DuckDB version the extension is built against. Used for the GitHub Pages directory structure that DuckDB's extension loader expects.
 
 When a user runs `INSTALL oracle`, DuckDB fetches from:
 
@@ -36,22 +36,16 @@ The release pipeline is fully automated:
 
 ### Automatic (Recommended)
 
-Bump the `version:` field in `description.yml`, commit to `main`, and push. The pipeline handles the rest.
+Bump the version with the repository target, commit the synchronized files on a feature branch, and open a PR. Do not edit or push directly to `main`.
 
 ```bash
-# Edit description.yml to bump version
-git add description.yml
-git commit -m "chore: bump extension version to 0.2.2"
-git push origin main
+make bump-version bump=patch
+git add .bumpversion.toml description.yml test/unit_tests/test_extension_metadata.test
+git commit -m "chore(release): bump extension to v0.2.2"
+# Push the feature branch and open a PR targeting main.
 ```
 
-### Manual Tag
-
-```bash
-git checkout main && git pull
-git tag v0.2.2
-git push origin v0.2.2
-```
+After the PR is merged, `auto-tag.yml` reads `description.yml`, creates `v0.2.2`, and the tag triggers `release-unsigned.yml`. Do not create the tag manually during the normal release flow.
 
 ### Manual Workflow Dispatch (Fallback)
 
@@ -74,9 +68,9 @@ gh workflow run release-unsigned.yml -f version=v0.2.2
 The `duckdb-update-check.yml` workflow runs daily at 06:00 UTC to check for new DuckDB releases. When a new version is found, it:
 
 1. Creates a branch `feat/duckdb-v{version}`.
-2. Updates the DuckDB submodule and CI workflow.
-3. Bumps the extension patch version in `description.yml`.
-4. Creates a Pull Request with auto-merge enabled.
+2. Runs `make bump-duckdb VERSION=v{version}` to align both submodules, six CI references, extension metadata, the README banner, and the compatibility matrix.
+3. Bumps the extension patch version through `bump-my-version`.
+4. Creates a Pull Request for human review; it does not auto-merge.
 
 After the PR merges, the auto-tag and release workflows handle the rest.
 

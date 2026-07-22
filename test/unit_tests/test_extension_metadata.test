@@ -9,4 +9,4 @@ SELECT extension_version
 FROM duckdb_extensions()
 WHERE extension_name = 'oracle';
 ----
-0.2.1
+0.2.2

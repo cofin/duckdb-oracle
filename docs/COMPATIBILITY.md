@@ -8,3 +8,4 @@ This document tracks the compatibility between the DuckDB Oracle extension and D
 | v1.4.3         | v0.1.0 (dev)      | ✅ Compatible | 2025-12-28 | Upgrade to DuckDB 1.4.3 LTS |
 | v1.5.1         | v0.2.0            | ✅ Compatible | 2026-04-03 | GEOMETRY with CRS, JSON type mapping, dead code cleanup |
 | v1.5.4         | v0.2.1            | ✅ Compatible | 2026-06-23 | DuckDB v1.5.4 upgrade |
+| v1.5.5 | v0.2.2 | ✅ Compatible | 2026-07-22 | DuckDB v1.5.5 upgrade |
