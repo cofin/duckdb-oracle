@@ -115,8 +115,6 @@ void OracleCatalogState::ClearCaches() {
 	schema_cache.clear();
 	object_cache.clear();
 	current_schema.clear();
-	version_detected = false;
-	version_info = OracleVersionInfo();
 	cache_generation.fetch_add(1, std::memory_order_acq_rel);
 }
 

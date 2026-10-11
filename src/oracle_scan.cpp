@@ -114,6 +114,17 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, const string
 	if (getenv("ORACLE_DEBUG")) {
 		fprintf(stderr, "[oracle] resolved connection reference for %s\n", surface);
 	}
+	OracleVersionInfo conversion_version;
+	if (state) {
+		conversion_version = state->GetVersionInfo();
+	} else if (resolved.catalog_state) {
+		conversion_version = resolved.catalog_state->GetVersionInfo();
+	} else {
+		conversion_version.supports_json_type = true;
+		conversion_version.supports_vector = true;
+		conversion_version.supports_vector_serialize = true;
+	}
+
 	auto conn_handle =
 	    OracleConnectionManager::Instance().Acquire(result->connection_string, result->wallet_path, result->settings);
 	auto ctx = conn_handle->Get();
@@ -156,16 +167,6 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, const string
 
 	vector<OracleTypeDecision> type_decisions;
 	type_decisions.reserve(param_count);
-	OracleVersionInfo conversion_version;
-	if (state) {
-		conversion_version = state->GetVersionInfo();
-	} else if (resolved.catalog_state) {
-		conversion_version = resolved.catalog_state->GetVersionInfo();
-	} else {
-		conversion_version.supports_json_type = true;
-		conversion_version.supports_vector = true;
-		conversion_version.supports_vector_serialize = true;
-	}
 
 	for (ub4 i = 1; i <= param_count; i++) {
 		OCIParam *param_raw = nullptr;

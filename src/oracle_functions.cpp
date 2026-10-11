@@ -90,9 +90,12 @@ static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vecto
 		CheckOCIError(OCIAttrGet(stmthp.get(), OCI_HTYPE_STMT, &row_count, nullptr, OCI_ATTR_UB8_ROW_COUNT, ctx->errhp),
 		              ctx->errhp, "Failed to get OCI row count");
 
-		if (resolved.catalog_state &&
-		    (stmt_type == OCI_STMT_CREATE || stmt_type == OCI_STMT_DROP || stmt_type == OCI_STMT_ALTER)) {
-			resolved.catalog_state->ClearCaches();
+		if (stmt_type == OCI_STMT_CREATE || stmt_type == OCI_STMT_DROP || stmt_type == OCI_STMT_ALTER) {
+			if (resolved.catalog_state) {
+				resolved.catalog_state->ClearCaches();
+			} else {
+				OracleCatalogState::ClearAllCaches();
+			}
 		}
 
 		auto row_count_str = std::to_string(row_count);

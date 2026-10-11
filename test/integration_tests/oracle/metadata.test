@@ -116,7 +116,7 @@ SELECT COUNT(*) > 0 FROM information_schema.tables WHERE table_catalog = 'ora_la
 true
 
 query III
-SELECT column_name, data_type, is_nullable FROM duckdb_columns WHERE database_name = 'ora_lazy' AND table_name = 'ZZZ_READ_LIMIT_TARGET';
+SELECT column_name, data_type, is_nullable FROM duckdb_columns WHERE database_name = 'ora_lazy' AND schema_name = 'DUCKDB_TEST' AND table_name = 'ZZZ_READ_LIMIT_TARGET';
 ----
 ID	DOUBLE	true
 
@@ -142,7 +142,7 @@ SELECT oracle_execute(oracle_test_conn(), '
 statement ok
 SELECT oracle_execute(oracle_test_conn(), '
     BEGIN
-       EXECUTE IMMEDIATE ''DROP TABLE meta_unsupported_long_tbl'';
+       EXECUTE IMMEDIATE ''DROP TABLE meta_unsupported_bfile_tbl'';
     EXCEPTION
        WHEN OTHERS THEN NULL;
     END;
@@ -164,7 +164,7 @@ statement ok
 SELECT oracle_execute(oracle_test_conn(), 'CREATE SYNONYM syn_meta_test_seq FOR meta_test_seq')
 
 statement ok
-SELECT oracle_execute(oracle_test_conn(), 'CREATE TABLE meta_unsupported_long_tbl (id NUMBER NOT NULL, payload LONG)')
+SELECT oracle_execute(oracle_test_conn(), 'CREATE TABLE meta_unsupported_bfile_tbl (id NUMBER NOT NULL, payload BFILE)')
 
 statement ok
 SELECT oracle_clear_cache();
@@ -175,7 +175,7 @@ SELECT COUNT(*) > 0 FROM duckdb_tables() WHERE database_name = 'ora_lazy';
 true
 
 query I
-SELECT COUNT(*) FROM duckdb_tables() WHERE database_name = 'ora_lazy' AND table_name IN ('SYN_META_TEST_SEQ', 'META_UNSUPPORTED_LONG_TBL');
+SELECT COUNT(*) FROM duckdb_tables() WHERE database_name = 'ora_lazy' AND table_name IN ('SYN_META_TEST_SEQ', 'META_UNSUPPORTED_BFILE_TBL');
 ----
 0
 
@@ -185,21 +185,21 @@ SELECT COUNT(*) > 0 FROM duckdb_columns() WHERE database_name = 'ora_lazy';
 true
 
 statement error
-SELECT * FROM ora_lazy.meta_unsupported_long_tbl;
+SELECT * FROM ora_lazy.meta_unsupported_bfile_tbl;
 ----
-Unsupported Oracle type "LONG"
+Unsupported Oracle type BFILE
 
 # Test 2e: Dynamic DDL invalidation and NOT NULL constraint discovery
 statement ok
 SELECT oracle_execute(oracle_test_conn(), 'CREATE TABLE meta_dynamic_ddl_tbl (id NUMBER(10,0) NOT NULL, label VARCHAR2(20))')
 
 query I
-SELECT COUNT(*) FROM duckdb_tables() WHERE database_name = 'ora_lazy' AND table_name = 'META_DYNAMIC_DDL_TBL';
+SELECT COUNT(*) FROM duckdb_tables() WHERE database_name = 'ora_lazy' AND schema_name = 'DUCKDB_TEST' AND table_name = 'META_DYNAMIC_DDL_TBL';
 ----
 1
 
 query II
-SELECT column_name, is_nullable FROM duckdb_columns WHERE database_name = 'ora_lazy' AND table_name = 'META_DYNAMIC_DDL_TBL' ORDER BY column_index;
+SELECT column_name, is_nullable FROM duckdb_columns WHERE database_name = 'ora_lazy' AND schema_name = 'DUCKDB_TEST' AND table_name = 'META_DYNAMIC_DDL_TBL' ORDER BY column_index;
 ----
 ID	false
 LABEL	true
@@ -208,7 +208,7 @@ statement ok
 SELECT oracle_execute(oracle_test_conn(), 'DROP TABLE meta_dynamic_ddl_tbl')
 
 statement ok
-SELECT oracle_execute(oracle_test_conn(), 'DROP TABLE meta_unsupported_long_tbl')
+SELECT oracle_execute(oracle_test_conn(), 'DROP TABLE meta_unsupported_bfile_tbl')
 
 statement ok
 SELECT oracle_execute(oracle_test_conn(), 'DROP SYNONYM syn_meta_test_seq')

@@ -55,7 +55,6 @@ test/
         ├── partition_pruning.test             # Partition metadata and partition-key filter pushdown
         ├── pushdown.test                      # Filter and projection pushdown verification
         ├── schema_resolution.test             # Live CURRENT_SCHEMA and cross-schema resolution
-        ├── spatial.test                       # SDO_GEOMETRY WKT point/polygon read/write round-trips
         ├── streaming.test                     # Multi-chunk cursor fetch and streaming verification
         ├── type_conversion.test               # Numeric, temporal, and binary type conversions
         ├── type_registry.test                 # Metadata and OCI describe type registry resolution
