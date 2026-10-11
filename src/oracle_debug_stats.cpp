@@ -72,7 +72,8 @@ OracleDebugStatsSnapshot OracleDebugGetStats() {
 
 idx_t OracleDebugGetCounter(const string &name) {
 	auto key = StringUtil::Lower(name);
-	auto stats = OracleDebugGetStats();
+	lock_guard<std::mutex> guard(StatsLock());
+	const auto &stats = MutableStats();
 	if (key == "fetch_calls") {
 		return stats.fetch_calls;
 	}

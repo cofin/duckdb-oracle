@@ -10,64 +10,198 @@ namespace {
 
 static bool HasDirectConnectionStringShape(const string &connection_ref) {
 	auto slash_pos = connection_ref.find('/');
-	auto at_pos = connection_ref.find('@', slash_pos == string::npos ? 0 : slash_pos);
-	return slash_pos != string::npos && at_pos != string::npos && slash_pos > 0 && at_pos > slash_pos + 1 &&
-	       at_pos < connection_ref.size() - 1;
+	auto at_pos = connection_ref.rfind('@');
+	if (slash_pos == string::npos || at_pos == string::npos || slash_pos >= at_pos) {
+		return false;
+	}
+	if (at_pos + 1 >= connection_ref.size()) {
+		return false;
+	}
+	if (slash_pos == 0) {
+		return at_pos == 1;
+	}
+	return at_pos > slash_pos + 1;
+}
+
+static int64_t ExtractSignedSettingRaw(const Value &option_value, const char *name, idx_t min_value, idx_t max_value) {
+	if (option_value.type().id() == LogicalTypeId::UBIGINT) {
+		auto raw = option_value.GetValue<uint64_t>();
+		if (raw > static_cast<uint64_t>(NumericLimits<int64_t>::Maximum())) {
+			auto min_str = std::to_string(min_value);
+			auto max_str = std::to_string(max_value);
+			throw InvalidInputException("%s must be between %s and %s", name, min_str.c_str(), max_str.c_str());
+		}
+		return static_cast<int64_t>(raw);
+	}
+	return option_value.GetValue<int64_t>();
 }
 
 } // namespace
 
 OracleSettings GetOracleSettings(ClientContext &context, OracleCatalogState *state) {
-	OracleSettings settings;
-	if (state) {
-		settings = state->settings;
-	}
+	const OracleSettings defaults;
+	OracleSettings settings = state ? state->settings : defaults;
+
+	auto should_apply = [&](const string &name, SettingScope scope, bool state_differs_from_default,
+	                        bool global_differs_from_default) {
+		if (!state) {
+			return true;
+		}
+		if (scope == SettingScope::LOCAL) {
+			return true;
+		}
+		if (state->settings.attach_overridden_keys.find(name) != state->settings.attach_overridden_keys.end()) {
+			return false;
+		}
+		if (state_differs_from_default && !global_differs_from_default) {
+			return false;
+		}
+		return true;
+	};
 
 	Value option_value;
-	if (context.TryGetCurrentSetting("oracle_enable_pushdown", option_value)) {
-		settings.enable_pushdown = option_value.GetValue<bool>();
+	auto lookup = context.TryGetCurrentSetting("oracle_enable_pushdown", option_value);
+	if (lookup) {
+		auto val = option_value.GetValue<bool>();
+		if (should_apply("oracle_enable_pushdown", lookup.GetScope(),
+		                 settings.enable_pushdown != defaults.enable_pushdown, val != defaults.enable_pushdown)) {
+			settings.enable_pushdown = val;
+		}
 	}
-	if (context.TryGetCurrentSetting("oracle_prefetch_rows", option_value)) {
-		auto val = option_value.GetValue<int64_t>();
-		settings.prefetch_rows = OracleValidatedSettingValue(val, "oracle_prefetch_rows", 1, MAX_ORACLE_PREFETCH_ROWS);
+	lookup = context.TryGetCurrentSetting("oracle_prefetch_rows", option_value);
+	if (lookup) {
+		auto raw = ExtractSignedSettingRaw(option_value, "oracle_prefetch_rows", 1, MAX_ORACLE_PREFETCH_ROWS);
+		auto val = OracleValidatedSettingValue(raw, "oracle_prefetch_rows", 1, MAX_ORACLE_PREFETCH_ROWS);
+		if (should_apply("oracle_prefetch_rows", lookup.GetScope(), settings.prefetch_rows != defaults.prefetch_rows,
+		                 val != defaults.prefetch_rows)) {
+			settings.prefetch_rows = val;
+		}
 	}
-	if (context.TryGetCurrentSetting("oracle_prefetch_memory", option_value)) {
-		auto val = option_value.GetValue<int64_t>();
-		settings.prefetch_memory =
-		    OracleValidatedSettingValue(val, "oracle_prefetch_memory", 0, MAX_ORACLE_PREFETCH_MEMORY);
+	lookup = context.TryGetCurrentSetting("oracle_prefetch_memory", option_value);
+	if (lookup) {
+		auto raw = ExtractSignedSettingRaw(option_value, "oracle_prefetch_memory", 0, MAX_ORACLE_PREFETCH_MEMORY);
+		auto val = OracleValidatedSettingValue(raw, "oracle_prefetch_memory", 0, MAX_ORACLE_PREFETCH_MEMORY);
+		if (should_apply("oracle_prefetch_memory", lookup.GetScope(),
+		                 settings.prefetch_memory != defaults.prefetch_memory, val != defaults.prefetch_memory)) {
+			settings.prefetch_memory = val;
+		}
 	}
-	if (context.TryGetCurrentSetting("oracle_array_size", option_value)) {
-		auto val = option_value.GetValue<int64_t>();
-		settings.array_size = OracleValidatedSettingValue(val, "oracle_array_size", 1, STANDARD_VECTOR_SIZE);
+	lookup = context.TryGetCurrentSetting("oracle_array_size", option_value);
+	if (lookup) {
+		auto raw = ExtractSignedSettingRaw(option_value, "oracle_array_size", 1, STANDARD_VECTOR_SIZE);
+		auto val = OracleValidatedSettingValue(raw, "oracle_array_size", 1, STANDARD_VECTOR_SIZE);
+		if (should_apply("oracle_array_size", lookup.GetScope(), settings.array_size != defaults.array_size,
+		                 val != defaults.array_size)) {
+			settings.array_size = val;
+		}
 	}
-	if (context.TryGetCurrentSetting("oracle_connection_cache", option_value)) {
-		settings.connection_cache = option_value.GetValue<bool>();
+	lookup = context.TryGetCurrentSetting("oracle_connection_cache", option_value);
+	if (lookup) {
+		auto val = option_value.GetValue<bool>();
+		if (should_apply("oracle_connection_cache", lookup.GetScope(),
+		                 settings.connection_cache != defaults.connection_cache, val != defaults.connection_cache)) {
+			settings.connection_cache = val;
+		}
 	}
-	if (context.TryGetCurrentSetting("oracle_connection_limit", option_value)) {
-		auto val = option_value.GetValue<int64_t>();
-		settings.connection_limit =
-		    OracleValidatedSettingValue(val, "oracle_connection_limit", 1, MAX_ORACLE_CONNECTION_LIMIT);
+	lookup = context.TryGetCurrentSetting("oracle_connection_limit", option_value);
+	if (lookup) {
+		auto raw = ExtractSignedSettingRaw(option_value, "oracle_connection_limit", 1, MAX_ORACLE_CONNECTION_LIMIT);
+		auto val = OracleValidatedSettingValue(raw, "oracle_connection_limit", 1, MAX_ORACLE_CONNECTION_LIMIT);
+		if (should_apply("oracle_connection_limit", lookup.GetScope(),
+		                 settings.connection_limit != defaults.connection_limit, val != defaults.connection_limit)) {
+			settings.connection_limit = val;
+		}
 	}
-	if (context.TryGetCurrentSetting("oracle_debug_show_queries", option_value)) {
-		settings.debug_show_queries = option_value.GetValue<bool>();
+	lookup = context.TryGetCurrentSetting("oracle_debug_show_queries", option_value);
+	if (lookup) {
+		auto val = option_value.GetValue<bool>();
+		if (should_apply("oracle_debug_show_queries", lookup.GetScope(),
+		                 settings.debug_show_queries != defaults.debug_show_queries,
+		                 val != defaults.debug_show_queries)) {
+			settings.debug_show_queries = val;
+		}
 	}
-	if (context.TryGetCurrentSetting("oracle_lazy_schema_loading", option_value)) {
-		settings.lazy_schema_loading = option_value.GetValue<bool>();
+	lookup = context.TryGetCurrentSetting("oracle_call_timeout_ms", option_value);
+	if (lookup) {
+		auto raw = ExtractSignedSettingRaw(option_value, "oracle_call_timeout_ms", 0, MAX_ORACLE_CALL_TIMEOUT_MS);
+		auto val = OracleValidatedSettingValue(raw, "oracle_call_timeout_ms", 0, MAX_ORACLE_CALL_TIMEOUT_MS);
+		if (should_apply("oracle_call_timeout_ms", lookup.GetScope(),
+		                 settings.call_timeout_ms != defaults.call_timeout_ms, val != defaults.call_timeout_ms)) {
+			settings.call_timeout_ms = val;
+		}
 	}
-	if (context.TryGetCurrentSetting("oracle_metadata_object_types", option_value)) {
-		settings.metadata_object_types = option_value.ToString();
+	lookup = context.TryGetCurrentSetting("oracle_stmt_cache_size", option_value);
+	if (lookup) {
+		auto raw = ExtractSignedSettingRaw(option_value, "oracle_stmt_cache_size", 0, MAX_ORACLE_STMT_CACHE_SIZE);
+		auto val = OracleValidatedSettingValue(raw, "oracle_stmt_cache_size", 0, MAX_ORACLE_STMT_CACHE_SIZE);
+		if (should_apply("oracle_stmt_cache_size", lookup.GetScope(),
+		                 settings.stmt_cache_size != defaults.stmt_cache_size, val != defaults.stmt_cache_size)) {
+			settings.stmt_cache_size = val;
+		}
 	}
-	if (context.TryGetCurrentSetting("oracle_metadata_result_limit", option_value)) {
-		auto val = option_value.GetValue<int64_t>();
-		settings.metadata_result_limit = OracleValidatedMetadataResultLimit(val);
+	lookup = context.TryGetCurrentSetting("oracle_lazy_schema_loading", option_value);
+	if (lookup) {
+		auto val = option_value.GetValue<bool>();
+		if (should_apply("oracle_lazy_schema_loading", lookup.GetScope(),
+		                 settings.lazy_schema_loading != defaults.lazy_schema_loading,
+		                 val != defaults.lazy_schema_loading)) {
+			settings.lazy_schema_loading = val;
+		}
 	}
-	if (context.TryGetCurrentSetting("oracle_use_current_schema", option_value)) {
-		settings.use_current_schema = option_value.GetValue<bool>();
+	lookup = context.TryGetCurrentSetting("oracle_metadata_object_types", option_value);
+	if (lookup) {
+		auto val = option_value.ToString();
+		if (should_apply("oracle_metadata_object_types", lookup.GetScope(),
+		                 settings.metadata_object_types != defaults.metadata_object_types,
+		                 val != defaults.metadata_object_types)) {
+			settings.metadata_object_types = std::move(val);
+		}
 	}
-	if (context.TryGetCurrentSetting("oracle_enable_spatial_types", option_value)) {
-		settings.enable_spatial_types = option_value.GetValue<bool>();
+	lookup = context.TryGetCurrentSetting("oracle_metadata_result_limit", option_value);
+	if (lookup) {
+		auto raw =
+		    ExtractSignedSettingRaw(option_value, "oracle_metadata_result_limit", 1, MAX_ORACLE_METADATA_RESULT_LIMIT);
+		auto val = OracleValidatedMetadataResultLimit(raw);
+		if (should_apply("oracle_metadata_result_limit", lookup.GetScope(),
+		                 settings.metadata_result_limit != defaults.metadata_result_limit,
+		                 val != defaults.metadata_result_limit)) {
+			settings.metadata_result_limit = val;
+		}
+	}
+	lookup = context.TryGetCurrentSetting("oracle_use_current_schema", option_value);
+	if (lookup) {
+		auto val = option_value.GetValue<bool>();
+		if (should_apply("oracle_use_current_schema", lookup.GetScope(),
+		                 settings.use_current_schema != defaults.use_current_schema,
+		                 val != defaults.use_current_schema)) {
+			settings.use_current_schema = val;
+		}
+	}
+	lookup = context.TryGetCurrentSetting("oracle_enable_spatial_types", option_value);
+	if (lookup) {
+		auto val = option_value.GetValue<bool>();
+		if (should_apply("oracle_enable_spatial_types", lookup.GetScope(),
+		                 settings.enable_spatial_types != defaults.enable_spatial_types,
+		                 val != defaults.enable_spatial_types)) {
+			settings.enable_spatial_types = val;
+		}
 	}
 	return settings;
+}
+
+OracleResolvedConnection ResolveOracleConnectionWithSharedState(ClientContext &context, const string &connection_ref,
+                                                                const shared_ptr<OracleCatalogState> &state_hint,
+                                                                bool reject_bare_identifier, const char *surface) {
+	if (state_hint) {
+		OracleResolvedConnection resolved;
+		resolved.connection_string = state_hint->connection_string;
+		resolved.wallet_path = state_hint->wallet_path;
+		resolved.settings = GetOracleSettings(context, state_hint.get());
+		resolved.catalog_state = state_hint;
+		return resolved;
+	}
+	return ResolveOracleConnection(context, connection_ref, static_cast<OracleCatalogState *>(nullptr),
+	                               reject_bare_identifier, surface);
 }
 
 OracleResolvedConnection ResolveOracleConnection(ClientContext &context, const string &connection_ref,
@@ -78,6 +212,14 @@ OracleResolvedConnection ResolveOracleConnection(ClientContext &context, const s
 		resolved.connection_string = state_hint->connection_string;
 		resolved.wallet_path = state_hint->wallet_path;
 		resolved.settings = GetOracleSettings(context, state_hint);
+		if (!connection_ref.empty()) {
+			auto by_alias = OracleCatalogState::LookupByAlias(connection_ref);
+			if (by_alias && by_alias.get() == state_hint) {
+				resolved.catalog_state = std::move(by_alias);
+				return resolved;
+			}
+		}
+		resolved.catalog_state = shared_ptr<OracleCatalogState>(state_hint, [](OracleCatalogState *) {});
 		return resolved;
 	}
 

@@ -49,26 +49,26 @@ The OCI connection, secret, settings, and utility layer has 6 High, 8 Medium, an
 
 ### Phase 1: OCI Utilities, Settings, Secrets, Connection Pool & Metadata Query Execution
 
-- [ ] **Task 1.1: Harden OCI error inspection, env helpers, credential redaction, and debug counter reads** -> [tasks/1.1.md](tasks/1.1.md)
+- [x] **Task 1.1: Harden OCI error inspection, env helpers, credential redaction, and debug counter reads** -> [tasks/1.1.md](tasks/1.1.md)
   - **Objective**: Remediate `M-01`, `M-08` (redaction helper), `L-01`, and `L-02` in `oracle_utils.hpp` and `oracle_debug_stats.cpp`.
   - **Verification Strategy**: `tdd`
   - **Files**: `src/include/oracle_utils.hpp`, `src/include/oracle_debug_stats.hpp`, `src/oracle_debug_stats.cpp`
-- [ ] **Task 1.2: Preserve per-ATTACH settings, add call timeout & statement cache settings, and harden connection string resolution** -> [tasks/1.2.md](tasks/1.2.md)
+- [x] **Task 1.2: Preserve per-ATTACH settings, add call timeout & statement cache settings, and harden connection string resolution** -> [tasks/1.2.md](tasks/1.2.md)
   - **Objective**: Remediate `H-04` (resolver part), `H-05`, `M-02` (settings part), `M-03`, and `M-07` (resolver part) across `oracle_settings.*` and `oracle_connection_resolver.*`.
   - **Verification Strategy**: `tdd`
   - **Depends On**: `oci-connection-lifecycle:1.1`
   - **Files**: `src/include/oracle_settings.hpp`, `src/oracle_settings.cpp`, `src/include/oracle_connection_resolver.hpp`, `src/oracle_connection_resolver.cpp`
-- [ ] **Task 1.3: Support SEPS wallet credentials, TNS aliases without host, and strict secret parameter validation** -> [tasks/1.3.md](tasks/1.3.md)
+- [x] **Task 1.3: Support SEPS wallet credentials, TNS aliases without host, and strict secret parameter validation** -> [tasks/1.3.md](tasks/1.3.md)
   - **Objective**: Remediate `H-04` (secret part), `M-06`, and `L-03` (secret part) in `oracle_secret.hpp` and `oracle_secret.cpp`.
   - **Verification Strategy**: `tdd`
   - **Depends On**: `oci-connection-lifecycle:1.2`
   - **Files**: `src/include/oracle_secret.hpp`, `src/oracle_secret.cpp`
-- [ ] **Task 1.4: Fix OCIEnv lifetime, ScopedTnsAdmin concurrency, pooled session health checks, and session initialization** -> [tasks/1.4.md](tasks/1.4.md)
+- [x] **Task 1.4: Fix OCIEnv lifetime, ScopedTnsAdmin concurrency, pooled session health checks, and session initialization** -> [tasks/1.4.md](tasks/1.4.md)
   - **Objective**: Remediate `H-01`, `H-02`, `H-03`, `H-04` (manager part), `M-02` (manager part), `M-04`, `M-08` (password scrubbing), and `L-03` (manager part) in `oracle_connection_manager.*`.
   - **Verification Strategy**: `tdd`
   - **Depends On**: `oci-connection-lifecycle:1.1`, `oci-connection-lifecycle:1.2`, `oci-connection-lifecycle:1.3`
   - **Files**: `src/include/oracle_connection_manager.hpp`, `src/oracle_connection_manager.cpp`
-- [ ] **Task 1.5: Deduplicate OracleConnection::Query, remove double execution, detect truncation, and fix empty string binds** -> [tasks/1.5.md](tasks/1.5.md)
+- [x] **Task 1.5: Deduplicate OracleConnection::Query, remove double execution, detect truncation, and fix empty string binds** -> [tasks/1.5.md](tasks/1.5.md)
   - **Objective**: Remediate `H-06`, `M-05`, and `L-03` (connection part) in `oracle_connection.hpp` and `oracle_connection.cpp`.
   - **Verification Strategy**: `tdd`
   - **Depends On**: `oci-connection-lifecycle:1.4`
