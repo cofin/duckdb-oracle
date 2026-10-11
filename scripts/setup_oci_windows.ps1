@@ -65,7 +65,6 @@ $env:PATH = "$OCI_HOME;$env:PATH"
 if ($env:GITHUB_PATH) {
     Add-Content -Path $env:GITHUB_PATH -Value $OCI_HOME
     Add-Content -Path $env:GITHUB_ENV -Value "ORACLE_HOME=$OCI_HOME"
-    Add-Content -Path $env:GITHUB_ENV -Value "PATH=$OCI_HOME;$env:PATH"
 }
 
 # Save to env file for local persistence
