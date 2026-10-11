@@ -16,7 +16,6 @@ test_connection.test
 vcpkg
 
 # Gemini Agent System
-specs
 .gemini
 .claude
 AGENT.md
@@ -29,17 +28,10 @@ sdk.zip
 test/unit_tests/test_integration_temp.test
 test/integration_tests/temp_running_test.test
 test/integration_temp.test
-.agent/
-.agents/
-.beads/
-.beads
 .geminiignore
 .codex
 .cursor
 .opencode
 .cache/
 
-# Beads / Dolt files (added by bd init)
-.dolt/
 *.db
-.beads-credential-key
