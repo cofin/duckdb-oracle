@@ -7,6 +7,9 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -15,10 +18,7 @@ jobs:
   linux-build:
     name: Linux Build & Test
     runs-on: ubuntu-latest
-    env:
-      ORACLE_HOME: ${{ github.workspace }}/oracle_sdk/instantclient_23_6
-      LD_LIBRARY_PATH: ${{ github.workspace }}/oracle_sdk/instantclient_23_6
-    
+
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -44,18 +44,13 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y cmake
 
-    - name: Build Extension
+    - name: Run Integration Tests
       run: |
-        # We set ORACLE_HOME in env, CMake should pick it up
-        make release
+        # Builds release extension and runs full integration test suite with Oracle container
+        # CI environment variable is automatically set by GitHub Actions
+        make integration
 
     - name: Run Unit Tests
       run: |
-        # Run smoke tests that don't require Oracle connection
+        # Run unit tests that don't require an Oracle connection
         make test-unit
-
-    - name: Run Integration Tests
-      run: |
-        # Run full integration test suite with Oracle container
-        # CI environment variable is automatically set by GitHub Actions
-        make integration

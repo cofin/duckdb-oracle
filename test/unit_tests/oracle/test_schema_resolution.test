@@ -104,8 +104,3 @@ SELECT
     current_setting('oracle_metadata_result_limit')::INTEGER;
 ----
 true	true	TABLE,VIEW,SYNONYM,MATERIALIZED VIEW	10000
-
-# Note: Integration tests with real Oracle database connections are in:
-# - advanced_schema_resolution_integration.test (current schema detection)
-# - advanced_schema_resolution_priority.test (unqualified name resolution)
-# - advanced_schema_resolution_synonyms.test (synonym resolution in current schema)

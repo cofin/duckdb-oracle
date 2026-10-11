@@ -116,12 +116,17 @@ get_free_port() {
   local start_port="${1:-1521}"
   local end_port="${2:-1550}"
   
-  for ((port=start_port; port<=end_port; port++)); do
-    if ! nc -z localhost "$port" 2>/dev/null; then
-      echo "$port"
-      return 0
-    fi
-  done
+  if command -v nc >/dev/null 2>&1; then
+    for ((port=start_port; port<=end_port; port++)); do
+      if ! nc -z localhost "$port" 2>/dev/null; then
+        echo "$port"
+        return 0
+      fi
+    done
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1]); s.close()'
+    return 0
+  fi
   
   err "No free port found between $start_port and $end_port"
   return 1
@@ -262,21 +267,22 @@ main() {
   fi
   
   # Run integration tests from test/integration_tests directory
-  if [[ -d "test/integration_tests" && $(find test/integration_tests -name "*.test" | wc -l) -gt 0 ]]; then
-    echo "Running integration test suite from test/integration_tests/..."
-    # Run tests sequentially to avoid OCI connection/resource exhaustion issues
-    # This is slower but safer than letting unittest run them in parallel
-    find test/integration_tests -name "*.test" -print0 | while IFS= read -r -d '' test_file; do
+  local TEST_DIR="test/integration_tests"
+  if [[ -d "$TEST_DIR" && $(find "$TEST_DIR" -name "*.test" | wc -l) -gt 0 ]]; then
+    echo "Running integration test suite from ${TEST_DIR}/..."
+    # Run tests sequentially in deterministic sorted order to avoid OCI connection/resource exhaustion issues
+    while IFS= read -r -d '' test_file; do
       echo "Running test: ${test_file}"
       
-      # Create a temporary test file with Oracle connection placeholders replaced
-      sed -e "s|\${ORACLE_HOST}|${ORACLE_HOST}|g" \
-        -e "s|\${ORACLE_PORT}|${ORACLE_PORT}|g" \
-        -e "s|\${ORACLE_SERVICE}|${ORACLE_SERVICE}|g" \
-        -e "s|\${ORACLE_USER}|${ORACLE_USER}|g" \
-        -e "s|\${ORACLE_PASSWORD}|${ORACLE_PASSWORD}|g" \
-        -e "s|\${ORACLE_CONNECTION_STRING}|${ORACLE_CONNECTION_STRING}|g" \
-        "${test_file}" > "${INTEGRATION_TEMP_TEST_FILE}"
+      # Create a temporary test file with Oracle connection placeholders replaced via python3
+      python3 -c '
+import os, pathlib, sys
+src, dst = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+content = src.read_text(encoding="utf-8")
+for var in ("ORACLE_HOST", "ORACLE_PORT", "ORACLE_SERVICE", "ORACLE_USER", "ORACLE_PASSWORD", "ORACLE_CONNECTION_STRING"):
+    content = content.replace(f"${{{var}}}", os.environ.get(var, ""))
+dst.write_text(content, encoding="utf-8")
+' "${test_file}" "${INTEGRATION_TEMP_TEST_FILE}"
       
       if command -v timeout >/dev/null 2>&1; then
         timeout "${INTEGRATION_TEST_TIMEOUT}" ./build/release/test/unittest "${INTEGRATION_TEMP_TEST_FILE}"
@@ -285,7 +291,7 @@ main() {
       fi
       
       rm -f "${INTEGRATION_TEMP_TEST_FILE}"
-    done
+    done < <(find "$TEST_DIR" -name "*.test" -print0 | sort -z)
     echo "Integration tests completed successfully."
   else
     echo "No integration tests found in test/integration_tests/"

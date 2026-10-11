@@ -42,20 +42,20 @@ jobs:
           gh label create automated --color ededed --description "Opened by automation" --force
 
       - name: Install Dependencies
-        run: pip install requests semantic_version pyyaml uv
+        run: pip install requests semantic_version uv
 
       - name: Check for Updates
         id: check
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_CHECK_PRERELEASE: ${{ inputs.check_prerelease }}
         run: |
           # Create a python script to check versions
-          cat <<PYTHON_SCRIPT > "$RUNNER_TEMP/check_version.py"
+          cat <<'PYTHON_SCRIPT' > "$RUNNER_TEMP/check_version.py"
           import os
           import re
           import sys
           import requests
-          import yaml
           import semantic_version
 
           def get_current_version():
@@ -95,35 +95,48 @@ jobs:
               print("Could not determine current version")
               sys.exit(1)
               
-          latest = get_latest_duckdb_version(os.environ.get('INPUT_CHECK_PRERELEASE') == 'true')
+          include_prerelease = os.environ.get('INPUT_CHECK_PRERELEASE', 'false').lower() == 'true'
+          latest = get_latest_duckdb_version(include_prerelease)
           
           print(f"Current version: {current}")
           print(f"Latest version: {latest}")
           
-          if latest > semantic_version.Version(current):
-              with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
+              print(f"current_version={current}", file=fh)
+              if latest is not None and latest > semantic_version.Version(current):
                   print(f"new_version={latest}", file=fh)
-                  print(f"update_available=true", file=fh)
-          else:
-              with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
-                  print(f"update_available=false", file=fh)
           PYTHON_SCRIPT
           
           python "$RUNNER_TEMP/check_version.py"
+
+          NEW_VERSION=$(grep '^new_version=' "$GITHUB_OUTPUT" | tail -n 1 | cut -d= -f2 || true)
+          if [ -n "$NEW_VERSION" ]; then
+            OPEN_PR_COUNT=$(gh pr list --head "feat/duckdb-v${NEW_VERSION}" --state open --json number --jq 'length')
+            if [ "${OPEN_PR_COUNT:-0}" -gt 0 ]; then
+              echo "An open PR for feat/duckdb-v${NEW_VERSION} already exists. Skipping update."
+              echo "update_available=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "update_available=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "update_available=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Close Stale PRs
         if: steps.check.outputs.update_available == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_VERSION: ${{ steps.check.outputs.new_version }}
         run: |
-          # Find existing PRs with the 'duckdb-update' label
-          STALE_PRS=$(gh pr list --label "duckdb-update" --state open --json number,headRefName --jq '.[]')
+          # Find existing PRs with the 'duckdb-update' label, excluding the current target version branch
+          STALE_PRS=$(gh pr list --label "duckdb-update" --state open --json number,headRefName | jq -r --arg branch "feat/duckdb-v${NEW_VERSION}" '.[] | select(.headRefName != $branch) | .number')
           
-          if [ ! -z "$STALE_PRS" ]; then
+          if [ -n "$STALE_PRS" ]; then
             echo "Found stale PRs. Closing them..."
-            echo "$STALE_PRS" | jq -r '.number' | while read -r pr_number; do
+            echo "$STALE_PRS" | while read -r pr_number; do
+              [ -z "$pr_number" ] && continue
               echo "Closing PR #$pr_number"
-              gh pr close "$pr_number" --delete-branch --comment "Closing in favor of newer DuckDB version."
+              gh pr close "$pr_number" --delete-branch --comment "Closing in favor of newer DuckDB version v${NEW_VERSION}."
             done
           fi
 
@@ -132,6 +145,7 @@ jobs:
         id: update
         env:
           NEW_VERSION: ${{ steps.check.outputs.new_version }}
+          CURRENT_VERSION: ${{ steps.check.outputs.current_version }}
           # Use PAT for git operations involving workflow files
           GITHUB_TOKEN: ${{ secrets.WORKFLOW_UPDATE_TOKEN }}
         run: |
@@ -157,18 +171,19 @@ jobs:
           ./scripts/bump_duckdb_version.sh "v${NEW_VERSION}"
 
           git add -A
-          git commit -m "feat: Upgrade DuckDB to v${NEW_VERSION}"
+          git commit -m "chore(deps): upgrade DuckDB to v${NEW_VERSION}"
           
           # Force push to overwrite if it existed
           git push origin "$BRANCH_NAME" --force
           
-          echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
-          echo "branch_created=true" >> $GITHUB_OUTPUT
+          echo "branch_name=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
+          echo "branch_created=true" >> "$GITHUB_OUTPUT"
 
       - name: Create Pull Request
         if: steps.update.outputs.branch_created == 'true'
         env:
           NEW_VERSION: ${{ steps.check.outputs.new_version }}
+          CURRENT_VERSION: ${{ steps.check.outputs.current_version }}
           BRANCH_NAME: ${{ steps.update.outputs.branch_name }}
           # Use PAT for PR creation to ensure workflow file changes are accepted
           GITHUB_TOKEN: ${{ secrets.WORKFLOW_UPDATE_TOKEN }}
@@ -178,8 +193,8 @@ jobs:
           
           if [ -z "$EXISTING_PR" ]; then
             PR_URL=$(gh pr create \
-              --title "feat: Upgrade DuckDB to v${NEW_VERSION}" \
-              --body "This PR updates the DuckDB submodule and CI configuration to version v${NEW_VERSION}. \n\n This triggered a compatibility build. Please review the CI results." \
+              --title "chore(deps): upgrade DuckDB to v${NEW_VERSION}" \
+              --body "This PR updates the DuckDB submodule and CI configuration from v${CURRENT_VERSION} to version v${NEW_VERSION}. \n\n This triggered a compatibility build. Please review the CI results." \
               --base main \
               --head "$BRANCH_NAME" \
               --label "duckdb-update" \

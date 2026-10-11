@@ -26,11 +26,8 @@ struct OracleBindData : public FunctionData {
 	vector<string> column_names;
 	vector<LogicalType> original_types;
 	vector<string> original_names;
+	vector<string> converted_select_exprs;
 	OracleSettings settings;
-	std::shared_ptr<OracleConnectionHandle> conn_handle;
-
-	// Statement prepared in bind; executed in global scan state
-	std::shared_ptr<OCIStmt> stmt;
 
 	OracleBindData();
 
@@ -40,13 +37,16 @@ struct OracleBindData : public FunctionData {
 
 struct OracleScanState : public GlobalTableFunctionState {
 	std::shared_ptr<OracleConnectionHandle> conn_handle;
-	std::shared_ptr<OCIStmt> stmt;
-	OCIError *err = nullptr;
 	vector<vector<char>> buffers;
-	vector<OCIDefine *> defines;
 	vector<vector<sb2>> indicators;
 	vector<vector<ub2>> return_lens;
-	vector<idx_t> column_mapping; // Map output column index to buffer index
+	vector<OCIDefine *> defines;
+	std::shared_ptr<OCIStmt> stmt;
+	OCIError *err = nullptr;
+	vector<idx_t> column_mapping;
+	vector<idx_t> active_bind_cols;
+	vector<idx_t> output_to_active_idx;
+	string executed_query;
 	idx_t fetch_size = STANDARD_VECTOR_SIZE;
 	bool executed = false;
 	bool finished = false;
@@ -63,9 +63,9 @@ struct OracleScanState : public GlobalTableFunctionState {
 	}
 };
 
-unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, string connection_string, string query,
-                                            vector<LogicalType> &return_types, vector<string> &names,
-                                            OracleBindData *bind_data_ptr = nullptr,
+unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, const string &connection_string,
+                                            const string &query, vector<LogicalType> &return_types,
+                                            vector<string> &names, OracleBindData *bind_data_ptr = nullptr,
                                             OracleCatalogState *state = nullptr, bool reject_bare_identifier = false,
                                             const char *surface = "Oracle table function");
 

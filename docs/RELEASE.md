@@ -6,8 +6,8 @@ This document outlines how releases are created and deployed for the DuckDB Orac
 
 This project uses two independent version tracks:
 
-- **Extension version** (e.g., `v0.2.2`): Defined in `description.yml`. Used for git tags, GitHub Releases, and the runtime version reported by `duckdb_extensions()`.
-- **DuckDB version** (e.g., `v1.5.5`): The DuckDB version the extension is built against. Used for the GitHub Pages directory structure that DuckDB's extension loader expects.
+- **Extension version** (e.g., `v0.2.3`): Defined in `description.yml`. Used for git tags, GitHub Releases, and the runtime version reported by `duckdb_extensions()`.
+- **DuckDB version** (e.g., `v1.5.6`): The DuckDB version the extension is built against. Used for the GitHub Pages directory structure that DuckDB's extension loader expects.
 
 When a user runs `INSTALL oracle`, DuckDB fetches from:
 
@@ -41,11 +41,11 @@ Bump the version with the repository target, commit the synchronized files on a 
 ```bash
 make bump-version bump=patch
 git add .bumpversion.toml description.yml test/unit_tests/test_extension_metadata.test
-git commit -m "chore(release): bump extension to v0.2.2"
+git commit -m "chore(release): bump extension to v0.2.3"
 # Push the feature branch and open a PR targeting main.
 ```
 
-After the PR is merged, `auto-tag.yml` reads `description.yml`, creates `v0.2.2`, and the tag triggers `release-unsigned.yml`. Do not create the tag manually during the normal release flow.
+After the PR is merged, `auto-tag.yml` reads `description.yml`, creates `v0.2.3`, and the tag triggers `release-unsigned.yml`. Do not create the tag manually during the normal release flow.
 
 ### Manual Workflow Dispatch (Fallback)
 
@@ -54,14 +54,14 @@ If the automated flow fails, trigger a release manually:
 **GitHub CLI:**
 
 ```bash
-gh workflow run release-unsigned.yml -f version=v0.2.2
+gh workflow run release-unsigned.yml -f version=v0.2.3
 ```
 
 **GitHub UI:**
 
 1. Go to Actions > Release Extension.
 2. Click "Run workflow".
-3. Enter the version tag (e.g., `v0.2.2`).
+3. Enter the version tag (e.g., `v0.2.3`).
 
 ## DuckDB Version Updates
 

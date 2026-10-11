@@ -1,20 +1,20 @@
 #include "oracle_secret.hpp"
-#include "oracle_utils.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
-#include <cstdlib>
 #include <sys/stat.h>
-
-#ifdef _WIN32
-#include <direct.h>
-#define S_ISDIR(mode) (((mode)&_S_IFDIR) == _S_IFDIR)
-#endif
 
 namespace duckdb {
 
 namespace {
 static bool PathIsDirectory(const string &path) {
 	struct stat st {};
-	return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+	if (stat(path.c_str(), &st) != 0) {
+		return false;
+	}
+#ifdef _WIN32
+	return (st.st_mode & _S_IFDIR) == _S_IFDIR;
+#else
+	return S_ISDIR(st.st_mode);
+#endif
 }
 } // namespace
 
@@ -25,6 +25,7 @@ OracleSecretParameters ParseOracleSecret(const CreateSecretInput &input) {
 	auto host_lookup = input.options.find("host");
 	if (host_lookup != input.options.end()) {
 		params.host = host_lookup->second.ToString();
+		params.host_provided = true;
 	}
 
 	// Parse port (optional, default: 1521)
@@ -45,26 +46,25 @@ OracleSecretParameters ParseOracleSecret(const CreateSecretInput &input) {
 
 	auto database_lookup = input.options.find("database");
 	if (database_lookup != input.options.end()) {
-		params.database = database_lookup->second.ToString();
 		// DATABASE is an alias for SERVICE
 		if (params.service.empty()) {
-			params.service = params.database;
+			params.service = database_lookup->second.ToString();
 		}
 	}
 
-	// Parse user (required)
+	// Parse user (required unless wallet_path uses external password store)
 	auto user_lookup = input.options.find("user");
 	if (user_lookup != input.options.end()) {
 		params.user = user_lookup->second.ToString();
 	}
 
-	// Parse password (required)
+	// Parse password (required unless wallet_path uses external password store)
 	auto password_lookup = input.options.find("password");
 	if (password_lookup != input.options.end()) {
 		params.password = password_lookup->second.ToString();
 	}
 
-	// Parse wallet_path (optional, for future use)
+	// Parse wallet_path (optional)
 	auto wallet_lookup = input.options.find("wallet_path");
 	if (wallet_lookup != input.options.end()) {
 		params.wallet_path = wallet_lookup->second.ToString();
@@ -80,23 +80,34 @@ void ValidateOracleWalletPath(const string &wallet_path) {
 }
 
 void ValidateOracleSecret(const OracleSecretParameters &params) {
-	// Validate required parameters
-	if (params.user.empty()) {
-		throw InvalidInputException("Oracle secret requires USER parameter. "
-		                            "Example: CREATE SECRET (TYPE oracle, HOST 'localhost', PORT 1521, "
-		                            "SERVICE 'XEPDB1', USER 'scott', PASSWORD 'tiger')");
-	}
-
 	if (params.service.empty()) {
 		throw InvalidInputException("Oracle secret requires SERVICE or DATABASE parameter. "
 		                            "Example: CREATE SECRET (TYPE oracle, HOST 'localhost', PORT 1521, "
 		                            "SERVICE 'XEPDB1', USER 'scott', PASSWORD 'tiger')");
 	}
 
-	if (params.password.empty()) {
-		throw InvalidInputException("Oracle secret requires PASSWORD parameter. "
-		                            "Example: CREATE SECRET (TYPE oracle, HOST 'localhost', PORT 1521, "
-		                            "SERVICE 'XEPDB1', USER 'scott', PASSWORD 'tiger')");
+	if (params.wallet_path.empty()) {
+		if (params.user.empty()) {
+			throw InvalidInputException("Oracle secret requires USER parameter. "
+			                            "Example: CREATE SECRET (TYPE oracle, HOST 'localhost', PORT 1521, "
+			                            "SERVICE 'XEPDB1', USER 'scott', PASSWORD 'tiger')");
+		}
+		if (params.password.empty()) {
+			throw InvalidInputException("Oracle secret requires PASSWORD parameter. "
+			                            "Example: CREATE SECRET (TYPE oracle, HOST 'localhost', PORT 1521, "
+			                            "SERVICE 'XEPDB1', USER 'scott', PASSWORD 'tiger')");
+		}
+	} else if (params.user.empty() != params.password.empty()) {
+		throw InvalidInputException("Oracle WALLET_PATH secret requires either both USER and PASSWORD or neither (for "
+		                            "external password store)");
+	}
+
+	if (params.user.find('/') != string::npos) {
+		throw InvalidInputException("Oracle secret USER cannot contain '/'");
+	}
+
+	if ((params.wallet_path.empty() || params.host_provided) && params.host.empty()) {
+		throw InvalidInputException("Oracle secret HOST cannot be empty");
 	}
 
 	// Validate port range
@@ -113,9 +124,14 @@ string BuildConnectionStringFromSecret(const KeyValueSecret &secret) {
 	Value val;
 	if (secret.TryGetValue("host", val)) {
 		params.host = val.ToString();
+		params.host_provided = true;
 	}
 	if (secret.TryGetValue("port", val)) {
-		params.port = static_cast<idx_t>(val.GetValue<int64_t>());
+		auto port_val = val.GetValue<int64_t>();
+		if (port_val <= 0 || port_val > 65535) {
+			throw InvalidInputException("Oracle secret: PORT must be between 1 and 65535, got %lld", port_val);
+		}
+		params.port = static_cast<idx_t>(port_val);
 	}
 	if (secret.TryGetValue("service", val)) {
 		params.service = val.ToString();
@@ -135,16 +151,11 @@ string BuildConnectionStringFromSecret(const KeyValueSecret &secret) {
 	// Validate before building connection string
 	ValidateOracleSecret(params);
 
-	// Build Oracle EZConnect format: user/password@host:port/service
-	string connection_string = params.user;
-
-	if (!params.password.empty()) {
-		connection_string += "/" + params.password;
+	string creds = (params.user.empty() && params.password.empty()) ? "/" : (params.user + "/" + params.password);
+	if (!params.wallet_path.empty() && !params.host_provided) {
+		return creds + "@" + params.service;
 	}
-
-	connection_string += "@" + params.host + ":" + std::to_string(params.port) + "/" + params.service;
-
-	return connection_string;
+	return creds + "@" + params.host + ":" + std::to_string(params.port) + "/" + params.service;
 }
 
 string GetWalletPathFromSecret(const KeyValueSecret &secret) {
@@ -163,9 +174,11 @@ unique_ptr<BaseSecret> CreateOracleSecretFromConfig(ClientContext &context, Crea
 	// Create a KeyValueSecret to store the parameters
 	auto secret = make_uniq<KeyValueSecret>(input.scope, input.type, input.provider, input.name);
 
-	// Store all parameters in the secret
-	secret->secret_map["host"] = Value(params.host);
-	secret->secret_map["port"] = Value::BIGINT(params.port);
+	// Store parameters in the secret
+	if (params.host_provided || params.wallet_path.empty()) {
+		secret->secret_map["host"] = Value(params.host);
+	}
+	secret->secret_map["port"] = Value::BIGINT(static_cast<int64_t>(params.port));
 	secret->secret_map["service"] = Value(params.service);
 	secret->secret_map["user"] = Value(params.user);
 	secret->secret_map["password"] = Value(params.password);

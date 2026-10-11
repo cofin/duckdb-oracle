@@ -1,22 +1,59 @@
 # Changelog
 
-## [1.0.0] - 2025-11-24
+All notable changes to the DuckDB Oracle extension are documented in this file.
+
+## [0.2.3] - 2026-04-19
 
 ### Added
-- **Array Fetch**: Implemented `OCIDefineArrayOfStruct` streaming for high-performance data retrieval. Tunable via `oracle_array_size`.
-- **Connection Pooling**: Added `OracleConnectionManager` with `OCI_THREADED` support, session pooling, and automatic timeouts.
-- **Platform Support**: Verified support for Linux (AMD64/ARM64), macOS (ARM64), and Windows (AMD64).
-- **Schema Resolution**: Automatic detection of `CURRENT_SCHEMA` context and smart resolution of unqualified table names.
-- **Lazy Loading**: Scalable metadata enumeration for databases with 100K+ tables.
-- **Secret Management**: Integration with DuckDB Secret Manager (`CREATE SECRET ... TYPE oracle`).
-- **Wallet Support**: `oracle_attach_wallet()` for TNS/Wallet-based connections (e.g., Autonomous DB).
-- **Integration Testing**: Robust container-based integration test suite (`scripts/test_integration.sh`) with CI/CD support.
+- **DuckDB v1.5.6 Support**: Upgraded target DuckDB version and CI release matrix to `v1.5.6`.
+- **Configurable OCI Timeouts & Statement Cache**: Added `oracle_call_timeout_ms` (default `30000`, `0`–`3600000`) and `oracle_stmt_cache_size` (default `20`, `0`–`1024`) settings.
+- **Flashback Query Support**: Added `as_of_scn` (`UBIGINT`) and `as_of_timestamp` (`VARCHAR`) named parameters on `oracle_scan`.
+- **Spatial Integration Coverage**: Added `SDO_GEOMETRY` WKT point/polygon read/write round-trip integration tests (`test/integration_tests/oracle/spatial.test`).
 
 ### Fixed
-- **Cross-Platform Builds**: Fixed Makefile and CMake logic for macOS (`libaio` exclusion) and Windows (`oci.lib` linking).
-- **Stability**: Resolved memory corruption issues ("invalid next size") in buffer allocation.
-- **Correctness**: Fixed `ORA-01007` errors caused by duplicate column definitions in pushdown scenarios.
-- **CI Noise**: Suppressed verbose container logs in integration tests by default.
+- **OCI Handle & Environment Lifetime**: Held `std::shared_ptr<OCIEnv>` inside `OracleContext` so cached connections and statements never outlive `OCIEnv`.
+- **CLOB & Vector Truncation**: Bound `VECTOR_SERIALIZE(... RETURNING CLOB)` and sized `CLOB`/`BLOB`/special-type fetch buffers to `65535` bytes (`NumericLimits<ub2>::Maximum()`) with explicit truncation error detection (`ind == -2 || ind > 0`).
+- **Projection Pushdown & Scan Re-preparation**: Deferred projected SQL generation and `OCIStmtPrepare` to `OracleInitGlobal` after optimizer column projection and filter pushdown complete, and configured session-level `OCI_ATTR_STMTCACHESIZE`.
+- **Per-ATTACH Catalog State Isolation**: Moved schema/table metadata caches and connection keys from process-global singletons into per-`OracleCatalog` state.
+- **Write Pipeline Correctness**: Fixed `SQLT_ODT` `DATE` binding in `INSERT`, `> 65535`-byte string overflow checks, `NUMBER(p, s)` precision/scale mapping, and statement-atomic rollback on error.
+
+## [0.2.2] - 2026-04-12
 
 ### Changed
-- **Architecture**: Replaced shared `OCILogon` with explicit `OCIServerAttach`/`OCISessionBegin` lifecycle management.
+- **DuckDB v1.5.5 Support**: Upgraded DuckDB submodule and release targets to `v1.5.5`.
+- **Oracle Instant Client 23.26**: Updated Linux, macOS, and Windows setup scripts to Oracle Instant Client `23.26`.
+
+## [0.2.1] - 2026-03-28
+
+### Added
+- **Partition Metadata & Pruning Pushdown**: Added partition discovery (`ALL_PART_TABLES`, `ALL_TAB_PARTITIONS`) and partition-key-aware filter pushdown.
+- **Vector & Spatial Write Support**: Enabled `INSERT INTO` for Oracle 23ai `VECTOR` and `MDSYS.SDO_GEOMETRY` columns.
+
+## [0.2.0] - 2026-03-10
+
+### Added
+- **Attached Table Writes (`INSERT INTO`)**: Implemented `PhysicalOracleInsert` sink operator with OCI bulk array binding (`OCIStmtExecute`).
+- **DuckDB SecretManager Integration**: Added `CREATE SECRET ... (TYPE oracle, ...)` with `WALLET_PATH` support for Oracle Wallet / mTLS connections.
+
+## [0.1.3] - 2026-02-15
+
+### Added
+- **Lazy Schema & Object Discovery**: Added `oracle_lazy_schema_loading`, `oracle_use_current_schema`, `oracle_metadata_object_types`, and `oracle_metadata_result_limit` settings for large enterprise schemas.
+- **Views, Materialized Views & Synonyms**: Exposed `VIEW`, `MATERIALIZED VIEW`, and `SYNONYM` objects in attached catalogs via `ALL_OBJECTS`.
+
+## [0.1.2] - 2026-01-25
+
+### Added
+- **Connection Pooling**: Added `OracleConnectionManager` with `OCI_THREADED | OCI_OBJECT` environment management, session pooling (`oracle_connection_cache`, `oracle_connection_limit`), and cache clearing (`oracle_clear_cache()`).
+- **Cross-Platform Builds**: Added build and CI support for Linux (`linux_amd64`, `linux_arm64`), macOS (`osx_arm64`), and Windows (`windows_amd64`).
+
+## [0.1.1] - 2026-01-10
+
+### Added
+- **Array Fetch**: Implemented `OCIDefineByPos` batch fetching tunable via `oracle_array_size`, `oracle_prefetch_rows`, and `oracle_prefetch_memory`.
+- **Filter & Projection Pushdown**: Added `WHERE` predicate and column projection pushdown for `oracle_scan` and attached tables.
+
+## [0.1.0] - 2025-12-20
+
+### Added
+- Initial release of the DuckDB Oracle extension with `ATTACH ... (TYPE oracle)`, `oracle_scan`, `oracle_query`, and `oracle_execute`.

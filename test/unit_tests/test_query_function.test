@@ -13,3 +13,16 @@ statement error
 SELECT * FROM oracle_query('dummy/dummy@//localhost:1521/dummy', 'SELECT 1 FROM DUAL');
 ----
 IO Error
+
+# Reject empty or whitespace-only SQL in oracle_query
+statement error
+SELECT * FROM oracle_query('dummy/dummy@//localhost:1521/dummy', '   ;  ');
+----
+cannot be empty
+
+# Reject specifying both as_of_scn and as_of_timestamp in oracle_scan
+statement error
+SELECT * FROM oracle_scan('dummy/dummy@//localhost:1521/dummy', 'HR', 'EMPLOYEES', as_of_scn = 100, as_of_timestamp = '2026-01-01 00:00:00');
+----
+cannot specify both as_of_scn and as_of_timestamp
+

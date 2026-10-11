@@ -2,24 +2,40 @@
 
 #include "duckdb/common/exception.hpp"
 #include <oci.h>
+#include <cstdlib>
 #include <memory>
 #include <string>
 
-#ifdef _WIN32
-#include <cstdlib>
-static inline int setenv(const char *name, const char *value, int overwrite) {
-	if (!overwrite && getenv(name) != nullptr) {
-		return 0;
-	}
-	return _putenv_s(name, value);
-}
-
-static inline int unsetenv(const char *name) {
-	return _putenv_s(name, "");
-}
-#endif
-
 namespace duckdb {
+
+inline int SetOracleEnvVar(const char *name, const char *value) {
+#ifdef _WIN32
+	std::string entry = std::string(name ? name : "") + "=" + std::string(value ? value : "");
+	return _putenv(entry.c_str());
+#else
+	return setenv(name, value ? value : "", 1);
+#endif
+}
+
+inline int UnsetOracleEnvVar(const char *name) {
+#ifdef _WIN32
+	return _putenv_s(name, "");
+#else
+	return unsetenv(name);
+#endif
+}
+
+inline std::string RedactOracleConnectionString(const std::string &conn_str) {
+	auto slash_pos = conn_str.find('/');
+	auto at_pos = conn_str.rfind('@');
+	if (slash_pos == std::string::npos || at_pos == std::string::npos || slash_pos >= at_pos) {
+		return conn_str;
+	}
+	if (slash_pos == 0 && at_pos == 1) {
+		return conn_str;
+	}
+	return conn_str.substr(0, slash_pos + 1) + "***" + conn_str.substr(at_pos);
+}
 
 struct OCIHandleFreeDeleter {
 	OCIHandleFreeDeleter() : handle_type(0) {
@@ -59,29 +75,32 @@ struct OCIDescriptorFreeDeleter {
 template <class T>
 using OCIDescriptorPtr = std::unique_ptr<T, OCIDescriptorFreeDeleter>;
 
-inline void CheckOCIError(sword status, OCIError *errhp, const std::string &msg) {
-	if (status == OCI_SUCCESS || status == OCI_SUCCESS_WITH_INFO) {
-		return;
-	}
-	text errbuf[512];
-	sb4 errcode = 0;
-	if (errhp) {
-		OCIErrorGet(reinterpret_cast<dvoid *>(errhp), (ub4)1, nullptr, &errcode, errbuf, (ub4)sizeof(errbuf),
-		            OCI_HTYPE_ERROR);
-		throw IOException(msg + ": " + std::string(reinterpret_cast<char *>(errbuf)));
-	}
-	throw IOException(msg + ": (No Error Handle)");
-}
-
 inline bool OCIErrorCodeMatches(OCIError *errhp, sb4 expected_errcode) {
 	if (!errhp) {
 		return false;
 	}
-	text errbuf[512];
+	text errbuf[512] = {0};
 	sb4 errcode = 0;
-	OCIErrorGet(reinterpret_cast<dvoid *>(errhp), (ub4)1, nullptr, &errcode, errbuf, (ub4)sizeof(errbuf),
-	            OCI_HTYPE_ERROR);
-	return errcode == expected_errcode;
+	sword rc = OCIErrorGet(reinterpret_cast<dvoid *>(errhp), (ub4)1, nullptr, &errcode, errbuf, (ub4)sizeof(errbuf),
+	                       OCI_HTYPE_ERROR);
+	return rc == OCI_SUCCESS && errcode == expected_errcode;
+}
+
+inline void CheckOCIError(sword status, OCIError *errhp, const std::string &msg) {
+	if (status != OCI_SUCCESS && status != OCI_SUCCESS_WITH_INFO) {
+		if (status == OCI_INVALID_HANDLE || !errhp) {
+			throw IOException("%s: Invalid OCI handle (status=%d)", msg, static_cast<int>(status));
+		}
+		text errbuf[512] = {0};
+		sb4 errcode = 0;
+		sword get_rc = OCIErrorGet(reinterpret_cast<dvoid *>(errhp), (ub4)1, nullptr, &errcode, errbuf,
+		                           (ub4)sizeof(errbuf), OCI_HTYPE_ERROR);
+		if (get_rc != OCI_SUCCESS) {
+			throw IOException("%s: OCI call failed with status %d (OCIErrorGet returned %d)", msg,
+			                  static_cast<int>(status), static_cast<int>(get_rc));
+		}
+		throw IOException("%s: %s (Error code: %d)", msg, std::string(reinterpret_cast<char *>(errbuf)), errcode);
+	}
 }
 
 inline void CheckOCIOptionalAttributeORA24315(sword status, OCIError *errhp, const std::string &msg) {
@@ -109,6 +128,17 @@ inline std::shared_ptr<OCIStmt> AllocateSharedOCIStatement(OCIEnv *envhp, OCIErr
 			OCIHandleFree(ptr, OCI_HTYPE_STMT);
 		}
 	});
+}
+
+inline bool HasDuplicateColumnNames(const vector<string> &names) {
+	for (idx_t i = 0; i < names.size(); i++) {
+		for (idx_t j = i + 1; j < names.size(); j++) {
+			if (names[i] == names[j]) {
+				return true;
+			}
+		}
+	}
+	return false;
 }
 
 } // namespace duckdb

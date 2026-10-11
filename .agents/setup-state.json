@@ -1,0 +1,26 @@
+{
+  "setup_status": "complete",
+  "last_successful_step": "complete",
+  "resume_operation": null,
+  "migration_report": null,
+  "migration_approved_at": null,
+  "project_type": "brownfield",
+  "workflow_revision": "flow-template-v2",
+  "workflow_preferences": {
+    "ignore_policy": "shared",
+    "canonical_commands": {
+      "setup": "make configure_ci",
+      "test_focused": "make test-unit",
+      "test_integration": "make integration",
+      "lint": "make lint",
+      "build": "make release"
+    }
+  },
+  "project_install": {
+    "mode": "skip",
+    "active_host": "antigravity",
+    "canonical_contract_hash": null,
+    "managed_files": []
+  },
+  "timestamp": "2026-10-11T16:33:00Z"
+}

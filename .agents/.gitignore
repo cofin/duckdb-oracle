@@ -1,0 +1,12 @@
+# Transient crash-recovery journals
+/transactions/
+/tasks/transactions/
+bundles/specs/*/tasks/transactions/
+
+# Ephemeral scratch files
+/scratch/
+/tasks/
+
+# Local caches and backups
+*.tmp
+*.bak

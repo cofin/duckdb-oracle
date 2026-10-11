@@ -13,7 +13,7 @@ We support the latest stable release of the extension.
 
 If you discover a security vulnerability in this project, please do **not** open a public issue.
 
-Instead, please email the maintainers directly or create a private security advisory if GitHub's private reporting feature is enabled for this repository.
+Instead, please report it privately via GitHub Security Advisories at <https://github.com/cofin/duckdb-oracle/security/advisories/new>.
 
 We will assess the issue and respond within 48 hours.
 

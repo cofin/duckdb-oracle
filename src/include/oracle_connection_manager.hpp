@@ -16,13 +16,12 @@
 namespace duckdb {
 
 struct OracleContext {
+	std::shared_ptr<OCIEnv> env_owner;
 	OCIEnv *envhp = nullptr;
 	OCIError *errhp = nullptr;
 	OCISvcCtx *svchp = nullptr;
 	OCIServer *srvhp = nullptr;
 	OCISession *authp = nullptr;
-	bool connected = false;
-	bool owns_env = false;
 
 	~OracleContext();
 };
@@ -85,14 +84,10 @@ public:
 
 	void Clear();
 
-	OCIEnv *Env() {
-		return envhp;
-	}
-
 private:
 	std::mutex manager_mutex;
 	std::unordered_map<OraclePoolKey, std::shared_ptr<OracleConnectionPool>, OraclePoolKeyHash> pools;
-	OCIEnv *envhp = nullptr;
+	std::shared_ptr<OCIEnv> env;
 	idx_t generation = 0;
 
 	OracleConnectionManager();

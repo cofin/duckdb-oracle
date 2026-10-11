@@ -20,26 +20,3 @@ GRANT CREATE SYNONYM TO duckdb_test;
 GRANT CREATE TYPE TO duckdb_test;
 GRANT CREATE PROCEDURE TO duckdb_test;
 ALTER USER duckdb_test QUOTA UNLIMITED ON USERS;
-
--- Create some test tables
-BEGIN
-    EXECUTE IMMEDIATE 'DROP TABLE duckdb_test.test_types PURGE';
-EXCEPTION
-    WHEN OTHERS THEN
-        IF SQLCODE != -942 THEN
-            RAISE;
-        END IF;
-END;
-/
-
-CREATE TABLE duckdb_test.test_types (
-    id NUMBER PRIMARY KEY,
-    val_varchar VARCHAR2(100),
-    val_number NUMBER(10,2),
-    val_date DATE,
-    val_timestamp TIMESTAMP,
-    val_vector VECTOR(3, FLOAT32)
-);
-
-INSERT INTO duckdb_test.test_types VALUES (1, 'test', 123.45, SYSDATE, SYSTIMESTAMP, '[1.1, 2.2, 3.3]');
-COMMIT;

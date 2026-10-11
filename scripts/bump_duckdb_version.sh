@@ -111,16 +111,30 @@ fi
 # --- 3. pipeline version refs (precise; only ci-tools @v and *_version:) -----
 note "$PIPELINE (6 version refs ${CUR} -> ${TAG})"
 if [ "$DRY_RUN" -eq 0 ]; then
-  sed -i -E "s#(extension-ci-tools/\.github/workflows/[^@]+)@v[0-9.]+#\1@${TAG}#g" "$PIPELINE"
-  sed -i -E "s#(duckdb_version:[[:space:]]*)v[0-9.]+#\1${TAG}#g" "$PIPELINE"
-  sed -i -E "s#(ci_tools_version:[[:space:]]*)v[0-9.]+#\1${TAG}#g" "$PIPELINE"
+  python3 -c '
+import pathlib, re, sys
+path = pathlib.Path(sys.argv[1])
+tag = sys.argv[2]
+text = path.read_text(encoding="utf-8")
+text = re.sub(r"(extension-ci-tools/\.github/workflows/[^@\s]+)@v[0-9.]+", rf"\g<1>@{tag}", text)
+text = re.sub(r"(duckdb_version:\s*)v[0-9.]+", rf"\g<1>{tag}", text)
+text = re.sub(r"(ci_tools_version:\s*)v[0-9.]+", rf"\g<1>{tag}", text)
+path.write_text(text, encoding="utf-8")
+' "$PIPELINE" "$TAG"
 fi
 echo "    (updated @v refs, duckdb_version, ci_tools_version)"
 
 # --- 4. README supported-version banner --------------------------------------
 note "$README (supported DuckDB version ${CUR} -> ${TAG})"
 if [ "$DRY_RUN" -eq 0 ]; then
-  sed -i -E "s#(\*\*Supported DuckDB version\*\*: )v[0-9.]+#\1${TAG}#" "$README"
+  python3 -c '
+import pathlib, re, sys
+path = pathlib.Path(sys.argv[1])
+tag = sys.argv[2]
+text = path.read_text(encoding="utf-8")
+text = re.sub(r"(\*\*Supported DuckDB version\*\*:\s*)v[0-9.]+", rf"\g<1>{tag}", text)
+path.write_text(text, encoding="utf-8")
+' "$README" "$TAG"
 fi
 echo "    (updated supported-version banner)"
 
@@ -143,7 +157,7 @@ fi
 note "$COMPAT (+ row: ${TAG} / v${EXT_VER})"
 DATE=$(date -u +%Y-%m-%d)
 ROW="| ${TAG} | v${EXT_VER} | ✅ Compatible | ${DATE} | DuckDB ${TAG} upgrade |"
-if [ "$DRY_RUN" -eq 0 ] && ! grep -qF "| ${TAG} |" "$COMPAT"; then
+if [ "$DRY_RUN" -eq 0 ] && ! grep -Eq "^\|[[:space:]]*${TAG}[[:space:]]*\|" "$COMPAT"; then
   printf '%s\n' "$ROW" >> "$COMPAT"
 fi
 echo "    ${ROW}"

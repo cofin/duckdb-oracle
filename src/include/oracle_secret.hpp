@@ -11,11 +11,11 @@ namespace duckdb {
 struct OracleSecretParameters {
 	string host = "localhost";
 	idx_t port = 1521;
-	string service;     // Oracle service name (required)
-	string database;    // Alias for service
-	string user;        // Oracle username (required)
-	string password;    // Oracle password (required)
+	string service;     // Oracle service name or TNS alias (required)
+	string user;        // Oracle username (required unless wallet_path uses external password store)
+	string password;    // Oracle password (required unless wallet_path uses external password store)
 	string wallet_path; // Optional: path to Oracle Wallet
+	bool host_provided = false;
 };
 
 //! Parse Oracle secret from CreateSecretInput

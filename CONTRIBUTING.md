@@ -16,7 +16,7 @@ Thank you for your interest in contributing to the DuckDB Oracle Extension! We w
 
 1.  **Clone the repository**:
     ```bash
-    git clone --recursive https://github.com/duckdb/duckdb-oracle.git
+    git clone --recursive https://github.com/cofin/duckdb-oracle.git
     cd duckdb-oracle
     ```
 
@@ -29,7 +29,7 @@ Thank you for your interest in contributing to the DuckDB Oracle Extension! We w
 
 3.  **Export Environment Variables**:
     ```bash
-    export ORACLE_HOME=$(pwd)/oracle_sdk/instantclient_23_6 # Adjust version as needed
+    export ORACLE_HOME=$(pwd)/oracle_sdk/instantclient_23_26 # Adjust version as needed
     export LD_LIBRARY_PATH=$ORACLE_HOME:$LD_LIBRARY_PATH    # Linux
     export DYLD_LIBRARY_PATH=$ORACLE_HOME:$DYLD_LIBRARY_PATH # macOS
     ```
@@ -45,7 +45,7 @@ We use DuckDB's SQL test runner.
 
 1.  **Run Unit Tests** (Smoke tests, no Oracle DB required):
     ```bash
-    make test
+    make test-unit
     ```
 
 2.  **Run Integration Tests** (Requires Docker/Podman):

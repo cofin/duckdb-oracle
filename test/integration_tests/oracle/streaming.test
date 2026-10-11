@@ -144,22 +144,16 @@ SELECT
 ----
 1	1	1
 
-statement ok
-SET oracle_array_size = 0;
-
 statement error
-SELECT oracle_execute(oracle_streaming_conn(), 'SELECT 1 FROM dual');
+SET oracle_array_size = 0;
 ----
 oracle_array_size
 
 statement ok
 SET oracle_array_size = 3;
 
-statement ok
-SET oracle_prefetch_rows = 1000001;
-
 statement error
-SELECT oracle_execute(oracle_streaming_conn(), 'SELECT 1 FROM dual');
+SET oracle_prefetch_rows = 1000001;
 ----
 oracle_prefetch_rows
 

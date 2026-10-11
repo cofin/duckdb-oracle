@@ -1,0 +1,185 @@
+# name: test/unit_tests/oracle/test_tuning_settings.test
+# description: Test Oracle tuning settings, defaults, and range validation
+# group: [oracle]
+
+require oracle
+
+# Verify default tuning setting values
+query IIIIIIIII
+SELECT
+    current_setting('oracle_enable_pushdown')::BOOLEAN,
+    current_setting('oracle_prefetch_rows')::BIGINT,
+    current_setting('oracle_prefetch_memory')::BIGINT,
+    current_setting('oracle_array_size')::BIGINT,
+    current_setting('oracle_enable_spatial_types')::BOOLEAN,
+    current_setting('oracle_connection_cache')::BOOLEAN,
+    current_setting('oracle_connection_limit')::BIGINT,
+    current_setting('oracle_call_timeout_ms')::BIGINT,
+    current_setting('oracle_stmt_cache_size')::BIGINT;
+----
+true	1024	0	256	true	true	8	30000	20
+
+# Test oracle_prefetch_rows valid values and range validation
+statement ok
+SET oracle_prefetch_rows = 1;
+
+query I
+SELECT current_setting('oracle_prefetch_rows')::BIGINT;
+----
+1
+
+statement ok
+SET oracle_prefetch_rows = 1000000;
+
+query I
+SELECT current_setting('oracle_prefetch_rows')::BIGINT;
+----
+1000000
+
+statement error
+SET oracle_prefetch_rows = 0;
+----
+Invalid Input Error
+
+statement error
+SET oracle_prefetch_rows = 1000001;
+----
+Invalid Input Error
+
+statement error
+SET oracle_prefetch_rows = 18446744073709551615;
+----
+Error
+
+statement ok
+SET oracle_prefetch_rows = 1024;
+
+# Test oracle_prefetch_memory valid values and range validation
+statement ok
+SET oracle_prefetch_memory = 0;
+
+statement ok
+SET oracle_prefetch_memory = 1048576;
+
+query I
+SELECT current_setting('oracle_prefetch_memory')::BIGINT;
+----
+1048576
+
+statement error
+SET oracle_prefetch_memory = 1073741825;
+----
+Invalid Input Error
+
+statement ok
+SET oracle_prefetch_memory = 0;
+
+# Test oracle_array_size valid values and range validation
+statement ok
+SET oracle_array_size = 1;
+
+statement ok
+SET oracle_array_size = 2048;
+
+query I
+SELECT current_setting('oracle_array_size')::BIGINT;
+----
+2048
+
+statement error
+SET oracle_array_size = 0;
+----
+Invalid Input Error
+
+statement error
+SET oracle_array_size = 2049;
+----
+Invalid Input Error
+
+statement ok
+SET oracle_array_size = 256;
+
+# Test oracle_connection_limit valid values and range validation
+statement ok
+SET oracle_connection_limit = 1;
+
+statement ok
+SET oracle_connection_limit = 1024;
+
+query I
+SELECT current_setting('oracle_connection_limit')::BIGINT;
+----
+1024
+
+statement error
+SET oracle_connection_limit = 0;
+----
+Invalid Input Error
+
+statement error
+SET oracle_connection_limit = 1025;
+----
+Invalid Input Error
+
+statement ok
+SET oracle_connection_limit = 8;
+
+# Test oracle_call_timeout_ms default, valid values (0 and 60000), and out-of-range (3600001)
+query I
+SELECT current_setting('oracle_call_timeout_ms')::BIGINT;
+----
+30000
+
+statement ok
+SET oracle_call_timeout_ms = 0;
+
+query I
+SELECT current_setting('oracle_call_timeout_ms')::BIGINT;
+----
+0
+
+statement ok
+SET oracle_call_timeout_ms = 60000;
+
+query I
+SELECT current_setting('oracle_call_timeout_ms')::BIGINT;
+----
+60000
+
+statement error
+SET oracle_call_timeout_ms = 3600001;
+----
+Invalid Input Error
+
+statement ok
+SET oracle_call_timeout_ms = 30000;
+
+# Test oracle_stmt_cache_size default, valid values (0 and 100), and out-of-range (1025)
+query I
+SELECT current_setting('oracle_stmt_cache_size')::BIGINT;
+----
+20
+
+statement ok
+SET oracle_stmt_cache_size = 0;
+
+query I
+SELECT current_setting('oracle_stmt_cache_size')::BIGINT;
+----
+0
+
+statement ok
+SET oracle_stmt_cache_size = 100;
+
+query I
+SELECT current_setting('oracle_stmt_cache_size')::BIGINT;
+----
+100
+
+statement error
+SET oracle_stmt_cache_size = 1025;
+----
+Invalid Input Error
+
+statement ok
+SET oracle_stmt_cache_size = 20;

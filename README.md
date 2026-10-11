@@ -8,20 +8,32 @@ This extension allows DuckDB to directly read from and write to Oracle databases
 
 **1. Install & Load**
 
-> **Note**: This extension is currently **unsigned**. You must start DuckDB with `-unsigned` to load it.
+> **Note**: This extension is currently **unsigned** and links dynamically against the Oracle Instant Client (OCI) runtime library (`oci.dll` on Windows, `libclntsh.so` on Linux, `libclntsh.dylib` on macOS). Because it depends on Oracle's proprietary runtime libraries, it is distributed via this repository rather than the DuckDB Community Extensions repository (`FROM community`). You must install **Oracle Instant Client Basic** (`23ai` or `19c`/`21c`), ensure its directory is on your library search path (`PATH` on Windows, `LD_LIBRARY_PATH` or `ldconfig` on Linux, `DYLD_LIBRARY_PATH` on macOS), and start DuckDB with `-unsigned`.
 >
-> **Supported DuckDB version**: v1.5.5 — see [Compatibility Matrix](docs/COMPATIBILITY.md) for details.
+> **Supported DuckDB version**: v1.5.6 — see [Compatibility Matrix](docs/COMPATIBILITY.md) for details.
 
 ```bash
 ./duckdb -unsigned
 ```
 
+**Option A: Remote Custom Extension Repository**
+
 ```sql
--- Configure custom repository (hosted on GitHub Pages)
+-- Configure custom repository (GitHub Pages or raw gh-pages fallback)
 SET custom_extension_repository = 'https://cofin.github.io/duckdb-oracle';
+-- Or: SET custom_extension_repository = 'https://raw.githubusercontent.com/cofin/duckdb-oracle/gh-pages';
 
 -- Install and load
 INSTALL oracle;
+LOAD oracle;
+```
+
+**Option B: Offline / Local Installation (GitHub Releases)**
+
+DuckDB derives both the installed extension name and the C++ initialization entrypoint (`oracle_duckdb_cpp_init`) from the filename stem before the first `.`. When installing from a local file downloaded from [GitHub Releases](https://github.com/cofin/duckdb-oracle/releases), extract `oracle.duckdb_extension` from the platform archive (`oracle-windows_amd64.zip`, `oracle-linux_amd64.tar.gz`, `oracle-linux_arm64.tar.gz`, or `oracle-osx_arm64.tar.gz`)—or rename `oracle-<platform>.duckdb_extension` to `oracle.duckdb_extension`—before running `INSTALL`:
+
+```sql
+INSTALL 'C:/path/to/oracle.duckdb_extension';
 LOAD oracle;
 ```
 
@@ -84,7 +96,25 @@ Set these variables to tune performance or behavior:
 | `oracle_enable_spatial_types` | `true` | Map `SDO_GEOMETRY` to `GEOMETRY` type. |
 | `oracle_connection_cache` | `true` | Enable connection pooling. |
 | `oracle_connection_limit` | `8` | Maximum cached Oracle sessions per connection key; validated between 1 and 1024. |
+| `oracle_call_timeout_ms` | `30000` | Per-round-trip OCI call timeout in milliseconds; `0` disables timeout, max 3,600,000 (1 hour). |
+| `oracle_stmt_cache_size` | `20` | Per-session OCI statement cache size; `0` disables caching, max 1024. |
+| `oracle_lazy_schema_loading` | `true` | Lazily load schema and object metadata on demand. |
+| `oracle_use_current_schema` | `true` | Auto-detect `CURRENT_SCHEMA` and resolve unqualified object names. |
+| `oracle_metadata_object_types` | `'TABLE,VIEW,SYNONYM,MATERIALIZED VIEW'` | Comma-separated Oracle object types discovered via `ALL_OBJECTS`. |
 | `oracle_metadata_result_limit` | `10000` | Bounded metadata discovery limit; `0` uses the bounded default. |
+
+### Views, Materialized Views, and Synonyms
+
+Tables, views, materialized views, and synonyms are automatically discovered via `ALL_OBJECTS` (controlled by `oracle_metadata_object_types`) and can be queried directly from an attached catalog via `SELECT * FROM ora.<view_name>` (or `SELECT * FROM ora.<schema>.<view_name>`) as well as through `oracle_query()`.
+
+### Flashback Queries (`as_of_scn` / `as_of_timestamp`)
+
+`oracle_scan` accepts optional `as_of_scn` (`UBIGINT`) or `as_of_timestamp` (`VARCHAR`) named parameters (mutually exclusive) to execute Oracle Flashback queries:
+
+```sql
+SELECT * FROM oracle_scan('ora', 'HR', 'EMPLOYEES', as_of_scn := 12345678);
+SELECT * FROM oracle_scan('ora', 'HR', 'EMPLOYEES', as_of_timestamp := '2026-01-01 00:00:00');
+```
 
 ## Authentication
 
@@ -117,13 +147,13 @@ ATTACH '' AS ora (TYPE oracle, SECRET adb_prod);
 
 ```bash
 # Set ORACLE_HOME to your Instant Client directory
-export ORACLE_HOME=/opt/oracle/instantclient_23_6
+export ORACLE_HOME=/opt/oracle/instantclient_23_26
 
 # Build
 make
 
 # Run Tests (Unit + Integration)
-make test
+make test-unit
 make integration
 ```
 
@@ -132,4 +162,4 @@ make integration
 - **Transaction Management**: Oracle writes are statement-atomic: a successful DuckDB write statement commits to
   Oracle, a failed write statement rolls back its Oracle work, and Oracle writes are rejected inside explicit DuckDB
   transaction blocks until true cross-system transaction integration exists.
-- **Views**: Visible only if present in `ALL_TABLES` (standard behavior).
+- **Object Discovery**: Tables, views, materialized views, and synonyms are discovered via `ALL_OBJECTS` according to `oracle_metadata_object_types` (default `'TABLE,VIEW,SYNONYM,MATERIALIZED VIEW'`) and can be queried directly as `ora.<object_name>` or via `oracle_query()`.

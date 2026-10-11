@@ -1,8 +1,12 @@
 #include "oracle_pushdown.hpp"
 #include "oracle_table_function.hpp"
+#include "oracle_utils.hpp"
 #include "duckdb/common/limits.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/date.hpp"
+#include "duckdb/common/types/interval.hpp"
+#include "duckdb/common/types/time.hpp"
+#include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
@@ -11,6 +15,7 @@
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression/bound_operator_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
+#include <cmath>
 #include <cstdio>
 
 namespace duckdb {
@@ -23,7 +28,7 @@ static string OracleQuoteStringLiteral(const string &value) {
 	return "'" + StringUtil::Replace(value, "'", "''") + "'";
 }
 
-static bool ConstantToSQL(Expression &expr, string &out_sql) {
+static bool ConstantToSQL(Expression &expr, string &out_sql, const string &oracle_type_name = "") {
 	if (expr.type != ExpressionType::VALUE_CONSTANT) {
 		return false;
 	}
@@ -34,14 +39,34 @@ static bool ConstantToSQL(Expression &expr, string &out_sql) {
 	}
 
 	switch (c.value.type().id()) {
-	case LogicalTypeId::VARCHAR:
-		out_sql = OracleQuoteStringLiteral(c.value.GetValue<string>());
+	case LogicalTypeId::VARCHAR: {
+		auto str_val = StringValue::Get(c.value);
+		if (str_val.empty()) {
+			return false;
+		}
+		out_sql = OracleQuoteStringLiteral(str_val);
 		return true;
+	}
 	case LogicalTypeId::DATE: {
-		auto date = c.value.GetValue<date_t>();
+		auto date = DateValue::Get(c.value);
+		if (!Date::IsFinite(date)) {
+			return false;
+		}
 		int32_t year, month, day;
 		Date::Convert(date, year, month, day);
+		if (year < 1 || year > 9999) {
+			return false;
+		}
 		out_sql = "DATE " + OracleQuoteStringLiteral(Date::Format(year, month, day));
+		return true;
+	}
+	case LogicalTypeId::FLOAT:
+	case LogicalTypeId::DOUBLE: {
+		auto dval = c.value.GetValue<double>();
+		if (!std::isfinite(dval)) {
+			return false;
+		}
+		out_sql = c.value.ToString();
 		return true;
 	}
 	case LogicalTypeId::TINYINT:
@@ -52,20 +77,39 @@ static bool ConstantToSQL(Expression &expr, string &out_sql) {
 	case LogicalTypeId::USMALLINT:
 	case LogicalTypeId::UINTEGER:
 	case LogicalTypeId::UBIGINT:
-	case LogicalTypeId::FLOAT:
-	case LogicalTypeId::DOUBLE:
 	case LogicalTypeId::DECIMAL:
 		out_sql = c.value.ToString();
 		return true;
 	case LogicalTypeId::TIMESTAMP_TZ:
-		// Oracle TIMESTAMP WITH TIME ZONE needs timezone-aware literal syntax.
 		return false;
 	case LogicalTypeId::TIMESTAMP:
 	case LogicalTypeId::TIMESTAMP_SEC:
 	case LogicalTypeId::TIMESTAMP_MS:
-	case LogicalTypeId::TIMESTAMP_NS:
-		out_sql = "TIMESTAMP " + OracleQuoteStringLiteral(c.value.ToString());
+	case LogicalTypeId::TIMESTAMP_NS: {
+		auto ts_value =
+		    c.value.type().id() == LogicalTypeId::TIMESTAMP ? c.value : c.value.DefaultCastAs(LogicalType::TIMESTAMP);
+		auto ts_val = TimestampValue::Get(ts_value);
+		if (!Timestamp::IsFinite(ts_val)) {
+			return false;
+		}
+		date_t date_part;
+		dtime_t time_part;
+		Timestamp::Convert(ts_val, date_part, time_part);
+		int32_t year, month, day;
+		Date::Convert(date_part, year, month, day);
+		if (year < 1 || year > 9999) {
+			return false;
+		}
+		if (StringUtil::Upper(oracle_type_name) == "DATE" && (time_part.micros % Interval::MICROS_PER_SEC == 0)) {
+			int32_t hour, min, sec, micros;
+			Time::Convert(time_part, hour, min, sec, micros);
+			out_sql = StringUtil::Format("TO_DATE('%s %02d:%02d:%02d', 'YYYY-MM-DD HH24:MI:SS')",
+			                             Date::Format(year, month, day).c_str(), hour, min, sec);
+			return true;
+		}
+		out_sql = "TIMESTAMP " + OracleQuoteStringLiteral(Timestamp::ToString(ts_val));
 		return true;
+	}
 	default:
 		return false;
 	}
@@ -105,17 +149,6 @@ static idx_t ResolveBoundRefColumnIndex(idx_t ref_idx, const vector<ColumnIndex>
 	return ref_idx;
 }
 
-static bool HasDuplicateColumnNames(const vector<string> &names) {
-	for (idx_t i = 0; i < names.size(); i++) {
-		for (idx_t j = i + 1; j < names.size(); j++) {
-			if (names[i] == names[j]) {
-				return true;
-			}
-		}
-	}
-	return false;
-}
-
 static bool IsColumnRef(Expression *expr) {
 	return expr->type == ExpressionType::BOUND_REF || expr->type == ExpressionType::BOUND_COLUMN_REF;
 }
@@ -140,18 +173,14 @@ static bool CanPushdownLike(idx_t col_idx, const vector<string> &oracle_type_nam
 		return false;
 	}
 	auto oracle_type = StringUtil::Upper(oracle_type_names[col_idx]);
-	return oracle_type == "VARCHAR2" || oracle_type == "NVARCHAR2" || oracle_type == "VARCHAR";
+	return oracle_type == "VARCHAR2" || oracle_type == "NVARCHAR2" || oracle_type == "VARCHAR" ||
+	       oracle_type == "OCI CHARACTER";
 }
 
 struct OraclePushdownPlan {
 	vector<unique_ptr<Expression>> residual_expressions;
 	vector<string> clauses;
 	vector<string> projected_names;
-	vector<LogicalType> projected_types;
-	vector<ub2> projected_oci_types;
-	vector<ub4> projected_oci_sizes;
-	vector<string> projected_oracle_type_names;
-	vector<bool> projected_pushdown_eligible;
 	string query;
 
 	string WhereSQL() const {
@@ -170,19 +199,24 @@ struct OraclePushdownPlan {
 		return StringUtil::Join(select_list, ", ");
 	}
 
-	void BuildQuery(const OracleBindData &bind) {
-		auto projected_select_list = ProjectedSelectListSQL();
+	string BuildQuery(const OracleBindData &bind) {
 		if (!bind.direct_from_sql.empty() && !bind.direct_select_list_sql.empty()) {
-			auto inner_query = "SELECT " + bind.direct_select_list_sql + " FROM " + bind.direct_from_sql + WhereSQL();
-			query = "SELECT " + projected_select_list + " FROM (" + inner_query + ")";
-			return;
+			query = "SELECT " + bind.direct_select_list_sql + " FROM " + bind.direct_from_sql + WhereSQL();
+			return query;
 		}
-		query = "SELECT " + projected_select_list + " FROM (" + bind.base_query + ")" + WhereSQL();
+		if (clauses.empty()) {
+			query = bind.base_query;
+			return query;
+		}
+		auto projected_select_list = ProjectedSelectListSQL();
+		query = "SELECT " + projected_select_list + " FROM (\n" + bind.base_query + "\n)" + WhereSQL();
+		return query;
 	}
 };
 
 static bool TryExtractComparison(Expression &expr, const vector<string> &names, const vector<ColumnIndex> &column_ids,
-                                 const vector<bool> &pushdown_eligible, string &out_clause) {
+                                 const vector<bool> &pushdown_eligible, const vector<string> &oracle_type_names,
+                                 string &out_clause) {
 	if (expr.type != ExpressionType::COMPARE_EQUAL && expr.type != ExpressionType::COMPARE_LESSTHAN &&
 	    expr.type != ExpressionType::COMPARE_GREATERTHAN && expr.type != ExpressionType::COMPARE_LESSTHANOREQUALTO &&
 	    expr.type != ExpressionType::COMPARE_GREATERTHANOREQUALTO && expr.type != ExpressionType::COMPARE_NOTEQUAL) {
@@ -236,8 +270,9 @@ static bool TryExtractComparison(Expression &expr, const vector<string> &names, 
 		}
 		return false;
 	}
+	auto oracle_type = col_idx < oracle_type_names.size() ? oracle_type_names[col_idx] : string();
 	string const_sql;
-	if (!ConstantToSQL(*const_expr, const_sql)) {
+	if (!ConstantToSQL(*const_expr, const_sql, oracle_type)) {
 		if (getenv("ORACLE_DEBUG")) {
 			fprintf(stderr, "[oracle] TryExtractComparison: ConstantToSQL failed\n");
 		}
@@ -276,7 +311,8 @@ static bool TryExtractComparison(Expression &expr, const vector<string> &names, 
 }
 
 static bool TryExtractBetween(Expression &expr, const vector<string> &names, const vector<ColumnIndex> &column_ids,
-                              const vector<bool> &pushdown_eligible, string &out_clause) {
+                              const vector<bool> &pushdown_eligible, const vector<string> &oracle_type_names,
+                              string &out_clause) {
 	if (expr.GetExpressionClass() != ExpressionClass::BOUND_BETWEEN) {
 		return false;
 	}
@@ -289,9 +325,11 @@ static bool TryExtractBetween(Expression &expr, const vector<string> &names, con
 	if (!CanPushdownColumn(col_idx, names, pushdown_eligible)) {
 		return false;
 	}
+	auto oracle_type = col_idx < oracle_type_names.size() ? oracle_type_names[col_idx] : string();
 	string lower_sql;
 	string upper_sql;
-	if (!ConstantToSQL(*between.lower, lower_sql) || !ConstantToSQL(*between.upper, upper_sql)) {
+	if (!ConstantToSQL(*between.lower, lower_sql, oracle_type) ||
+	    !ConstantToSQL(*between.upper, upper_sql, oracle_type)) {
 		return false;
 	}
 	if (lower_sql == "NULL" || upper_sql == "NULL") {
@@ -336,7 +374,8 @@ static bool TryExtractIsNull(Expression &expr, const vector<string> &names, cons
 }
 
 static bool TryExtractIn(Expression &expr, const vector<string> &names, const vector<ColumnIndex> &column_ids,
-                         const vector<bool> &pushdown_eligible, string &out_clause) {
+                         const vector<bool> &pushdown_eligible, const vector<string> &oracle_type_names,
+                         string &out_clause) {
 	if (expr.type != ExpressionType::COMPARE_IN) {
 		return false;
 	}
@@ -348,6 +387,7 @@ static bool TryExtractIn(Expression &expr, const vector<string> &names, const ve
 	if (!CanPushdownColumn(col_idx, names, pushdown_eligible)) {
 		return false;
 	}
+	auto oracle_type = col_idx < oracle_type_names.size() ? oracle_type_names[col_idx] : string();
 	vector<string> constants;
 	constants.reserve(op.children.size() - 1);
 	for (idx_t i = 1; i < op.children.size(); i++) {
@@ -355,7 +395,7 @@ static bool TryExtractIn(Expression &expr, const vector<string> &names, const ve
 			return false;
 		}
 		string constant_sql;
-		if (!ConstantToSQL(*op.children[i], constant_sql) || constant_sql == "NULL") {
+		if (!ConstantToSQL(*op.children[i], constant_sql, oracle_type) || constant_sql == "NULL") {
 			return false;
 		}
 		constants.push_back(std::move(constant_sql));
@@ -408,7 +448,7 @@ static bool TryExtractLike(Expression &expr, const vector<string> &names, const 
 	if ((function_name == "prefix" || function_name == "suffix" || function_name == "contains") &&
 	    fn.children.size() == 2) {
 		string pattern;
-		if (!StringConstantValue(*fn.children[1], pattern)) {
+		if (!StringConstantValue(*fn.children[1], pattern) || pattern.empty()) {
 			return false;
 		}
 		auto escaped = EscapeOracleLikePattern(pattern);
@@ -455,10 +495,13 @@ void OraclePushdownComplexFilter(ClientContext &, LogicalGet &get, FunctionData 
 	plan.clauses = bind.pushdown_clauses;
 	for (auto &expr : expressions) {
 		string clause;
-		if (TryExtractComparison(*expr, bind.column_names, get.GetColumnIds(), bind.pushdown_eligible, clause) ||
-		    TryExtractBetween(*expr, bind.column_names, get.GetColumnIds(), bind.pushdown_eligible, clause) ||
+		if (TryExtractComparison(*expr, bind.column_names, get.GetColumnIds(), bind.pushdown_eligible,
+		                         bind.oracle_type_names, clause) ||
+		    TryExtractBetween(*expr, bind.column_names, get.GetColumnIds(), bind.pushdown_eligible,
+		                      bind.oracle_type_names, clause) ||
 		    TryExtractIsNull(*expr, bind.column_names, get.GetColumnIds(), bind.pushdown_eligible, clause) ||
-		    TryExtractIn(*expr, bind.column_names, get.GetColumnIds(), bind.pushdown_eligible, clause) ||
+		    TryExtractIn(*expr, bind.column_names, get.GetColumnIds(), bind.pushdown_eligible, bind.oracle_type_names,
+		                 clause) ||
 		    TryExtractLike(*expr, bind.column_names, get.GetColumnIds(), bind.pushdown_eligible, bind.oracle_type_names,
 		                   clause)) {
 			if (bind.settings.debug_show_queries || getenv("ORACLE_DEBUG")) {
@@ -474,53 +517,8 @@ void OraclePushdownComplexFilter(ClientContext &, LogicalGet &get, FunctionData 
 	}
 
 	plan.projected_names = bind.original_names;
-	plan.projected_types = bind.original_types;
-	plan.projected_oci_types = bind.oci_types;
-	plan.projected_oci_sizes = bind.oci_sizes;
-	plan.projected_oracle_type_names = bind.oracle_type_names;
-	plan.projected_pushdown_eligible = bind.pushdown_eligible;
-
-	if (!get.projection_ids.empty()) {
-		plan.projected_names.clear();
-		plan.projected_types.clear();
-		plan.projected_oci_types.clear();
-		plan.projected_oci_sizes.clear();
-		plan.projected_oracle_type_names.clear();
-		plan.projected_pushdown_eligible.clear();
-		plan.projected_names.reserve(get.projection_ids.size());
-		plan.projected_types.reserve(get.projection_ids.size());
-		plan.projected_oracle_type_names.reserve(get.projection_ids.size());
-		plan.projected_pushdown_eligible.reserve(get.projection_ids.size());
-		for (auto idx : get.projection_ids) {
-			if (idx >= bind.original_names.size()) {
-				continue;
-			}
-			plan.projected_names.push_back(bind.original_names[idx]);
-			plan.projected_types.push_back(bind.original_types[idx]);
-			plan.projected_oci_types.push_back(bind.oci_types[idx]);
-			plan.projected_oci_sizes.push_back(bind.oci_sizes[idx]);
-			if (idx < bind.oracle_type_names.size()) {
-				plan.projected_oracle_type_names.push_back(bind.oracle_type_names[idx]);
-			} else {
-				plan.projected_oracle_type_names.push_back("unknown Oracle type");
-			}
-			plan.projected_pushdown_eligible.push_back(idx < bind.pushdown_eligible.size() &&
-			                                           bind.pushdown_eligible[idx]);
-		}
-		get.names = plan.projected_names;
-		get.returned_types = plan.projected_types;
-	}
-
-	plan.BuildQuery(bind);
-
-	bind.column_names = plan.projected_names;
-	bind.oci_types = plan.projected_oci_types;
-	bind.oci_sizes = plan.projected_oci_sizes;
-	bind.oracle_type_names = plan.projected_oracle_type_names;
-	bind.pushdown_eligible = plan.projected_pushdown_eligible;
 	bind.pushdown_clauses = plan.clauses;
-
-	bind.query = plan.query;
+	bind.query = plan.BuildQuery(bind);
 	if (bind.settings.debug_show_queries) {
 		fprintf(stderr, "[oracle] pushdown query: %s\n", bind.query.c_str());
 	}

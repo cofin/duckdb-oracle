@@ -4,9 +4,6 @@ set -e
 # Oracle Instant Client Version (full client, not Basic Lite)
 OCI_VER_MAJOR=23
 OCI_VER_FULL=23.26.2.0.0
-# Base URL for Oracle Instant Client. Oracle can publish the same version under
-# different archive folders per architecture, so keep this architecture-specific.
-LATEST_BASE_URL="https://download.oracle.com/otn_software/linux/instantclient"
 
 # Detect architecture
 ARCH=$(uname -m)
@@ -35,13 +32,9 @@ download_instant_client_zip() {
     local package_name="$1"
     local destination="$2"
     local versioned_name="instantclient-${package_name}-${OCI_ARCH}-${OCI_VER_FULL}.zip"
-    local latest_name="instantclient-${package_name}-${OCI_ARCH}.zip"
 
-    for base_url in "$BASE_URL" "$FALLBACK_BASE_URL" "$LATEST_BASE_URL"; do
+    for base_url in "$BASE_URL" "$FALLBACK_BASE_URL"; do
         local url="${base_url}/${versioned_name}"
-        if [ "$base_url" = "$LATEST_BASE_URL" ]; then
-            url="${base_url}/${latest_name}"
-        fi
 
         echo "Trying ${url}..."
         rm -f "$destination"
@@ -92,7 +85,7 @@ if [ "$SKIP_DOWNLOAD" -eq 0 ]; then
     unzip -oq "$INSTALL_DIR/basic.zip" -d "$INSTALL_DIR"
     unzip -oq "$INSTALL_DIR/sdk.zip" -d "$INSTALL_DIR"
 
-    # The zip extracts to a folder like 'instantclient_23_6'
+    # The zip extracts to a folder like 'instantclient_23_26'
     OCI_HOME=$(find "$INSTALL_DIR" -maxdepth 1 -name "instantclient_*" | head -n 1)
     echo "Oracle Home installed at: $OCI_HOME"
     
@@ -158,13 +151,13 @@ fi
 
 # Export for subsequent steps (callers should `source` this script if they want env vars in-shell)
 export ORACLE_HOME="$OCI_HOME"
-export LD_LIBRARY_PATH="$OCI_HOME:${LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="${OCI_HOME}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 # For GitHub Actions: add to PATH and environment
-if [ -n "$GITHUB_PATH" ]; then
+if [ -n "${GITHUB_PATH:-}" ]; then
     echo "$OCI_HOME" >> "$GITHUB_PATH"
     echo "ORACLE_HOME=$OCI_HOME" >> "$GITHUB_ENV"
-    echo "LD_LIBRARY_PATH=$OCI_HOME:\$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
+    echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
 fi
 
 # For local use: save to env file

@@ -25,3 +25,22 @@ To enable the `duckdb-update-check.yml` workflow to automatically create branche
 ### Why is this needed?
 
 The default `GITHUB_TOKEN` used by Actions does not have permission to modify files within the `.github/workflows/` directory. This security restriction prevents workflows from maliciously altering other workflows. However, for our version update bot to work (which updates `main-distribution-pipeline.yml`), we need these elevated permissions.
+
+## GitHub Pages Configuration (Custom Extension Repository)
+
+The `release-unsigned.yml` workflow publishes compressed DuckDB extension binaries (`v<duckdb_version>/<platform>/oracle.duckdb_extension.gz`) and a `.nojekyll` marker to the `gh-pages` branch.
+
+To serve the custom extension repository at `https://cofin.github.io/duckdb-oracle`:
+
+1. Go to repository **Settings > Pages**.
+2. Under **Build and deployment > Source**, select **Deploy from a branch**.
+3. Select branch **`gh-pages`** and folder **`/ (root)`**, then click **Save**.
+
+Users can also install directly from the `gh-pages` branch tree without GitHub Pages enabled by setting:
+
+```sql
+SET custom_extension_repository = 'https://raw.githubusercontent.com/cofin/duckdb-oracle/gh-pages';
+INSTALL oracle;
+LOAD oracle;
+```
+

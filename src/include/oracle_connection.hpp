@@ -27,12 +27,6 @@ public:
 	//! Execute a metadata query with positional string bind values and return all rows as strings.
 	OracleResult QueryWithStringBinds(const std::string &query, const std::vector<std::string> &bind_values);
 
-	//! Commit the current transaction
-	void Commit();
-
-	//! Rollback the current transaction
-	void Rollback();
-
 private:
 	std::shared_ptr<OracleConnectionHandle> conn_handle;
 };

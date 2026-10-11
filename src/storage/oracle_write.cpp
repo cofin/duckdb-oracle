@@ -1,11 +1,13 @@
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/common/types/time.hpp"
 #include "duckdb/common/types/date.hpp"
+#include "duckdb/common/limits.hpp"
 #include "oracle_write.hpp"
 #include "oracle_connection.hpp"
 #include "oracle_debug_stats.hpp"
 #include "oracle_utils.hpp"
 #include "oracle_connection_manager.hpp"
+#include "oracle_type_conversion.hpp"
 #include "oracle_type_registry.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -73,28 +75,48 @@ static void ResolveOracleWriteTargetMetadata(OracleWriteBindData &data) {
 
 	const string best_owner = query_res.rows[0][0];
 	const string best_table_name = query_res.rows[0][1];
+
+	bool has_vector = false;
+	for (auto &row : query_res.rows) {
+		if (row.size() >= 4 && row[0] == best_owner && row[1] == best_table_name) {
+			auto upper_dt = StringUtil::Upper(row[3]);
+			if (upper_dt == "VECTOR" || StringUtil::StartsWith(upper_dt, "VECTOR(")) {
+				has_vector = true;
+				break;
+			}
+		}
+	}
+
+	std::unordered_map<string, string> vec_type_map;
+	if (has_vector) {
+		try {
+			auto vec_res =
+			    temp_conn.QueryWithStringBinds("SELECT column_name, vector_dimension_count, vector_data_format "
+			                                   "FROM all_vec_columns "
+			                                   "WHERE (owner = :1 OR owner = UPPER(:2)) "
+			                                   "AND (table_name = :3 OR table_name = UPPER(:4))",
+			                                   {best_owner, best_owner, best_table_name, best_table_name});
+			for (auto &vrow : vec_res.rows) {
+				if (vrow.size() < 3 || vrow[0].empty()) {
+					continue;
+				}
+				auto col_upper = StringUtil::Upper(vrow[0]);
+				auto dim_str = vrow[1];
+				StringUtil::Trim(dim_str);
+				auto fmt_str = StringUtil::Upper(vrow[2]);
+				StringUtil::Trim(fmt_str);
+				if (!dim_str.empty() || !fmt_str.empty()) {
+					vec_type_map[col_upper] =
+					    StringUtil::Format("VECTOR(%s, %s)", dim_str.empty() ? "*" : dim_str.c_str(),
+					                       fmt_str.empty() ? "*" : fmt_str.c_str());
+				}
+			}
+		} catch (...) {
+		}
+	}
+
 	std::unordered_map<string, OracleTypeMetadata> col_type_map;
 	std::unordered_map<string, string> col_name_map;
-	auto parse_idx = [](const string &s) -> idx_t {
-		if (s.empty()) {
-			return 0;
-		}
-		try {
-			return static_cast<idx_t>(std::stoll(s));
-		} catch (...) {
-			return 0;
-		}
-	};
-	auto parse_int = [](const string &s) -> int32_t {
-		if (s.empty()) {
-			return 0;
-		}
-		try {
-			return static_cast<int32_t>(std::stoll(s));
-		} catch (...) {
-			return 0;
-		}
-	};
 
 	for (auto &row : query_res.rows) {
 		if (row.size() < 10) {
@@ -106,20 +128,37 @@ static void ResolveOracleWriteTargetMetadata(OracleWriteBindData &data) {
 		if (owner != best_owner || table != best_table_name) {
 			continue;
 		}
+		auto col_upper = StringUtil::Upper(col);
+		string data_type = row[3];
+		if (StringUtil::Upper(data_type) == "VECTOR") {
+			auto vec_it = vec_type_map.find(col_upper);
+			if (vec_it != vec_type_map.end()) {
+				data_type = vec_it->second;
+			}
+		}
+
+		idx_t precision = 0;
+		TryParseOracleMetadataIndex(row[5], precision);
+		int32_t scale = 0;
+		bool has_scale = TryParseOracleMetadataInt(row[6], scale);
+		idx_t data_length = 0;
+		TryParseOracleMetadataIndex(row[7], data_length);
+		idx_t char_length = 0;
+		TryParseOracleMetadataIndex(row[9], char_length);
+
 		OracleTypeMetadata metadata;
 		metadata.schema_name = owner;
 		metadata.table_name = table;
 		metadata.column_name = col;
-		metadata.oracle_data_type = row[3];
+		metadata.oracle_data_type = data_type;
 		metadata.type_owner = row[4];
-		metadata.precision = parse_idx(row[5]);
-		metadata.scale = parse_int(row[6]);
-		metadata.has_scale = !row[6].empty();
-		metadata.data_length = parse_idx(row[7]);
+		metadata.precision = precision;
+		metadata.scale = scale;
+		metadata.has_scale = has_scale;
+		metadata.data_length = data_length;
 		metadata.char_used = row[8] == "C";
-		metadata.char_length = parse_idx(row[9]);
+		metadata.char_length = char_length;
 		col_type_map[col] = metadata;
-		auto col_upper = StringUtil::Upper(col);
 		if (!col_name_map.count(col_upper)) {
 			col_name_map[col_upper] = col;
 		} else {
@@ -207,11 +246,11 @@ static idx_t ParseOracleVectorDimension(const string &oracle_type) {
 	if (dimension.empty() || dimension == "*") {
 		return 0;
 	}
-	try {
-		return static_cast<idx_t>(std::stoull(dimension));
-	} catch (...) {
+	idx_t parsed_dim = 0;
+	if (!TryParseOracleMetadataIndex(dimension, parsed_dim)) {
 		return 0;
 	}
+	return parsed_dim;
 }
 
 static string OracleVectorErrorPrefix(const string &column_name, const string &oracle_type) {
@@ -226,29 +265,6 @@ static void ValidateOracleVectorTargetFormat(const string &column_name, const st
 	if (StringUtil::Contains(type, "INT8") || StringUtil::Contains(type, "BINARY")) {
 		throw InvalidInputException("%s: VECTOR INT8 and BINARY target formats are not supported yet",
 		                            OracleVectorErrorPrefix(column_name, oracle_type).c_str());
-	}
-}
-
-static double ParseOracleVectorElement(const string &value, const string &full_value, const string &column_name,
-                                       const string &oracle_type) {
-	try {
-		size_t parsed = 0;
-		auto result = std::stod(value, &parsed);
-		if (parsed != value.size()) {
-			throw InvalidInputException("%s: expected numeric vector element. Value: \"%s\"",
-			                            OracleVectorErrorPrefix(column_name, oracle_type).c_str(), full_value.c_str());
-		}
-		if (!std::isfinite(result)) {
-			throw InvalidInputException("%s: NaN and Infinity are not supported for VECTOR writes. Value: \"%s\"",
-			                            OracleVectorErrorPrefix(column_name, oracle_type).c_str(), full_value.c_str());
-		}
-		return result;
-	} catch (const InvalidInputException &) {
-		throw;
-	} catch (const std::exception &ex) {
-		throw InvalidInputException("%s: expected numeric vector element: %s. Value: \"%s\"",
-		                            OracleVectorErrorPrefix(column_name, oracle_type).c_str(), ex.what(),
-		                            full_value.c_str());
 	}
 }
 
@@ -279,29 +295,21 @@ static void ValidateOracleVectorDimension(const vector<double> &values, const st
 
 static string NormalizeOracleVectorString(const string &input, const string &column_name, const string &oracle_type) {
 	ValidateOracleVectorTargetFormat(column_name, oracle_type);
-	auto value = input;
-	StringUtil::Trim(value);
-	if (value.size() < 2 || value.front() != '[' || value.back() != ']') {
-		throw InvalidInputException("%s: expected bracketed vector literal. Value: \"%s\"",
-		                            OracleVectorErrorPrefix(column_name, oracle_type).c_str(), input.c_str());
+	auto expected_dimension = ParseOracleVectorDimension(oracle_type);
+	auto element_type =
+	    StringUtil::Contains(StringUtil::Upper(oracle_type), "FLOAT64") ? LogicalType::DOUBLE : LogicalType::FLOAT;
+	vector<Value> element_values;
+	try {
+		ParseOracleVectorElements(input, element_type, expected_dimension, element_values);
+	} catch (const std::exception &ex) {
+		throw InvalidInputException("%s: %s. Value: \"%s\"", OracleVectorErrorPrefix(column_name, oracle_type).c_str(),
+		                            ex.what(), input.c_str());
 	}
-
-	auto body = value.substr(1, value.size() - 2);
-	StringUtil::Trim(body);
 	vector<double> values;
-	if (!body.empty()) {
-		auto parts = StringUtil::Split(body, ',');
-		values.reserve(parts.size());
-		for (auto &part : parts) {
-			StringUtil::Trim(part);
-			if (part.empty()) {
-				throw InvalidInputException("%s: empty vector element. Value: \"%s\"",
-				                            OracleVectorErrorPrefix(column_name, oracle_type).c_str(), input.c_str());
-			}
-			values.push_back(ParseOracleVectorElement(part, input, column_name, oracle_type));
-		}
+	values.reserve(element_values.size());
+	for (auto &elem : element_values) {
+		values.push_back(elem.GetValue<double>());
 	}
-	ValidateOracleVectorDimension(values, column_name, oracle_type);
 	return FormatOracleVector(values);
 }
 
@@ -388,8 +396,6 @@ static string BuildOracleWriteInsertSQL(const OracleWriteBindData &data) {
 	return sql;
 }
 
-//--- Global State ---
-
 OracleWriteGlobalState::OracleWriteGlobalState(std::shared_ptr<OracleConnectionHandle> conn, const string &query,
                                                idx_t max_batch_size_p)
     : connection(std::move(conn)), max_batch_size(max_batch_size_p) {
@@ -425,7 +431,6 @@ void OracleWriteGlobalState::RollbackUncommitted() noexcept {
 unique_ptr<OracleWriteGlobalState> OracleWriteInitGlobal(ClientContext &context, OracleWriteBindData &data) {
 	RejectOracleWriteInExplicitTransaction(context);
 
-	// Acquire connection
 	auto conn = OracleConnectionManager::Instance().Acquire(data.connection_string, data.wallet_path, data.settings);
 
 	auto sql = BuildOracleWriteInsertSQL(data);
@@ -438,20 +443,9 @@ unique_ptr<OracleWriteGlobalState> OracleWriteInitGlobal(ClientContext &context,
 	return make_uniq<OracleWriteGlobalState>(conn, sql, OracleEffectiveArraySize(data.settings));
 }
 
-//--- Local State ---
-
-OracleWriteLocalState::OracleWriteLocalState() {
-}
-
-OracleWriteLocalState::~OracleWriteLocalState() {
-}
-
-//--- Sink ---
-
 void OracleWriteSink(ExecutionContext &context, OracleWriteBindData &data, OracleWriteGlobalState &gstate,
-                     OracleWriteLocalState &lstate, DataChunk &input) {
+                     DataChunk &input) {
 	RejectOracleWriteInExplicitTransaction(context.client);
-	(void)lstate;
 	try {
 		gstate.Sink(input, data.column_names, data.oracle_types, data.bind_types);
 	} catch (...) {
@@ -467,8 +461,9 @@ void OracleWriteGlobalState::Sink(DataChunk &chunk, const vector<string> &column
 	if (count == 0) {
 		return;
 	}
-	// Determine max sizes for buffer allocation
+
 	vector<size_t> required_sizes(chunk.ColumnCount(), 4096);
+	vector<vector<string>> converted_strings(chunk.ColumnCount());
 
 	for (idx_t col_idx = 0; col_idx < chunk.ColumnCount(); col_idx++) {
 		if (chunk.data[col_idx].GetVectorType() != VectorType::FLAT_VECTOR) {
@@ -479,39 +474,45 @@ void OracleWriteGlobalState::Sink(DataChunk &chunk, const vector<string> &column
 		required_sizes[col_idx] = OracleWriteInitialBufferSize(bind_type);
 		if (bind_type != SQLT_INT && bind_type != SQLT_BDOUBLE && bind_type != SQLT_ODT) {
 			auto &validity = FlatVector::Validity(chunk.data[col_idx]);
+			auto &col_strings = converted_strings[col_idx];
+			col_strings.resize(count);
 			size_t max_len = 0;
+			auto column_name = col_idx < column_names.size() ? column_names[col_idx] : "";
+			auto oracle_type = col_idx < oracle_types.size() ? oracle_types[col_idx] : "";
 
 			for (idx_t i = 0; i < count; i++) {
 				if (validity.RowIsValid(i)) {
-					auto column_name = col_idx < column_names.size() ? column_names[col_idx] : "";
-					auto oracle_type = col_idx < oracle_types.size() ? oracle_types[col_idx] : "";
 					auto s = OracleWriteValueToString(chunk.data[col_idx].GetValue(i), column_name, oracle_type);
+					if (s.size() > NumericLimits<ub2>::Maximum()) {
+						auto len_str = std::to_string(s.size());
+						throw InvalidInputException("Oracle write value for column '%s' exceeds maximum OCI bind "
+						                            "length of 65535 bytes (%s bytes)",
+						                            column_name.c_str(), len_str.c_str());
+					}
 					if (s.size() > max_len) {
 						max_len = s.size();
 					}
+					col_strings[i] = std::move(s);
 				}
 			}
 
 			if (max_len > required_sizes[col_idx]) {
-				required_sizes[col_idx] = max_len + 32;
+				size_t padded = (max_len + 32 + 3) & ~size_t(3);
+				required_sizes[col_idx] = MinValue<size_t>(MaxValue<size_t>(padded, max_len),
+				                                           static_cast<size_t>(NumericLimits<ub2>::Maximum()));
+			} else {
+				required_sizes[col_idx] = (required_sizes[col_idx] + 3) & ~size_t(3);
 			}
-			// Align
-			required_sizes[col_idx] = (required_sizes[col_idx] + 3) & ~3;
 		}
 	}
 
-	// Check if rebind needed
 	bool need_rebind = false;
-	if (bind_buffers.empty()) {
-		bind_buffers.resize(chunk.ColumnCount());
-		indicator_buffers.resize(chunk.ColumnCount());
-		length_buffers.resize(chunk.ColumnCount());
-		binds.resize(chunk.ColumnCount(), nullptr);
-		current_buffer_sizes.resize(chunk.ColumnCount(), 0);
+	if (column_buffers.empty()) {
+		column_buffers.resize(chunk.ColumnCount());
 		need_rebind = true;
 	} else {
 		for (idx_t col_idx = 0; col_idx < chunk.ColumnCount(); col_idx++) {
-			if (required_sizes[col_idx] > current_buffer_sizes[col_idx]) {
+			if (required_sizes[col_idx] > column_buffers[col_idx].element_size) {
 				need_rebind = true;
 				break;
 			}
@@ -520,40 +521,36 @@ void OracleWriteGlobalState::Sink(DataChunk &chunk, const vector<string> &column
 
 	if (need_rebind) {
 		for (idx_t col_idx = 0; col_idx < chunk.ColumnCount(); col_idx++) {
-			if (required_sizes[col_idx] > current_buffer_sizes[col_idx]) {
-				current_buffer_sizes[col_idx] = required_sizes[col_idx];
-				bind_buffers[col_idx].resize(max_batch_size * current_buffer_sizes[col_idx]);
-			}
-		}
-
-		for (idx_t col_idx = 0; col_idx < chunk.ColumnCount(); col_idx++) {
-			indicator_buffers[col_idx].resize(max_batch_size);
-			length_buffers[col_idx].resize(max_batch_size);
-		}
-
-		for (idx_t col_idx = 0; col_idx < chunk.ColumnCount(); col_idx++) {
+			auto &col_buf = column_buffers[col_idx];
 			ub2 bind_type = bind_types[col_idx];
+			if (required_sizes[col_idx] > col_buf.element_size) {
+				col_buf.element_size = required_sizes[col_idx];
+				if (bind_type == SQLT_ODT) {
+					col_buf.date_values.resize(max_batch_size);
+				} else {
+					col_buf.char_buffer.resize(max_batch_size * col_buf.element_size);
+				}
+			}
+			col_buf.indicators.resize(max_batch_size);
+			col_buf.lengths.resize(max_batch_size);
 
+			void *value_ptr = (bind_type == SQLT_ODT) ? static_cast<void *>(col_buf.date_values.data())
+			                                          : static_cast<void *>(col_buf.char_buffer.data());
 			auto ctx = connection->Get();
-			CheckOCIError(OCIBindByPos(stmthp.get(), &binds[col_idx], ctx->errhp, col_idx + 1,
-			                           bind_buffers[col_idx].data(), static_cast<sb4>(current_buffer_sizes[col_idx]),
-			                           bind_type, indicator_buffers[col_idx].data(), length_buffers[col_idx].data(),
-			                           nullptr, 0, nullptr, OCI_DEFAULT),
+			CheckOCIError(OCIBindByPos(stmthp.get(), &col_buf.bind_handle, ctx->errhp, col_idx + 1, value_ptr,
+			                           static_cast<sb4>(col_buf.element_size), bind_type, col_buf.indicators.data(),
+			                           col_buf.lengths.data(), nullptr, 0, nullptr, OCI_DEFAULT),
 			              ctx->errhp, "OCIBindByPos");
 
-			// Set up array binding stride for batch inserts
-			CheckOCIError(OCIBindArrayOfStruct(binds[col_idx], ctx->errhp,
-			                                   static_cast<ub4>(current_buffer_sizes[col_idx]), // data skip
-			                                   static_cast<ub4>(sizeof(sb2)),                   // indicator skip
-			                                   static_cast<ub4>(sizeof(ub2)),                   // length skip
-			                                   0),                                              // return code skip
+			CheckOCIError(OCIBindArrayOfStruct(col_buf.bind_handle, ctx->errhp, static_cast<ub4>(col_buf.element_size),
+			                                   static_cast<ub4>(sizeof(sb2)), static_cast<ub4>(sizeof(ub2)), 0),
 			              ctx->errhp, "OCIBindArrayOfStruct");
 		}
 	}
 
 	idx_t write_buffer_bytes = 0;
-	for (auto &buffer : bind_buffers) {
-		write_buffer_bytes += buffer.size();
+	for (auto &col_buf : column_buffers) {
+		write_buffer_bytes += col_buf.char_buffer.size() + (col_buf.date_values.size() * sizeof(OCIDate));
 	}
 	OracleDebugRecordWriteBufferBytes(write_buffer_bytes);
 
@@ -562,19 +559,55 @@ void OracleWriteGlobalState::Sink(DataChunk &chunk, const vector<string> &column
 		for (idx_t col_idx = 0; col_idx < chunk.ColumnCount(); col_idx++) {
 			auto column_name = col_idx < column_names.size() ? column_names[col_idx] : "";
 			auto oracle_type = col_idx < oracle_types.size() ? oracle_types[col_idx] : "";
-			BindColumn(chunk.data[col_idx], col_idx, offset, iter_count, column_name, oracle_type, bind_types[col_idx]);
+			BindColumn(chunk.data[col_idx], col_idx, offset, iter_count, column_name, oracle_type, bind_types[col_idx],
+			           converted_strings[col_idx]);
 		}
 		ExecuteBatch(iter_count);
 	}
 }
 
+static int64_t ReadFlatInt64(Vector &col, idx_t idx) {
+	switch (col.GetType().id()) {
+	case LogicalTypeId::TINYINT:
+		return static_cast<int64_t>(FlatVector::GetData<int8_t>(col)[idx]);
+	case LogicalTypeId::SMALLINT:
+		return static_cast<int64_t>(FlatVector::GetData<int16_t>(col)[idx]);
+	case LogicalTypeId::INTEGER:
+		return static_cast<int64_t>(FlatVector::GetData<int32_t>(col)[idx]);
+	case LogicalTypeId::BIGINT:
+		return FlatVector::GetData<int64_t>(col)[idx];
+	case LogicalTypeId::UTINYINT:
+		return static_cast<int64_t>(FlatVector::GetData<uint8_t>(col)[idx]);
+	case LogicalTypeId::USMALLINT:
+		return static_cast<int64_t>(FlatVector::GetData<uint16_t>(col)[idx]);
+	case LogicalTypeId::UINTEGER:
+		return static_cast<int64_t>(FlatVector::GetData<uint32_t>(col)[idx]);
+	default:
+		return col.GetValue(idx).GetValue<int64_t>();
+	}
+}
+
+static double ReadFlatDouble(Vector &col, idx_t idx) {
+	switch (col.GetType().id()) {
+	case LogicalTypeId::FLOAT:
+		return static_cast<double>(FlatVector::GetData<float>(col)[idx]);
+	case LogicalTypeId::DOUBLE:
+		return FlatVector::GetData<double>(col)[idx];
+	default:
+		return col.GetValue(idx).GetValue<double>();
+	}
+}
+
 void OracleWriteGlobalState::BindColumn(Vector &col, idx_t col_idx, idx_t offset, idx_t count,
-                                        const string &column_name, const string &oracle_type, ub2 bind_type) {
+                                        const string &column_name, const string &oracle_type, ub2 bind_type,
+                                        const vector<string> &converted_strings) {
+	(void)oracle_type;
 	auto &validity = FlatVector::Validity(col);
-	auto &bind_buffer = bind_buffers[col_idx];
-	auto &indicators = indicator_buffers[col_idx];
-	auto &lengths = length_buffers[col_idx];
-	size_t element_size = current_buffer_sizes[col_idx];
+	auto &col_buf = column_buffers[col_idx];
+	auto &bind_buffer = col_buf.char_buffer;
+	auto &indicators = col_buf.indicators;
+	auto &lengths = col_buf.lengths;
+	size_t element_size = col_buf.element_size;
 
 	for (idx_t i = 0; i < count; i++) {
 		auto source_idx = offset + i;
@@ -585,29 +618,45 @@ void OracleWriteGlobalState::BindColumn(Vector &col, idx_t col_idx, idx_t offset
 			indicators[i] = 0;
 
 			if (bind_type == SQLT_INT) {
-				int64_t val = col.GetValue(source_idx).GetValue<int64_t>();
+				int64_t val = ReadFlatInt64(col, source_idx);
 				memcpy(bind_buffer.data() + (i * element_size), &val, sizeof(int64_t));
 				lengths[i] = sizeof(int64_t);
 			} else if (bind_type == SQLT_BDOUBLE) {
-				double val = col.GetValue(source_idx).GetValue<double>();
+				double val = ReadFlatDouble(col, source_idx);
 				memcpy(bind_buffer.data() + (i * element_size), &val, sizeof(double));
 				lengths[i] = sizeof(double);
 			} else if (bind_type == SQLT_ODT) {
-				Value val = col.GetValue(source_idx);
-				OCIDate date;
+				OCIDate &date = col_buf.date_values[i];
 				memset(&date, 0, sizeof(OCIDate));
 
-				if (val.type().id() == LogicalTypeId::DATE) {
-					date_t duck_date = val.GetValueUnsafe<date_t>();
+				if (col.GetType().id() == LogicalTypeId::DATE) {
+					date_t duck_date = FlatVector::GetData<date_t>(col)[source_idx];
+					if (!Date::IsFinite(duck_date)) {
+						throw InvalidInputException("Oracle write value for column '%s' cannot bind non-finite DATE",
+						                            column_name.c_str());
+					}
 					int32_t year, month, day;
 					Date::Convert(duck_date, year, month, day);
-					date.OCIDateYYYY = static_cast<sb2>(year);
-					date.OCIDateMM = month;
-					date.OCIDateDD = day;
-					date.OCIDateTime.OCITimeHH = 0;
-					date.OCIDateTime.OCITimeMI = 0;
-					date.OCIDateTime.OCITimeSS = 0;
+					OCIDateSetDate(&date, static_cast<sb2>(year), static_cast<ub1>(month), static_cast<ub1>(day));
+					OCIDateSetTime(&date, 0, 0, 0);
+				} else if (col.GetType().id() == LogicalTypeId::TIMESTAMP ||
+				           col.GetType().id() == LogicalTypeId::TIMESTAMP_TZ) {
+					timestamp_t duck_ts = FlatVector::GetData<timestamp_t>(col)[source_idx];
+					if (!Timestamp::IsFinite(duck_ts)) {
+						throw InvalidInputException(
+						    "Oracle write value for column '%s' cannot bind non-finite TIMESTAMP", column_name.c_str());
+					}
+					date_t duck_date;
+					dtime_t duck_time;
+					Timestamp::Convert(duck_ts, duck_date, duck_time);
+					int32_t year, month, day;
+					Date::Convert(duck_date, year, month, day);
+					int32_t hour, min, sec, micros;
+					Time::Convert(duck_time, hour, min, sec, micros);
+					OCIDateSetDate(&date, static_cast<sb2>(year), static_cast<ub1>(month), static_cast<ub1>(day));
+					OCIDateSetTime(&date, static_cast<ub1>(hour), static_cast<ub1>(min), static_cast<ub1>(sec));
 				} else {
+					Value val = col.GetValue(source_idx).DefaultCastAs(LogicalType::TIMESTAMP);
 					timestamp_t duck_ts = val.GetValueUnsafe<timestamp_t>();
 					date_t duck_date;
 					dtime_t duck_time;
@@ -616,25 +665,25 @@ void OracleWriteGlobalState::BindColumn(Vector &col, idx_t col_idx, idx_t offset
 					Date::Convert(duck_date, year, month, day);
 					int32_t hour, min, sec, micros;
 					Time::Convert(duck_time, hour, min, sec, micros);
-
-					date.OCIDateYYYY = static_cast<sb2>(year);
-					date.OCIDateMM = month;
-					date.OCIDateDD = day;
-					date.OCIDateTime.OCITimeHH = hour;
-					date.OCIDateTime.OCITimeMI = min;
-					date.OCIDateTime.OCITimeSS = sec;
+					OCIDateSetDate(&date, static_cast<sb2>(year), static_cast<ub1>(month), static_cast<ub1>(day));
+					OCIDateSetTime(&date, static_cast<ub1>(hour), static_cast<ub1>(min), static_cast<ub1>(sec));
 				}
-				memcpy(bind_buffer.data() + (i * element_size), &date, sizeof(OCIDate));
 				lengths[i] = sizeof(OCIDate);
 			} else {
-				Value val = col.GetValue(source_idx);
-				auto str_val = OracleWriteValueToString(val, column_name, oracle_type);
-
+				const string &str_val = converted_strings[source_idx];
+				if (str_val.size() > NumericLimits<ub2>::Maximum()) {
+					auto len_str = std::to_string(str_val.size());
+					throw InvalidInputException("Oracle write value for column '%s' exceeds maximum OCI bind length of "
+					                            "65535 bytes (%s bytes)",
+					                            column_name.c_str(), len_str.c_str());
+				}
 				if (str_val.size() > element_size) {
 					throw IOException("Value too large for buffer");
 				}
 
-				memcpy(bind_buffer.data() + (i * element_size), str_val.c_str(), str_val.size());
+				if (!str_val.empty()) {
+					memcpy(bind_buffer.data() + (i * element_size), str_val.data(), str_val.size());
+				}
 				lengths[i] = static_cast<ub2>(str_val.size());
 			}
 		}

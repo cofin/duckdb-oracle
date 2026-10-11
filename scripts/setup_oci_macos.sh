@@ -1,11 +1,22 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # Oracle Instant Client Version
 OCI_VER_MAJOR=23
-OCI_VER_FULL=23.26.1.0.0
-OCI_VER_SHORT=2326100
+OCI_VERSION="${OCI_VERSION:-23.26.2.0.0}"
+OCI_VER_FULL="$OCI_VERSION"
+OCI_VER_SHORT=2326200
 BASE_URL="https://download.oracle.com/otn_software/mac/instantclient/${OCI_VER_SHORT}"
+
+MOUNT_POINTS=()
+cleanup_mounts() {
+    for mp in "${MOUNT_POINTS[@]:-}"; do
+        if [ -n "$mp" ]; then
+            hdiutil detach "$mp" -quiet 2>/dev/null || true
+        fi
+    done
+}
+trap cleanup_mounts EXIT
 
 # Detect architecture - only ARM64 is supported (Apple Silicon M1/M2/M3)
 ARCH=$(uname -m)
@@ -32,12 +43,15 @@ INSTALL_DIR=$PWD/oracle_sdk
 rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 
+BASIC_DMG="$INSTALL_DIR/basic.dmg"
+SDK_DMG="$INSTALL_DIR/sdk.dmg"
+
 echo "Downloading Oracle Instant Client ${OCI_VER_FULL} for macOS ${OCI_ARCH}..."
-curl -L -o basic.dmg "${BASE_URL}/${BASIC_FILE}" || {
+curl -fL --retry 3 -o "$BASIC_DMG" "${BASE_URL}/${BASIC_FILE}" || {
     echo "Failed to download Basic package"
     exit 1
 }
-curl -L -o sdk.dmg "${BASE_URL}/${SDK_FILE}" || {
+curl -fL --retry 3 -o "$SDK_DMG" "${BASE_URL}/${SDK_FILE}" || {
     echo "Failed to download SDK package"
     exit 1
 }
@@ -45,13 +59,15 @@ curl -L -o sdk.dmg "${BASE_URL}/${SDK_FILE}" || {
 echo "Mounting DMG files..."
 # Use -plist to parse mount point reliably, or simple awk if we assume standard output format with tabs
 # hdiutil standard output is: /dev/diskXsY <tab> TYPE <tab> /Volumes/Mount Point
-BASIC_MOUNT_INFO=$(hdiutil attach basic.dmg -nobrowse -noverify -noautoopen)
+BASIC_MOUNT_INFO=$(hdiutil attach "$BASIC_DMG" -nobrowse -noverify -noautoopen)
 echo "Basic Mount Info: $BASIC_MOUNT_INFO"
 BASIC_MOUNT=$(echo "$BASIC_MOUNT_INFO" | grep '/Volumes' | cut -f 3)
+MOUNT_POINTS+=("$BASIC_MOUNT")
 
-SDK_MOUNT_INFO=$(hdiutil attach sdk.dmg -nobrowse -noverify -noautoopen)
+SDK_MOUNT_INFO=$(hdiutil attach "$SDK_DMG" -nobrowse -noverify -noautoopen)
 echo "SDK Mount Info: $SDK_MOUNT_INFO"
 SDK_MOUNT=$(echo "$SDK_MOUNT_INFO" | grep '/Volumes' | cut -f 3)
+MOUNT_POINTS+=("$SDK_MOUNT")
 
 echo "Basic Mount Point: '$BASIC_MOUNT'"
 echo "SDK Mount Point: '$SDK_MOUNT'"
@@ -63,8 +79,6 @@ echo "Extracting files from DMG..."
 # Copy files from the root of the mounted DMG (no instantclient_* subdirectory)
 cp -R "${BASIC_MOUNT}"/* "$INSTALL_DIR/" || {
     echo "Failed to copy Basic package"
-    hdiutil detach "$BASIC_MOUNT" 2>/dev/null || true
-    hdiutil detach "$SDK_MOUNT" 2>/dev/null || true
     exit 1
 }
 
@@ -75,17 +89,16 @@ OCI_HOME="$INSTALL_DIR"
 # Copy SDK files into the same directory
 cp -R "${SDK_MOUNT}"/sdk "$OCI_HOME/" || {
     echo "Failed to copy SDK package"
-    hdiutil detach "$BASIC_MOUNT" 2>/dev/null || true
-    hdiutil detach "$SDK_MOUNT" 2>/dev/null || true
     exit 1
 }
 
 echo "Unmounting DMG files..."
 hdiutil detach "$BASIC_MOUNT"
 hdiutil detach "$SDK_MOUNT"
+MOUNT_POINTS=()
 
 # Clean up DMG files
-rm -f basic.dmg sdk.dmg
+rm -f "$BASIC_DMG" "$SDK_DMG"
 
 echo "Oracle Home found at: $OCI_HOME"
 
@@ -96,13 +109,13 @@ fi
 
 # Export environment variables
 export ORACLE_HOME="$OCI_HOME"
-export DYLD_LIBRARY_PATH="$OCI_HOME:${DYLD_LIBRARY_PATH}"
+export DYLD_LIBRARY_PATH="${OCI_HOME}${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
 
 # For GitHub Actions: add to PATH and environment
-if [ -n "$GITHUB_PATH" ]; then
+if [ -n "${GITHUB_PATH:-}" ]; then
     echo "$OCI_HOME" >> "$GITHUB_PATH"
     echo "ORACLE_HOME=$OCI_HOME" >> "$GITHUB_ENV"
-    echo "DYLD_LIBRARY_PATH=$OCI_HOME:\$DYLD_LIBRARY_PATH" >> "$GITHUB_ENV"
+    echo "DYLD_LIBRARY_PATH=${DYLD_LIBRARY_PATH}" >> "$GITHUB_ENV"
 fi
 
 # For local use: save to env file

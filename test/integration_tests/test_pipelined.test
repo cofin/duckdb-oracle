@@ -7,11 +7,11 @@ require oracle
 statement ok
 CREATE OR REPLACE SECRET test_oracle (
     TYPE ORACLE,
-    USER 'duckdb_test',
-    PASSWORD 'duckdb_test',
-    HOST 'localhost',
+    USER '${ORACLE_USER}',
+    PASSWORD '${ORACLE_PASSWORD}',
+    HOST '${ORACLE_HOST}',
     PORT ${ORACLE_PORT},
-    SERVICE 'FREEPDB1'
+    SERVICE '${ORACLE_SERVICE}'
 );
 
 statement ok
@@ -145,6 +145,9 @@ ORDER BY l.id
 
 # Cleanup
 statement ok
+DROP TABLE local_ids;
+
+statement ok
 SELECT oracle_execute('ora', 'DROP PACKAGE pipeline_pkg');
 
 statement ok
@@ -161,3 +164,6 @@ SELECT oracle_execute('ora', 'DROP TABLE pipeline_pkg_log PURGE');
 
 statement ok
 DETACH ora;
+
+statement ok
+DROP SECRET test_oracle;
