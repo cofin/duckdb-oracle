@@ -1,0 +1,102 @@
+# name: test/integration_tests/oracle/spatial.test
+# description: Oracle SDO_GEOMETRY WKT point/polygon read/write round-trips and NULL handling
+# group: [oracle]
+
+require oracle
+
+statement ok
+CREATE OR REPLACE MACRO oracle_spatial_conn() AS '${ORACLE_USER}/${ORACLE_PASSWORD}@${ORACLE_HOST}:${ORACLE_PORT}/${ORACLE_SERVICE}';
+
+statement ok
+CREATE OR REPLACE SECRET oracle_spatial_test (
+    TYPE ORACLE,
+    USER '${ORACLE_USER}',
+    PASSWORD '${ORACLE_PASSWORD}',
+    HOST '${ORACLE_HOST}',
+    PORT ${ORACLE_PORT},
+    SERVICE '${ORACLE_SERVICE}'
+);
+
+statement ok
+SELECT oracle_execute(oracle_spatial_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE spatial_roundtrip_test PURGE'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+');
+
+statement ok
+SELECT oracle_execute(oracle_spatial_conn(), '
+    CREATE TABLE spatial_roundtrip_test (
+        id NUMBER(10) PRIMARY KEY,
+        geom MDSYS.SDO_GEOMETRY
+    )
+');
+
+statement ok
+SELECT oracle_clear_cache();
+
+statement ok
+ATTACH '' AS ora_spatial (TYPE ORACLE, SECRET 'oracle_spatial_test');
+
+# Insert WKT point, polygon, and NULL geometry via attached table write
+statement ok
+INSERT INTO ora_spatial.duckdb_test.spatial_roundtrip_test (id, geom)
+VALUES
+    (1, 'POINT (1 2)'),
+    (2, 'POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))'),
+    (3, NULL);
+
+# Verify read round-trip of WKT strings and NULL geometry
+query IT
+SELECT
+    id,
+    CASE
+        WHEN geom IS NULL THEN 'NULL'
+        WHEN contains(upper(geom::VARCHAR), 'POINT') AND contains(geom::VARCHAR, '1') AND contains(geom::VARCHAR, '2') THEN 'POINT_OK'
+        WHEN contains(upper(geom::VARCHAR), 'POLYGON') AND contains(geom::VARCHAR, '10') THEN 'POLYGON_OK'
+        ELSE geom::VARCHAR
+    END
+FROM ora_spatial.duckdb_test.spatial_roundtrip_test
+ORDER BY id;
+----
+1	POINT_OK
+2	POLYGON_OK
+3	NULL
+
+# Verify oracle_scan read round-trip with spatial types disabled (returns WKT VARCHAR)
+statement ok
+SET oracle_enable_spatial_types = false;
+
+query IT
+SELECT
+    id,
+    CASE
+        WHEN geom IS NULL THEN 'NULL'
+        WHEN contains(upper(geom), 'POINT') THEN 'POINT_WKT'
+        WHEN contains(upper(geom), 'POLYGON') THEN 'POLYGON_WKT'
+        ELSE geom
+    END
+FROM oracle_scan(oracle_spatial_conn(), 'DUCKDB_TEST', 'SPATIAL_ROUNDTRIP_TEST')
+ORDER BY id;
+----
+1	POINT_WKT
+2	POLYGON_WKT
+3	NULL
+
+statement ok
+SET oracle_enable_spatial_types = true;
+
+# Cleanup
+statement ok
+DETACH ora_spatial;
+
+statement ok
+SELECT oracle_execute(oracle_spatial_conn(), 'DROP TABLE spatial_roundtrip_test PURGE');
+
+statement ok
+DROP SECRET oracle_spatial_test;

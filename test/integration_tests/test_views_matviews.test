@@ -7,11 +7,11 @@ require oracle
 statement ok
 CREATE OR REPLACE SECRET test_oracle (
     TYPE ORACLE,
-    USER 'duckdb_test',
-    PASSWORD 'duckdb_test',
-    HOST 'localhost',
+    USER '${ORACLE_USER}',
+    PASSWORD '${ORACLE_PASSWORD}',
+    HOST '${ORACLE_HOST}',
     PORT ${ORACLE_PORT},
-    SERVICE 'FREEPDB1'
+    SERVICE '${ORACLE_SERVICE}'
 );
 
 statement ok
@@ -21,7 +21,7 @@ ATTACH '' AS ora (TYPE ORACLE, SECRET 'test_oracle');
 statement ok
 SELECT oracle_execute('ora', '
     BEGIN
-        EXECUTE IMMEDIATE ''DROP TABLE base_table'';
+        EXECUTE IMMEDIATE ''DROP TABLE base_table PURGE'';
     EXCEPTION
         WHEN OTHERS THEN
             IF SQLCODE != -942 THEN
@@ -116,5 +116,21 @@ SELECT * FROM ora.syn_test ORDER BY id
 1	A
 2	B
 
+# Cleanup
+statement ok
+SELECT oracle_execute('ora', 'DROP SYNONYM syn_test');
+
+statement ok
+SELECT oracle_execute('ora', 'DROP MATERIALIZED VIEW mv_test');
+
+statement ok
+SELECT oracle_execute('ora', 'DROP VIEW view_test');
+
+statement ok
+SELECT oracle_execute('ora', 'DROP TABLE base_table PURGE');
+
 statement ok
 DETACH ora;
+
+statement ok
+DROP SECRET test_oracle;

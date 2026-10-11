@@ -78,10 +78,11 @@ inline std::shared_ptr<OCIStmt> AllocateSharedOCIStatement(OCIEnv *envhp, OCIErr
 }
 ```
 
-## Shared Statement Handles Across Pipeline Phases
+## Statement & Environment Lifetime Across Pipeline Phases
 
-DuckDB splits table function execution into two distinct stages:
-1. **Bind Phase (`OracleBindInternal`)**: Runs on the main planning thread. Connects to Oracle, allocates the statement, sets attributes (timeouts, prefetch), and runs `OCIStmtExecute` with `OCI_DESCRIBE_ONLY` to populate output column names and types.
-2. **Scan Phase (`OracleScanFunction`)**: Runs on worker execution threads. Fetches row batches from the prepared cursor.
+DuckDB splits table function execution into distinct stages:
+1. **Bind Phase (`OracleBindInternal`)**: Connects to Oracle, inspects metadata (or runs `OCIStmtExecute` with `OCI_DESCRIBE_ONLY` for arbitrary `oracle_query` SQL) to populate output column names and types.
+2. **Global Init Phase (`OracleInitGlobal`)**: Reconstructs the final Oracle SQL statement incorporating projected `column_ids` and pushed-down `TableFilterSet` / complex filter predicates, prepares the cursor via `OCIStmtPrepare2`, configures `OCI_ATTR_PREFETCH_ROWS` and `OCI_ATTR_CALL_TIMEOUT` (`oracle_call_timeout_ms`), executes the cursor, and defines output buffers (`OCIDefineByPos`) only for projected columns.
+3. **Scan Phase (`OracleScanFunction`)**: Fetches row batches from the prepared cursor in `OracleGlobalState` and converts OCI buffers/descriptors into DuckDB vectors.
 
-To prevent re-preparing and re-describing queries across phases, `OracleBindData` holds a `std::shared_ptr<OCIStmt>` created via `AllocateSharedOCIStatement`. When the query completes or an error aborts the pipeline, the last reference drops and safely releases the statement handle.
+Every `OracleConnectionContext` co-owns a `std::shared_ptr<OCIEnv>`, and prepared statements release cleanly via `OCIStmtRelease` (or `OCIHandleFree` when allocated directly) before the connection and environment handles are destroyed.

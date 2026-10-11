@@ -84,7 +84,25 @@ Set these variables to tune performance or behavior:
 | `oracle_enable_spatial_types` | `true` | Map `SDO_GEOMETRY` to `GEOMETRY` type. |
 | `oracle_connection_cache` | `true` | Enable connection pooling. |
 | `oracle_connection_limit` | `8` | Maximum cached Oracle sessions per connection key; validated between 1 and 1024. |
+| `oracle_call_timeout_ms` | `30000` | Per-round-trip OCI call timeout in milliseconds; `0` disables timeout, max 3,600,000 (1 hour). |
+| `oracle_stmt_cache_size` | `20` | Per-session OCI statement cache size; `0` disables caching, max 1024. |
+| `oracle_lazy_schema_loading` | `true` | Lazily load schema and object metadata on demand. |
+| `oracle_use_current_schema` | `true` | Auto-detect `CURRENT_SCHEMA` and resolve unqualified object names. |
+| `oracle_metadata_object_types` | `'TABLE,VIEW,SYNONYM,MATERIALIZED VIEW'` | Comma-separated Oracle object types discovered via `ALL_OBJECTS`. |
 | `oracle_metadata_result_limit` | `10000` | Bounded metadata discovery limit; `0` uses the bounded default. |
+
+### Views, Materialized Views, and Synonyms
+
+Tables, views, materialized views, and synonyms are automatically discovered via `ALL_OBJECTS` (controlled by `oracle_metadata_object_types`) and can be queried directly from an attached catalog via `SELECT * FROM ora.<view_name>` (or `SELECT * FROM ora.<schema>.<view_name>`) as well as through `oracle_query()`.
+
+### Flashback Queries (`as_of_scn` / `as_of_timestamp`)
+
+`oracle_scan` and `oracle_query` accept optional `as_of_scn` (`UBIGINT`) or `as_of_timestamp` (`VARCHAR`) named parameters (mutually exclusive) to execute Oracle Flashback queries:
+
+```sql
+SELECT * FROM oracle_scan('ora', 'HR', 'EMPLOYEES', as_of_scn := 12345678);
+SELECT * FROM oracle_query('ora', 'SELECT * FROM HR.EMPLOYEES', as_of_timestamp := '2026-01-01 00:00:00');
+```
 
 ## Authentication
 
@@ -117,13 +135,13 @@ ATTACH '' AS ora (TYPE oracle, SECRET adb_prod);
 
 ```bash
 # Set ORACLE_HOME to your Instant Client directory
-export ORACLE_HOME=/opt/oracle/instantclient_23_6
+export ORACLE_HOME=/opt/oracle/instantclient_23_26
 
 # Build
 make
 
 # Run Tests (Unit + Integration)
-make test
+make test-unit
 make integration
 ```
 
@@ -132,4 +150,4 @@ make integration
 - **Transaction Management**: Oracle writes are statement-atomic: a successful DuckDB write statement commits to
   Oracle, a failed write statement rolls back its Oracle work, and Oracle writes are rejected inside explicit DuckDB
   transaction blocks until true cross-system transaction integration exists.
-- **Views**: Visible only if present in `ALL_TABLES` (standard behavior).
+- **Object Discovery**: Tables, views, materialized views, and synonyms are discovered via `ALL_OBJECTS` according to `oracle_metadata_object_types` (default `'TABLE,VIEW,SYNONYM,MATERIALIZED VIEW'`) and can be queried directly as `ora.<object_name>` or via `oracle_query()`.

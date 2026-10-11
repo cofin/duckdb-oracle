@@ -18,18 +18,39 @@ The `duckdb-oracle` repository maintains a two-tiered testing harness:
 
 ```
 test/
-├── unit_tests/                    # Fast smoke tests (executed by make test-unit)
-│   └── test_oracle_unit.test      # Parser and offline connection resolution tests
-├── integration_tests/             # Full containerized integration tests (make integration)
-│   ├── init_sql/                  # DDL and seed scripts mounted into the Oracle container
-│   │   ├── 01_users.sql           # Test user creation (duckdb_test)
-│   │   ├── 02_tables.sql          # Test tables (datatypes, spatial, vectors)
-│   │   └── 03_data.sql            # Seed dataset
-│   ├── test_oracle_attach.test    # ATTACH syntax and SecretManager validation
-│   ├── test_oracle_query.test     # SELECT, aggregations, and pushdown
-│   ├── test_oracle_insert.test    # INSERT, bulk array bind, and transaction commit/rollback
-│   └── test_oracle_spatial.test   # SDO_GEOMETRY to DuckDB GEOMETRY mappings
-└── unittest                       # DuckDB sqllogictest binary compiled from duckdb submodule
+├── README.md                                  # Test suite and manual verification guide
+├── unit_tests/                                # Fast offline unit tests (executed by make test-unit)
+│   ├── test_extension_metadata.test           # Extension version and load verification
+│   ├── test_oracle_wallet.test                # Offline wallet validation and secret resolution
+│   └── oracle/
+│       ├── connection_milestone.test          # Connection string and secret parsing unit tests
+│       ├── execution_milestone.test           # Execution and setting validation unit tests
+│       ├── pushdown_milestone.test            # Filter and projection pushdown unit tests
+│       ├── storage_milestone.test             # Attached catalog and storage unit tests
+│       ├── test_metadata.test                 # Lazy schema loading and metadata object type settings
+│       ├── test_schema_resolution.test        # CURRENT_SCHEMA resolution settings
+│       └── test_tuning_settings.test          # Tuning settings defaults and range validation
+└── integration_tests/                         # Full containerized integration tests (make integration)
+    ├── init_sql/
+    │   └── 01_setup.sql                       # Test user creation and grants (duckdb_test on FREEPDB1)
+    ├── test_connection.test                   # Live connection and secret authentication tests
+    ├── test_datatypes.test                    # Core Oracle data type mappings
+    ├── test_edge_cases.test                   # NULLs, empty tables, and multi-kilobyte CLOBs
+    ├── test_metadata_queries.test             # Metadata enumeration and lazy loading against Oracle
+    ├── test_pipelined.test                    # Pipelined table functions via oracle_query
+    ├── test_pushdown.test                     # Predicate and projection pushdown integration tests
+    ├── test_security.test                     # Credential redaction and privilege boundary tests
+    ├── test_types_comprehensive.test          # Comprehensive numeric, temporal, LOB, and vector types
+    ├── test_views_matviews.test               # Views, materialized views, and synonyms
+    └── oracle/
+        ├── connection.test                    # Connection pooling and wallet/secret integration
+        ├── execution.test                     # oracle_query, oracle_scan, and flashback queries
+        ├── partition_pruning.test             # Partition metadata and partition-key filter pushdown
+        ├── pushdown.test                      # Complex filter pushdown verification
+        ├── spatial.test                       # SDO_GEOMETRY WKT point/polygon read/write round-trips
+        ├── write.test                         # Bulk array INSERT INTO attached Oracle tables
+        ├── write_transaction.test             # Statement-atomic commit, rollback, and transaction guards
+        └── write_vector.test                  # Oracle 23ai VECTOR read/write round-trips
 ```
 
 ## 2. DuckDB sqllogictest Syntax (`.test` Files)

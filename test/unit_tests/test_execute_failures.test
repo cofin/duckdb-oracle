@@ -6,6 +6,19 @@ require oracle
 
 # Expect a clean error (no segfault) when connection fails
 statement error
-SELECT oracle_execute('bad_user/bad_pass@//localhost:1521/NO_DB', 'SELECT 1 FROM DUAL');
+SELECT oracle_execute('bad_user/bad_pass@//localhost:1521/NO_DB', 'DELETE FROM DUAL');
 ----
 IO Error
+
+# Reject oracle_execute inside an explicit DuckDB transaction
+statement ok
+BEGIN TRANSACTION;
+
+statement error
+SELECT oracle_execute('bad_user/bad_pass@//localhost:1521/NO_DB', 'DELETE FROM DUAL');
+----
+explicit DuckDB transaction
+
+statement ok
+ROLLBACK;
+

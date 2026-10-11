@@ -69,9 +69,10 @@ struct OracleInsertLocalState : public LocalSinkState {
 
 In `OracleWriteSink`, DuckDB's column-major vectors are converted to OCI bind buffers:
 
-1. **Flat Vectors**: Direct memory copy from `FlatVector::GetData<T>(vector)` to the contiguous OCI array buffer.
-2. **String Vectors**: Strings extracted from `string_t`, checked for null indicators (`sb2`), and copied into fixed-width row-slots with trailing null-terminators.
-3. **Validity Check**: For each row `i` in the chunk:
+1. **Numeric & Decimal Vectors**: Fixed-width integers (`int16_t`, `int32_t`, `int64_t`) and floats copy directly into contiguous array buffers; `DECIMAL(p, s)` values are formatted with exact scale into string buffers.
+2. **Date & Timestamp Vectors**: Oracle `DATE` columns are populated as 7-byte `OCIDate` structs bound with `SQLT_ODT`, while `TIMESTAMP` and `TIMESTAMP WITH TIME ZONE` columns use `OCIDateTime*` descriptors.
+3. **String, Spatial & Vector Columns**: Strings (`string_t`), WKT geometries (`SDO_GEOMETRY(:b)`), and serialized vectors (`TO_VECTOR(:b)`) are copied into 64 KB (`65536`-byte) row slots with explicit overflow checking.
+4. **Validity Check**: For each row `i` in the chunk:
    ```cpp
    if (FlatVector::IsNull(vector, i)) {
        indicator_buffer[i] = OCI_IND_NULL;
@@ -79,9 +80,9 @@ In `OracleWriteSink`, DuckDB's column-major vectors are converted to OCI bind bu
        indicator_buffer[i] = OCI_IND_NOTNULL;
    }
    ```
-4. **Execution & Batch Errors**: `OCIStmtExecute` executes `iters = chunk.size()` with `OCI_BATCH_ERRORS`.
+5. **Execution & Batch Errors**: `OCIStmtExecute` executes `iters = chunk.size()` with `OCI_BATCH_ERRORS`.
 
-## Finalization & Transaction Commit
+## Finalization & Statement-Atomic Transaction Commit
 
 `PhysicalOracleInsert::Finalize` commits the active transaction on the service context:
 ```cpp
@@ -92,4 +93,4 @@ SinkFinalizeType PhysicalOracleInsert::Finalize(Pipeline &pipeline, Event &event
     return SinkFinalizeType::READY;
 }
 ```
-If any sink operation throws an unhandled exception before `Finalize` runs, the transaction is automatically rolled back when the `OracleConnectionHandle` drops or cleans up.
+If any sink operation throws an exception before `Finalize` completes, `OCITransRollback` is explicitly invoked on the active service context so uncommitted partial batches never leak into pooled connections.

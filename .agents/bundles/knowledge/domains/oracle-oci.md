@@ -84,13 +84,15 @@ Oracle maps its internal database storage types to client-side external types sp
 | `NUMBER` (unconstrained)| `SQLT_FLT` / `SQLT_STR` | `double` | `LogicalType::DOUBLE` |
 | `FLOAT`, `BINARY_DOUBLE`| `SQLT_BDOUBLE` | `double` | `LogicalType::DOUBLE` |
 | `BINARY_FLOAT` | `SQLT_BFLOAT` | `float` | `LogicalType::FLOAT` |
-| `VARCHAR2`, `CHAR`, `CLOB` | `SQLT_STR` | Null-terminated string | `LogicalType::VARCHAR` |
-| `RAW`, `BLOB` | `SQLT_BIN` | Byte array | `LogicalType::BLOB` |
-| `DATE` | `SQLT_DAT` (7 bytes) | Century, year, month, day, hour, min, sec | `LogicalType::DATE` / `TIMESTAMP` |
+| `VARCHAR2`, `CHAR` | `SQLT_STR` (64 KB buffer) | Null-terminated string | `LogicalType::VARCHAR` |
+| `CLOB`, `NCLOB` | `SQLT_CLOB` (`OCILobLocator*`) | Dynamic streaming via `OCILobRead2` | `LogicalType::VARCHAR` |
+| `RAW` | `SQLT_BIN` | Byte array | `LogicalType::BLOB` |
+| `BLOB` | `SQLT_BLOB` (`OCILobLocator*`) | Dynamic streaming via `OCILobRead2` | `LogicalType::BLOB` |
+| `DATE` | `SQLT_DAT` (fetch) / `SQLT_ODT` (bind) | 7-byte date / `OCIDate` struct | `LogicalType::TIMESTAMP` |
 | `TIMESTAMP` | `SQLT_TIMESTAMP` | `OCIDateTime*` descriptor | `LogicalType::TIMESTAMP` |
 | `TIMESTAMP WITH TIME ZONE` | `SQLT_TIMESTAMP_TZ` | `OCIDateTime*` descriptor | `LogicalType::TIMESTAMP_TZ` |
-| `SDO_GEOMETRY` | `SQLT_STR` / `SQLT_NTY` | WKT via `SDO_UTIL.TO_WKTGEOMETRY` or ADT | `LogicalType::GEOMETRY` (Spatial) |
-| `VECTOR` (Oracle 23ai) | `SQLT_STR` / Binary Array | Float vector array | `LogicalType::LIST(LogicalType::FLOAT)` |
+| `SDO_GEOMETRY` | `SQLT_CLOB` / `SQLT_STR` | WKT via `SDO_UTIL.TO_WKTGEOMETRY` (`CLOB`) | `LogicalType::GEOMETRY` (or `VARCHAR`) |
+| `VECTOR` (Oracle 23ai) | `SQLT_CLOB` / `SQLT_STR` | `VECTOR_SERIALIZE(... RETURNING CLOB)` | `LogicalType::LIST(LogicalType::FLOAT)` |
 
 ## Error Diagnostics (`OCIErrorGet`)
 

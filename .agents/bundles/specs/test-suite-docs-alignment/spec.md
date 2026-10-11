@@ -44,21 +44,21 @@ The unit and integration test suites, repository documentation, and OKF knowledg
 
 ### Phase 1: Test Suite Consolidation, Spatial/Integration Coverage & Documentation Alignment
 
-- [ ] **Task 1.1: Consolidate unit test suite, relocate manual_verification.md, and expand unit regression tests** -> [tasks/1.1.md](tasks/1.1.md)
+- [x] **Task 1.1: Consolidate unit test suite, relocate manual_verification.md, and expand unit regression tests** -> [tasks/1.1.md](tasks/1.1.md)
   - **Objective**: Remediate `M-27` (unit tests part) and `L-11` (`test/README.md` part) across `test/unit_tests/**` and `test/README.md`.
   - **Verification Strategy**: `tdd`
   - **Files**: `test/unit_tests/test_metadata.test`, `test/unit_tests/test_schema_resolution.test`, `test/unit_tests/oracle/test_metadata.test`, `test/unit_tests/oracle/test_schema_resolution.test`, `test/unit_tests/oracle/test_tuning_settings.test`, `test/unit_tests/manual_verification.md`, `test/README.md`
-- [ ] **Task 1.2: Deduplicate integration tests, enable SDO_GEOMETRY spatial integration test, and parameterize credentials** -> [tasks/1.2.md](tasks/1.2.md)
+- [x] **Task 1.2: Deduplicate integration tests, enable SDO_GEOMETRY spatial integration test, and parameterize credentials** -> [tasks/1.2.md](tasks/1.2.md)
   - **Objective**: Remediate `M-27` (integration tests part) across `test/integration_tests/**`.
   - **Verification Strategy**: `Verify sqllogictest syntax and placeholder parameterization`
   - **Depends On**: `test-suite-docs-alignment:1.1`
   - **Files**: `test/integration_tests/init_sql/01_setup.sql`, `test/integration_tests/test_write_basic.test`, `test/integration_tests/test_write_vector.test`, `test/integration_tests/test_partitioning.test`, `test/integration_tests/test_write_spatial.test.disabled`, `test/integration_tests/oracle/spatial.test`, `test/integration_tests/oracle/partition_pruning.test`, `test/integration_tests/test_edge_cases.test`, `test/integration_tests/test_pipelined.test`, `test/integration_tests/test_views_matviews.test`
-- [ ] **Task 1.3: Align CHANGELOG.md, README.md, CONTRIBUTING.md, SECURITY.md, and docs/RELEASE.md with v0.2.3 / DuckDB v1.5.6** -> [tasks/1.3.md](tasks/1.3.md)
+- [x] **Task 1.3: Align CHANGELOG.md, README.md, CONTRIBUTING.md, SECURITY.md, and docs/RELEASE.md with v0.2.3 / DuckDB v1.5.6** -> [tasks/1.3.md](tasks/1.3.md)
   - **Objective**: Remediate `M-28` and `L-11` (`SECURITY.md` part) across `CHANGELOG.md`, `README.md`, `CONTRIBUTING.md`, `SECURITY.md`, and `docs/RELEASE.md`.
   - **Verification Strategy**: `Verify documentation links and version consistency`
   - **Depends On**: `test-suite-docs-alignment:1.2`
   - **Files**: `README.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`, `docs/RELEASE.md`
-- [ ] **Task 1.4: Synchronize OKF knowledge and product bundles with DuckDB v1.5.6 and remediated codebase architecture** -> [tasks/1.4.md](tasks/1.4.md)
+- [x] **Task 1.4: Synchronize OKF knowledge and product bundles with DuckDB v1.5.6 and remediated codebase architecture** -> [tasks/1.4.md](tasks/1.4.md)
   - **Objective**: Remediate `L-11` (OKF knowledge/product part) across `.agents/bundles/knowledge/**` and `.agents/bundles/product/**`.
   - **Verification Strategy**: `Verify OKF frontmatter and internal links`
   - **Depends On**: `test-suite-docs-alignment:1.3`

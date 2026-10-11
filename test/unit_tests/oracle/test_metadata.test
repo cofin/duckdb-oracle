@@ -91,8 +91,3 @@ statement ok
 SET oracle_lazy_schema_loading = true;
 SET oracle_metadata_object_types = 'TABLE,VIEW,SYNONYM,MATERIALIZED VIEW';
 SET oracle_metadata_result_limit = 10000;
-
-# Note: Integration tests with real Oracle database connections are in:
-# - advanced_metadata_integration.test (lazy loading with real schemas)
-# - advanced_metadata_objects.test (multi-object-type enumeration)
-# - advanced_metadata_limits.test (on-demand loading beyond limits)

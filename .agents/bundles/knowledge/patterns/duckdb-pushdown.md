@@ -14,24 +14,26 @@ Without pushdown optimization, DuckDB table scans over external databases fetch 
 
 DuckDB Oracle implements both **Projection Pushdown** and **Filter Pushdown** in `src/oracle_pushdown.cpp`.
 
-## 1. Projection Pushdown
+## 1. Projection Pushdown (`OracleInitGlobal`)
 
-When a query requests a subset of columns (`SELECT colA, colB FROM ora.table`), DuckDB provides the projection list via `column_ids` in `GetScanFunction`:
+When a query requests a subset of columns (`SELECT colA, colB FROM ora.table`), DuckDB provides the projection list via `input.column_ids` in `OracleInitGlobal` (`src/oracle_scan.cpp`):
 
 ```cpp
-// column_ids contains indices into the table's catalog column list
-for (auto col_idx : column_ids) {
+// In OracleInitGlobal: build projection list from input.column_ids
+for (auto col_idx : input.column_ids) {
     if (col_idx == COLUMN_IDENTIFIER_ROW_ID) {
-        // Special rowid virtual column handling
-        projected_sql_columns.push_back("ROWID");
+        projected_sql_columns.push_back("NULL");
     } else {
-        projected_sql_columns.push_back(QuoteOracleIdentifier(table_columns[col_idx].name));
+        auto &col_name = bind_data.original_names[col_idx];
+        // Wrap VECTOR columns with VECTOR_SERIALIZE(... RETURNING CLOB)
+        // and SDO_GEOMETRY columns with SDO_UTIL.TO_WKTGEOMETRY(...)
+        projected_sql_columns.push_back(BuildProjectedColumnSQL(col_name, bind_data, col_idx));
     }
 }
 ```
 
-- Unprojected columns are completely omitted from the generated Oracle `SELECT` statement.
-- OCI does not define buffers (`OCIDefineByPos`) for omitted columns, reducing memory allocation and SQL*Net transfer byte volume to the exact fields needed.
+- SQL query construction and `OCIStmtPrepare2` are deferred to `OracleInitGlobal` after the optimizer finishes column projection and filter pushdown (`TableFilterSet` and `OraclePushdownComplexFilter`).
+- Unprojected columns are completely omitted from the generated Oracle `SELECT` statement, and OCI only defines buffers (`OCIDefineByPos`) for projected columns.
 
 ## 2. Filter Pushdown (`TableFilterSet`)
 

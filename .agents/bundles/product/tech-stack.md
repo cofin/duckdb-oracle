@@ -14,6 +14,6 @@ title: Tech Stack
 <!-- truth: end -->
 
 ## Components & Dependencies
-- **DuckDB**: Upstream submodule pinned to v1.5.5.
-- **OCI SDK**: Linux Instant Client setup via `scripts/setup_oci_linux.sh`, macOS via `scripts/setup_oci_macos.sh`, Windows via `scripts/setup_oci_windows.ps1`.
+- **DuckDB**: Upstream submodule pinned to v1.5.6 (extension v0.2.3).
+- **OCI SDK**: Linux Instant Client setup via `scripts/setup_oci_linux.sh`, macOS via `scripts/setup_oci_macos.sh`, Windows via `scripts/setup_oci_windows.ps1` (Instant Client 23.26).
 - **Packaging & CI**: GitHub Actions workflows in `.github/workflows/`.
