@@ -28,6 +28,15 @@ struct OracleWriteBindData {
 	vector<ub2> bind_types;      // OCI bind type (e.g., SQLT_INT)
 };
 
+struct OracleWriteColumnBuffer {
+	std::vector<char> char_buffer;
+	std::vector<OCIDate> date_values;
+	std::vector<sb2> indicators;
+	std::vector<ub2> lengths;
+	OCIBind *bind_handle = nullptr;
+	size_t element_size = 0;
+};
+
 class OracleWriteGlobalState {
 public:
 	OracleWriteGlobalState(std::shared_ptr<OracleConnectionHandle> conn, const string &query, idx_t max_batch_size);
@@ -52,7 +61,7 @@ public:
 
 private:
 	void BindColumn(Vector &col, idx_t col_idx, idx_t offset, idx_t count, const string &column_name,
-	                const string &oracle_type, ub2 bind_type);
+	                const string &oracle_type, ub2 bind_type, const vector<string> &converted_strings);
 	void ExecuteBatch(idx_t count);
 
 	std::mutex sink_lock;
@@ -60,20 +69,9 @@ private:
 	bool committed = false;
 	bool aborted = false;
 
-	// Buffers for binding
-	std::vector<std::vector<char>> bind_buffers;
-	std::vector<std::vector<sb2>> indicator_buffers;
-	std::vector<std::vector<ub2>> length_buffers;
-	std::vector<OCIBind *> binds;
-	std::vector<size_t> current_buffer_sizes;
+	std::vector<OracleWriteColumnBuffer> column_buffers;
 
 	idx_t max_batch_size = STANDARD_VECTOR_SIZE;
-};
-
-class OracleWriteLocalState {
-public:
-	OracleWriteLocalState();
-	~OracleWriteLocalState();
 };
 
 void RejectOracleWriteInExplicitTransaction(ClientContext &context);
@@ -83,7 +81,7 @@ void PrepareOracleWriteBindData(OracleWriteBindData &data);
 unique_ptr<OracleWriteGlobalState> OracleWriteInitGlobal(ClientContext &context, OracleWriteBindData &bind_data);
 
 void OracleWriteSink(ExecutionContext &context, OracleWriteBindData &bind_data, OracleWriteGlobalState &gstate,
-                     OracleWriteLocalState &lstate, DataChunk &input);
+                     DataChunk &input);
 
 void OracleWriteFinalize(OracleWriteGlobalState &gstate);
 

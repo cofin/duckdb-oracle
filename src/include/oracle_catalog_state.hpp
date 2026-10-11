@@ -39,11 +39,13 @@ struct OraclePartitionMetadata {
 class OracleCatalogState {
 public:
 	explicit OracleCatalogState(std::string connection_string_p, std::string wallet_path_p = "")
-	    : connection_string(std::move(connection_string_p)), wallet_path(std::move(wallet_path_p)),
-	      connection(make_uniq<OracleConnection>()) {
+	    : connection_string(std::move(connection_string_p)), wallet_path(std::move(wallet_path_p)) {
 	}
 
 	void Connect();
+	OracleResult ExecuteMetadataQuery(const std::string &query);
+	OracleResult ExecuteMetadataQueryWithStringBinds(const std::string &query,
+	                                                 const std::vector<std::string> &bind_values);
 	OracleResult Query(const std::string &query);
 	OracleResult QueryWithStringBinds(const std::string &query, const std::vector<std::string> &bind_values);
 	void ApplyOptions(const unordered_map<string, Value> &options);
@@ -58,19 +60,11 @@ public:
 
 	// Current schema detection
 	void DetectCurrentSchema();
-	string GetCurrentSchema() const {
-		return current_schema;
-	}
+	string GetCurrentSchema() const;
 
 	// Oracle version detection
 	void DetectOracleVersion();
-	const OracleVersionInfo &GetVersionInfo() {
-		// Ensure version is detected on-demand (e.g., after cache clear)
-		if (!version_detected) {
-			DetectOracleVersion();
-		}
-		return version_info;
-	}
+	OracleVersionInfo GetVersionInfo();
 
 	// Metadata enumeration
 	vector<string> ListSchemas();
@@ -81,20 +75,22 @@ public:
 	pair<string, string> ResolveSynonym(const string &schema, const string &synonym_name, bool &found);
 
 	// On-demand table loading
+	bool GetObjectName(const string &schema, const string &object, const string &object_type, string &out_owner,
+	                   string &out_name);
 	string GetObjectName(const string &schema, const string &object_name, const string &object_types);
+	string GetObjectName(const string &schema, const string &object_name);
 	string GetRealSchemaName(const string &name);
 
 	const string connection_string;
 
 private:
-	OracleConnection &EnsureConnectionInternal();
-	std::mutex lock;
-	unique_ptr<OracleConnection> connection;
+	void DetectOracleVersionInternal();
+
+	mutable std::mutex lock;
 	string current_schema;
 	OracleVersionInfo version_info;
 	bool version_detected = false;
 	vector<string> schema_cache;
-	unordered_map<string, vector<string>> table_cache;
 	unordered_map<string, vector<string>> object_cache;
 };
 

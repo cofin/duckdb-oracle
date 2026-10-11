@@ -9,6 +9,7 @@ OracleTransactionManager::OracleTransactionManager(AttachedDatabase &db, const s
 }
 
 Transaction &OracleTransactionManager::StartTransaction(ClientContext &context) {
+	std::lock_guard<std::mutex> guard(transaction_lock);
 	auto txn = make_uniq<OracleTransaction>(*this, context);
 	auto &result = *txn;
 	active.push_back(std::move(txn));
@@ -16,6 +17,7 @@ Transaction &OracleTransactionManager::StartTransaction(ClientContext &context) 
 }
 
 bool OracleTransactionManager::EraseTransaction(Transaction &transaction) {
+	std::lock_guard<std::mutex> guard(transaction_lock);
 	for (auto it = active.begin(); it != active.end(); ++it) {
 		if (it->get() == &transaction) {
 			active.erase(it);

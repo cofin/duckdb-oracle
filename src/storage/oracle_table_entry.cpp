@@ -2,6 +2,7 @@
 #include "oracle_pushdown.hpp"
 #include "oracle_table_function.hpp"
 #include "oracle_transaction.hpp"
+#include "oracle_type_conversion.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/value.hpp"
@@ -14,16 +15,36 @@
 
 namespace duckdb {
 
+namespace {
+
+static bool IsLargeOracleCategory(OracleTypeCategory category) {
+	switch (category) {
+	case OracleTypeCategory::JSON:
+	case OracleTypeCategory::VECTOR:
+	case OracleTypeCategory::SPATIAL:
+	case OracleTypeCategory::XML:
+	case OracleTypeCategory::LOB_CLOB:
+	case OracleTypeCategory::LOB_BLOB:
+	case OracleTypeCategory::LONG_TEXT:
+	case OracleTypeCategory::LONG_RAW:
+		return true;
+	default:
+		return false;
+	}
+}
+
+} // namespace
+
 //! Query ALL_SDO_GEOM_METADATA for SRID values of spatial columns in a table
 //! Returns a map of uppercase column_name -> SRID (0 if not found or query fails)
 static unordered_map<string, idx_t> LoadSpatialSRIDs(OracleCatalogState &state, const string &schema,
                                                      const string &table) {
 	unordered_map<string, idx_t> srid_map;
 	try {
-		auto query = StringUtil::Format("SELECT COLUMN_NAME, SRID FROM ALL_SDO_GEOM_METADATA "
-		                                "WHERE OWNER = UPPER(%s) AND TABLE_NAME = UPPER(%s)",
-		                                Value(schema).ToSQLString().c_str(), Value(table).ToSQLString().c_str());
-		auto result = state.Query(query);
+		auto query = "SELECT COLUMN_NAME, SRID FROM ALL_SDO_GEOM_METADATA "
+		             "WHERE (OWNER = :1 OR OWNER = UPPER(:2)) "
+		             "AND (TABLE_NAME = :3 OR TABLE_NAME = UPPER(:4))";
+		auto result = state.ExecuteMetadataQueryWithStringBinds(query, {schema, schema, table, table});
 		for (auto &row : result.rows) {
 			if (row.size() < 2) {
 				continue;
@@ -31,94 +52,130 @@ static unordered_map<string, idx_t> LoadSpatialSRIDs(OracleCatalogState &state, 
 			auto col_name = StringUtil::Upper(row[0]);
 			idx_t srid = 0;
 			if (!row[1].empty()) {
-				try {
-					srid = static_cast<idx_t>(std::stoll(row[1]));
-				} catch (...) {
-					srid = 0;
-				}
+				TryParseOracleMetadataIndex(row[1], srid);
 			}
 			srid_map[col_name] = srid;
 		}
 	} catch (...) {
-		// Permission denied, view doesn't exist, or other error — no CRS info available
 	}
 	return srid_map;
 }
 
-static void LoadColumns(OracleCatalogState &state, const string &schema, const string &table,
-                        vector<ColumnDefinition> &columns, vector<OracleColumnMetadata> &metadata) {
-	auto query = "SELECT column_name, data_type, data_length, data_precision, data_scale, nullable, "
-	             "data_type_owner, char_used, char_length "
-	             "FROM all_tab_columns WHERE owner = :1 AND table_name = :2 "
-	             "ORDER BY column_id";
-	auto result = state.QueryWithStringBinds(query, {schema, table});
+static unordered_map<string, string> LoadVectorColumnTypes(OracleCatalogState &state, const string &schema,
+                                                           const string &table) {
+	unordered_map<string, string> vec_map;
+	try {
+		auto query = "SELECT column_name, vector_dimension_count, vector_data_format "
+		             "FROM all_vec_columns "
+		             "WHERE (owner = :1 OR owner = UPPER(:2)) "
+		             "AND (table_name = :3 OR table_name = UPPER(:4))";
+		auto result = state.ExecuteMetadataQueryWithStringBinds(query, {schema, schema, table, table});
+		for (auto &row : result.rows) {
+			if (row.size() < 3 || row[0].empty()) {
+				continue;
+			}
+			auto col_name = StringUtil::Upper(row[0]);
+			auto dim_str = row[1];
+			StringUtil::Trim(dim_str);
+			auto fmt_str = StringUtil::Upper(row[2]);
+			StringUtil::Trim(fmt_str);
+			if (!dim_str.empty() || !fmt_str.empty()) {
+				vec_map[col_name] = StringUtil::Format("VECTOR(%s, %s)", dim_str.empty() ? "*" : dim_str.c_str(),
+				                                       fmt_str.empty() ? "*" : fmt_str.c_str());
+			}
+		}
+	} catch (...) {
+	}
+	return vec_map;
+}
 
-	// Check if any spatial columns exist before querying SRID metadata
+static void LoadColumns(OracleCatalogState &state, string &schema, string &table, vector<ColumnDefinition> &columns,
+                        vector<OracleColumnMetadata> &metadata) {
+	auto query = "SELECT owner, table_name, column_name, data_type, data_length, data_precision, data_scale, nullable, "
+	             "data_type_owner, char_used, char_length "
+	             "FROM all_tab_columns "
+	             "WHERE (owner = :1 OR owner = UPPER(:2)) "
+	             "AND (table_name = :3 OR table_name = UPPER(:4)) "
+	             "ORDER BY CASE WHEN owner = :5 THEN 0 WHEN owner = UPPER(:6) THEN 1 ELSE 2 END, "
+	             "CASE WHEN table_name = :7 THEN 0 WHEN table_name = UPPER(:8) THEN 1 ELSE 2 END, "
+	             "owner, table_name, column_id";
+	auto result =
+	    state.ExecuteMetadataQueryWithStringBinds(query, {schema, schema, table, table, schema, schema, table, table});
+	if (result.rows.empty()) {
+		return;
+	}
+
+	const string best_owner = result.rows[0][0];
+	const string best_table = result.rows[0][1];
+	schema = best_owner;
+	table = best_table;
+
 	bool has_spatial = false;
+	bool has_vector = false;
 	for (auto &row : result.rows) {
-		if (row.size() >= 2) {
-			auto upper = StringUtil::Upper(row[1]);
+		if (row.size() >= 4 && row[0] == best_owner && row[1] == best_table) {
+			auto upper = StringUtil::Upper(row[3]);
 			if (upper == "SDO_GEOMETRY" || upper == "MDSYS.SDO_GEOMETRY") {
 				has_spatial = true;
-				break;
+			} else if (upper == "VECTOR" || StringUtil::StartsWith(upper, "VECTOR(")) {
+				has_vector = true;
 			}
 		}
 	}
 
-	// Only query SRID metadata if spatial columns exist
 	unordered_map<string, idx_t> srid_map;
 	if (has_spatial) {
-		srid_map = LoadSpatialSRIDs(state, schema, table);
+		srid_map = LoadSpatialSRIDs(state, best_owner, best_table);
+	}
+	unordered_map<string, string> vec_map;
+	if (has_vector) {
+		vec_map = LoadVectorColumnTypes(state, best_owner, best_table);
 	}
 
 	for (auto &row : result.rows) {
-		if (row.size() < 9) {
+		if (row.size() < 11) {
 			continue;
 		}
-		auto col_name = row[0];
-		auto data_type = row[1];
-		auto parse_idx = [](const string &s) -> idx_t {
-			if (s.empty()) {
-				return 0;
+		if (row[0] != best_owner || row[1] != best_table) {
+			continue;
+		}
+		const auto &col_name = row[2];
+		auto data_type = row[3];
+		auto upper_col = StringUtil::Upper(col_name);
+		if (StringUtil::Upper(data_type) == "VECTOR") {
+			auto vec_it = vec_map.find(upper_col);
+			if (vec_it != vec_map.end()) {
+				data_type = vec_it->second;
 			}
-			try {
-				return static_cast<idx_t>(std::stoll(s));
-			} catch (...) {
-				return 0;
-			}
-		};
-		auto parse_int = [](const string &s) -> int32_t {
-			if (s.empty()) {
-				return 0;
-			}
-			try {
-				return static_cast<int32_t>(std::stoll(s));
-			} catch (...) {
-				return 0;
-			}
-		};
-		idx_t data_len = parse_idx(row[2]);
-		idx_t precision = parse_idx(row[3]);
-		int32_t scale = parse_int(row[4]);
+		}
+
+		idx_t data_len = 0;
+		TryParseOracleMetadataIndex(row[4], data_len);
+		idx_t precision = 0;
+		TryParseOracleMetadataIndex(row[5], precision);
+		int32_t scale = 0;
+		bool has_scale = TryParseOracleMetadataInt(row[6], scale);
+		idx_t char_len = 0;
+		TryParseOracleMetadataIndex(row[10], char_len);
 
 		OracleTypeMetadata type_metadata;
-		type_metadata.schema_name = schema;
-		type_metadata.table_name = table;
+		type_metadata.schema_name = best_owner;
+		type_metadata.table_name = best_table;
 		type_metadata.column_name = col_name;
 		type_metadata.oracle_data_type = data_type;
 		type_metadata.data_length = data_len;
 		type_metadata.precision = precision;
 		type_metadata.scale = scale;
-		type_metadata.has_scale = !row[4].empty();
-		type_metadata.type_owner = row[6];
-		type_metadata.char_used = row[7] == "C";
-		type_metadata.char_length = parse_idx(row[8]);
+		type_metadata.has_scale = has_scale;
+		type_metadata.type_owner = row[8];
+		type_metadata.char_used = row[9] == "C";
+		type_metadata.char_length = char_len;
 
 		auto decision = OracleTypeRegistry::ResolveMetadata(type_metadata, state.settings);
 		OracleTypeRegistry::ValidateSupported(decision, type_metadata);
 		type_metadata.srid = 0;
 		if (decision.category == OracleTypeCategory::SPATIAL) {
-			auto it = srid_map.find(StringUtil::Upper(col_name));
+			auto it = srid_map.find(upper_col);
 			if (it != srid_map.end()) {
 				type_metadata.srid = it->second;
 				decision = OracleTypeRegistry::ResolveMetadata(type_metadata, state.settings);
@@ -129,8 +186,8 @@ static void LoadColumns(OracleCatalogState &state, const string &schema, const s
 		OracleColumnMetadata meta;
 		meta.column_name = col_name;
 		meta.oracle_data_type = data_type;
-		meta.schema_name = schema;
-		meta.table_name = table;
+		meta.schema_name = best_owner;
+		meta.table_name = best_table;
 		meta.srid = type_metadata.srid;
 		meta.decision = decision;
 
@@ -143,31 +200,42 @@ static void LoadColumns(OracleCatalogState &state, const string &schema, const s
 
 OracleTableEntry::OracleTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, unique_ptr<CreateTableInfo> info,
                                    shared_ptr<OracleCatalogState> state, const string &schema_name,
-                                   const string &table_name, vector<OracleColumnMetadata> metadata,
-                                   OraclePartitionMetadata partition_metadata_p)
+                                   const string &table_name, vector<OracleColumnMetadata> metadata)
     : TableCatalogEntry(catalog, schema, *info), state(std::move(state)), schema_name(schema_name),
-      table_name(table_name), column_metadata(std::move(metadata)),
-      partition_metadata(std::move(partition_metadata_p)) {
-	// info consumed by base; nothing else to store
+      table_name(table_name), column_metadata(std::move(metadata)) {
 }
 
 unique_ptr<OracleTableEntry> OracleTableEntry::Create(Catalog &catalog, SchemaCatalogEntry &schema,
                                                       const string &schema_name, const string &table_name,
                                                       shared_ptr<OracleCatalogState> state,
                                                       const string &duckdb_entry_name) {
-	auto info = make_uniq<CreateTableInfo>();
-	info->schema = schema.name;
-	info->table = duckdb_entry_name.empty() ? table_name : duckdb_entry_name;
+	string resolved_schema = schema_name;
+	string resolved_table = table_name;
 	vector<ColumnDefinition> cols;
 	vector<OracleColumnMetadata> metadata;
-	LoadColumns(*state, schema_name, table_name, cols, metadata);
-	auto partition_metadata = state->LoadPartitionMetadata(schema_name, table_name);
+	LoadColumns(*state, resolved_schema, resolved_table, cols, metadata);
+	if (cols.empty()) {
+		bool found = false;
+		auto syn = state->ResolveSynonym(schema_name, table_name, found);
+		if (found) {
+			resolved_schema = syn.first;
+			resolved_table = syn.second;
+			LoadColumns(*state, resolved_schema, resolved_table, cols, metadata);
+		}
+	}
+	if (cols.empty()) {
+		return nullptr;
+	}
+
+	auto info = make_uniq<CreateTableInfo>();
+	info->schema = schema.name;
+	info->table = duckdb_entry_name.empty() ? resolved_table : duckdb_entry_name;
 	for (auto &col : cols) {
 		info->columns.AddColumn(col.Copy());
 	}
 	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
-	return make_uniq<OracleTableEntry>(catalog, schema, std::move(info), std::move(state), schema_name, table_name,
-	                                   std::move(metadata), std::move(partition_metadata));
+	return make_uniq<OracleTableEntry>(catalog, schema, std::move(info), std::move(state), resolved_schema,
+	                                   resolved_table, std::move(metadata));
 }
 
 TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) {
@@ -181,12 +249,10 @@ TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_p
 	auto quoted_schema = KeywordHelper::WriteQuoted(schema_name, '"');
 	auto quoted_table = KeywordHelper::WriteQuoted(table_name, '"');
 
-	// Get Oracle version info and settings for version-aware type conversions
-	const auto &version_info = state->GetVersionInfo();
-	const auto &settings = state->settings;
+	const auto version_info = state->GetVersionInfo();
 
-	// Build column list with required type conversions for problematic Oracle types.
 	string column_list;
+	vector<string> select_exprs;
 	idx_t col_idx = 0;
 	for (auto &col : columns.Physical()) {
 		if (col_idx > 0) {
@@ -194,20 +260,17 @@ TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_p
 		}
 
 		auto quoted_col = KeywordHelper::WriteQuoted(col.Name(), '"');
+		string expr = quoted_col;
 
-		// Apply type-specific conversion when needed.
 		if (col_idx < column_metadata.size()) {
 			const auto &meta = column_metadata[col_idx];
 			if (meta.RequiresQueryRewrite(version_info)) {
-				// Generate conversion expression and alias
 				auto converted = meta.ConversionExpression(quoted_col, version_info);
-				column_list += StringUtil::Format("%s AS %s", converted.c_str(), quoted_col.c_str());
-			} else {
-				column_list += quoted_col;
+				expr = StringUtil::Format("%s AS %s", converted.c_str(), quoted_col.c_str());
 			}
-		} else {
-			column_list += quoted_col;
 		}
+		column_list += expr;
+		select_exprs.push_back(std::move(expr));
 		col_idx++;
 	}
 
@@ -220,24 +283,26 @@ TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_p
 	bind_data =
 	    OracleBindInternal(context, state->connection_string, query, return_types, names, bind.release(), state.get());
 	auto &oracle_bind = bind_data->Cast<OracleBindData>();
-	for (idx_t i = 0; i < column_metadata.size() && i < oracle_bind.oci_sizes.size(); i++) {
+	oracle_bind.converted_select_exprs = std::move(select_exprs);
+
+	for (idx_t i = 0; i < column_metadata.size() && i < return_types.size(); i++) {
+		return_types[i] = column_metadata[i].decision.duckdb_type;
+		if (i < oracle_bind.original_types.size()) {
+			oracle_bind.original_types[i] = column_metadata[i].decision.duckdb_type;
+		}
 		if (i < oracle_bind.oracle_type_names.size() && !column_metadata[i].decision.normalized_type.empty()) {
 			oracle_bind.oracle_type_names[i] = column_metadata[i].decision.normalized_type;
 		}
 		if (i < oracle_bind.pushdown_eligible.size()) {
 			oracle_bind.pushdown_eligible[i] = column_metadata[i].decision.pushdown_eligible;
 		}
-		if (column_metadata[i].Category() == OracleTypeCategory::JSON) {
-			if (oracle_bind.oci_sizes[i] < 32767) {
-				oracle_bind.oci_sizes[i] = 32767;
-			}
+		if (i < oracle_bind.oci_sizes.size() && (IsLargeOracleCategory(column_metadata[i].Category()) ||
+		                                         column_metadata[i].RequiresQueryRewrite(version_info))) {
+			oracle_bind.oci_sizes[i] = 65535;
 		}
 	}
 
 	TableFunction tf({}, OracleQueryFunction, nullptr, OracleInitGlobal, nullptr);
-	// We don't implement table_filters, so set filter_pushdown = false
-	// This tells DuckDB to apply filters client-side via LogicalFilter operator
-	// The pushdown_complex_filter callback handles Oracle-side WHERE clause generation when enabled
 	tf.filter_pushdown = false;
 	tf.pushdown_complex_filter = OraclePushdownComplexFilter;
 	tf.projection_pushdown = true;

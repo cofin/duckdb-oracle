@@ -1,5 +1,6 @@
 #pragma once
 
+#include "duckdb/common/mutex.hpp"
 #include "duckdb/transaction/transaction_manager.hpp"
 #include "oracle_transaction.hpp"
 
@@ -19,6 +20,7 @@ public:
 private:
 	bool EraseTransaction(Transaction &transaction);
 
+	std::mutex transaction_lock;
 	vector<unique_ptr<OracleTransaction>> active;
 };
 

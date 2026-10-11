@@ -50,26 +50,26 @@ The storage extension, catalog, schema/table entry, transaction manager, and wri
 
 ### Phase 1: Storage Extension, Catalog State, Schema/Table Entries & Write Pipeline
 
-- [ ] **Task 1.1: Isolate per-ATTACH OracleCatalogState, synchronize OracleTransactionManager, and validate ATTACH options** -> [tasks/1.1.md](tasks/1.1.md)
+- [x] **Task 1.1: Isolate per-ATTACH OracleCatalogState, synchronize OracleTransactionManager, and validate ATTACH options** -> [tasks/1.1.md](tasks/1.1.md)
   - **Objective**: Remediate `H-18`, `H-20`, and `L-08` (storage extension part) in `oracle_storage_extension.*` and `oracle_transaction_manager.*`.
   - **Verification Strategy**: `tdd`
   - **Files**: `src/include/oracle_storage_extension.hpp`, `src/storage/oracle_storage_extension.cpp`, `src/include/oracle_transaction_manager.hpp`, `src/storage/oracle_transaction_manager.cpp`
-- [ ] **Task 1.2: Release catalog metadata connections after query, synchronize state getters, and parameterize catalog metadata SQL** -> [tasks/1.2.md](tasks/1.2.md)
+- [x] **Task 1.2: Release catalog metadata connections after query, synchronize state getters, and parameterize catalog metadata SQL** -> [tasks/1.2.md](tasks/1.2.md)
   - **Objective**: Remediate `H-24` (catalog connection pin part), `M-18` (catalog part), `M-19` (catalog part), `M-20`, and `L-09` (catalog part) in `oracle_catalog_state.hpp` and `oracle_catalog.cpp`.
   - **Verification Strategy**: `tdd`
   - **Depends On**: `storage-catalog-write-pipeline:1.1`
   - **Files**: `src/include/oracle_catalog_state.hpp`, `src/storage/oracle_catalog.cpp`
-- [ ] **Task 1.3: Override DuckCatalog/DuckSchemaEntry virtuals and preserve target schema/table in PlanInsert** -> [tasks/1.3.md](tasks/1.3.md)
+- [x] **Task 1.3: Override DuckCatalog/DuckSchemaEntry virtuals and preserve target schema/table in PlanInsert** -> [tasks/1.3.md](tasks/1.3.md)
   - **Objective**: Remediate `H-19` (schema entry part), `H-21`, and `L-08` (schema entry part) in `oracle_catalog.hpp` and `oracle_schema_entry.cpp`.
   - **Verification Strategy**: `tdd`
   - **Depends On**: `storage-catalog-write-pipeline:1.2`, `storage-catalog-write-pipeline:1.4`, `storage-catalog-write-pipeline:1.5`
   - **Files**: `src/include/oracle_catalog.hpp`, `src/storage/oracle_schema_entry.cpp`
-- [ ] **Task 1.4: Restore original_types in OracleTableEntry::GetScanFunction, remove eager partition queries, and enrich VECTOR column metadata** -> [tasks/1.4.md](tasks/1.4.md)
+- [x] **Task 1.4: Restore original_types in OracleTableEntry::GetScanFunction, remove eager partition queries, and enrich VECTOR column metadata** -> [tasks/1.4.md](tasks/1.4.md)
   - **Objective**: Remediate `H-22`, `M-18` (table entry part), `M-19` (table entry part), and `M-22` (table entry part) in `oracle_table_entry.hpp` and `oracle_table_entry.cpp`.
   - **Verification Strategy**: `tdd`
   - **Depends On**: `storage-catalog-write-pipeline:1.2`
   - **Files**: `src/include/oracle_table_entry.hpp`, `src/storage/oracle_table_entry.cpp`
-- [ ] **Task 1.5: Pass explicit schema/table to PhysicalOracleInsert, guard >64KB ub2 write lengths, bind DATE via SQLT_ODT, and optimize batch writes** -> [tasks/1.5.md](tasks/1.5.md)
+- [x] **Task 1.5: Pass explicit schema/table to PhysicalOracleInsert, guard >64KB ub2 write lengths, bind DATE via SQLT_ODT, and optimize batch writes** -> [tasks/1.5.md](tasks/1.5.md)
   - **Objective**: Remediate `H-19` (insert/write part), `H-23` (write part), `M-21`, `M-22` (write part), and `L-09` (write part) in `oracle_write.*` and `oracle_insert.*`.
   - **Verification Strategy**: `tdd`
   - **Depends On**: `storage-catalog-write-pipeline:1.2`, `storage-catalog-write-pipeline:1.4`
