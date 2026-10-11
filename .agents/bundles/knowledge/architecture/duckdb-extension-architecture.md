@@ -40,8 +40,8 @@ DuckDB extensions dynamically extend the core database engine with custom storag
 |   +---> OracleCatalogState    |
 |   +---> OracleSchemaEntry     |
 |           +---> OracleTable   |
-|                   +-> BindScan|
-|                   +-> BindIns |
+|                   +-> GetScan |
+|   +---> PlanInsert            |
 +-------------------------------+
 ```
 
@@ -71,42 +71,29 @@ DuckDB allows custom engines to act as attached databases via `ATTACH '' AS ora 
 
 ```cpp
 auto &config = DBConfig::GetConfig(db);
-auto storage_extension = make_uniq<StorageExtension>();
-
-// Attach callback invoked on ATTACH database statement
-storage_extension->attach = [](StorageExtensionInfo *info, ClientContext &context,
-                               AttachedDatabase &db, const string &name,
-                               AttachInfo &attach_info,
-                               AttachOptions &attach_options) -> unique_ptr<Catalog> {
-    return make_uniq<OracleCatalog>(db, ...);
-};
-
-// Transaction manager callback for statement-atomic transaction tracking
-storage_extension->create_transaction_manager = [](StorageExtensionInfo *info,
-                                                   AttachedDatabase &db,
-                                                   Catalog &catalog) -> unique_ptr<TransactionManager> {
-    return make_uniq<OracleTransactionManager>(db);
-};
-
+auto storage_extension = make_uniq<OracleStorageExtension>();
 config.storage_extensions["oracle"] = std::move(storage_extension);
 ```
+
+- **`OracleAttach` (`src/storage/oracle_storage_extension.cpp`)**: Allocates a dedicated `make_shared_ptr<OracleCatalogState>(connection_string, wallet_path)` for every `ATTACH` invocation, applies per-attachment options via `state->ApplyOptions(info.options)`, registers the state under the attached database alias (`OracleCatalogState::Register(state, name)`), and returns `CreateOracleCatalog(&db, state)`.
+- **`OracleCreateTransactionManager`**: Looks up the per-catalog state via `OracleCatalogState::LookupByAlias(db.GetName())` and constructs `OracleTransactionManager(db, state)` with a mutex-guarded active transaction map.
 
 ## 3. Catalog & Schema Hierarchy (Per-ATTACH State Isolation)
 
 DuckDB organizes attached databases into a tree of catalog objects with strict per-`ATTACH` catalog state isolation:
 
 1. **`OracleCatalogState` (`src/storage/oracle_catalog.cpp`)**:
-   - Encapsulates metadata discovery queries (`ALL_USERS`, `ALL_OBJECTS`, `ALL_SYNONYMS`, `ALL_TAB_COLUMNS`, `ALL_PART_TABLES`, `ALL_TAB_PARTITIONS`), lazy schema discovery (`oracle_lazy_schema_loading`), `CURRENT_SCHEMA` resolution, and per-catalog metadata caches.
-   - Each `OracleCatalog` owns its own `std::shared_ptr<OracleCatalogState>` and connection configuration so multiple concurrent `ATTACH` instances do not overwrite each other's connection or metadata caches.
+   - Encapsulates metadata discovery queries (`ALL_USERS`, `ALL_OBJECTS`, `ALL_SYNONYMS`, `ALL_TAB_COLUMNS`, `ALL_VEC_COLUMNS`, `ALL_PART_TABLES`, `ALL_TAB_PARTITIONS`) using parameterized bind variables (`ExecuteMetadataQueryWithStringBinds`), lazy schema discovery (`oracle_lazy_schema_loading`), `CURRENT_SCHEMA` resolution, and per-catalog metadata caches.
+   - Acquires a short-lived `OracleConnection` inside `ExecuteMetadataQuery` / `ExecuteMetadataQueryWithStringBinds` that immediately returns its pooled handle to `OracleConnectionManager` after each metadata query, preventing self-deadlock when `oracle_connection_limit = 1`.
+   - Records per-`ATTACH` options in `settings.attach_overridden_keys` so `GetOracleSettings` preserves `ATTACH`-level overrides unless a session explicitly sets a `SettingScope::LOCAL` override.
 
 2. **`OracleCatalog` & `OracleSchemaEntry` (`src/storage/oracle_schema_entry.cpp`)**:
-   - `OracleCatalog` subclasses `duckdb::Catalog`, holding per-attachment connection strings, wallet paths, and `OracleCatalogState`.
-   - `OracleSchemaEntry` subclasses `duckdb::SchemaCatalogEntry`, representing an Oracle schema (database user / namespace) and lazily loading/caching table, view, materialized view, and synonym entries into `OracleTableEntry` instances upon lookup.
+   - `OracleCatalog` subclasses `duckdb::Catalog`, overriding `InMemory()`, `GetDBPath()` (redacting passwords via `RedactOracleConnectionString`), `GetDatabaseSize()`, and `PlanInsert` (passing resolved `oracle_table.GetSchemaName()` and `oracle_table.GetTableName()` to `PhysicalOracleInsert` for cross-schema and synonym-backed targets).
+   - `OracleSchemaEntry` subclasses `duckdb::SchemaCatalogEntry`, lazily loading table, view, materialized view, and synonym entries into `OracleTableEntry` instances and throwing clean `BinderException` diagnostics for unsupported DDL operations.
 
 3. **`OracleTableEntry` (`src/storage/oracle_table_entry.cpp`)**:
-   - Subclasses `duckdb::TableCatalogEntry`.
-   - Overrides `GetScanFunction` to bind `OracleScanFunction` with projected column IDs.
-   - Overrides `BindInsert` to return `PhysicalOracleInsert`, enabling `INSERT INTO ...` syntax.
+   - Subclasses `duckdb::TableCatalogEntry`, loading column metadata from `ALL_TAB_COLUMNS` (and enriching Oracle 23ai `VECTOR` columns from `ALL_VEC_COLUMNS` and spatial SRIDs from `ALL_SDO_GEOM_METADATA`).
+   - Overrides `GetScanFunction` to construct an `OracleBindData` with full column metadata, `original_types`, and 65,535-byte buffer sizing for special/rewritten categories.
 
 ## 4. SecretManager Integration (`src/oracle_secret.cpp`)
 

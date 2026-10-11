@@ -33,16 +33,16 @@ The Oracle Call Interface (OCI) subsystem provides low-level, high-throughput co
                            |
                            v
        +-------------------------------------------------------+
-       | OracleConnectionContext (Handle Tree)                 |
+       | OracleContext (Handle Tree)                           |
        |                                                       |
-       |  OCIEnv (OCI_THREADED | OCI_OBJECT)                   |
+       |  std::shared_ptr<OCIEnv> (OCI_THREADED | OCI_OBJECT)  |
        |    +---> OCIError (Thread-local error diagnostic)     |
        |    +---> OCISvcCtx (Service Context)                  |
        |            +---> OCIServer (Physical connection)      |
        |            +---> OCISession (Authenticated user)      |
        |                                                       |
        |  Per-Execution Statement Handles:                     |
-       |    +---> OCIStmt (Allocated via AllocateSharedOCIStmt)|
+       |    +---> OCIStmt (AllocateOCIStatement / Shared)      |
        +-------------------------------------------------------+
                            |
                            v  (OCI Array Fetch / Array Bind via TCP)
@@ -58,7 +58,7 @@ OCI enforces strict parent-child relationships between handles. Freeing a parent
 1. **Environment Handle (`std::shared_ptr<OCIEnv>`)**:
    - Root handle allocated via `OCIEnvCreate` with modes `OCI_THREADED | OCI_OBJECT`.
    - Shared across threads; all subordinate handles inherit memory allocation and concurrency settings from this environment.
-   - Co-owned via `std::shared_ptr<OCIEnv>` inside both `OracleConnectionManager` and every `OracleConnectionContext` so that active or checked-out connections and child statement handles never outlive `OCIEnv` during shutdown.
+   - Co-owned via `std::shared_ptr<OCIEnv> env_owner` as the first member of `OracleContext` and inside `OracleConnectionManager` so that active or checked-out connections and child statement handles never outlive `OCIEnv` during static destruction, and `OracleContext::~OracleContext` frees `authp`, `svchp`, `srvhp`, and `errhp` before `env_owner.reset()`.
 
 2. **Error Handle (`OCIError`)**:
    - Child of `OCIEnv` with handle type `OCI_HTYPE_ERROR`.
@@ -67,19 +67,20 @@ OCI enforces strict parent-child relationships between handles. Freeing a parent
 
 3. **Server Handle (`OCIServer`)**:
    - Represents the physical transport connection to the database listener.
-   - Attached using `OCIServerAttach` with an Oracle Net connect descriptor or Easy Connect string (e.g., `host:port/service_name`).
+   - Attached using `OCIServerAttach` with an Oracle Net connect descriptor, TNS alias, or Easy Connect string (e.g., `host:port/service_name`).
 
 4. **Session Handle (`OCISession`)**:
    - Represents the user authentication and session context.
-   - Initialized with `OCI_ATTR_USERNAME` and `OCI_ATTR_PASSWORD`, then authenticated via `OCISessionBegin` using `OCI_CRED_RDBMS` (and optional `OCI_STMT_CACHE` sizing via `oracle_stmt_cache_size`).
-   - For Oracle Autonomous Database (ADB) or mutual TLS (mTLS), `TNS_ADMIN` points to an unpacked Oracle Wallet directory containing `tnsnames.ora`, `sqlnet.ora`, and `cwallet.sso`.
+   - Authenticated via `OCISessionBegin` using `OCI_CRED_RDBMS` (with `OCI_ATTR_USERNAME` and `OCI_ATTR_PASSWORD`, scrubbing the plaintext password buffer immediately afterward) or `OCI_CRED_EXT` for External Password Store (SEPS `/@connect_identifier`) wallets.
+   - Initializes deterministic session state (`ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY-MM-DD HH24:MI:SS' NLS_TIMESTAMP_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF' NLS_TIMESTAMP_TZ_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM' NLS_NUMERIC_CHARACTERS = '.,'`) and configures `OCI_ATTR_STMTCACHESIZE` on `OCISvcCtx` from `oracle_stmt_cache_size`.
+   - For Oracle Autonomous Database (ADB) or mutual TLS (mTLS), `ScopedTnsAdmin` sets `TNS_ADMIN` only when `wallet_path` is non-empty and differs from the active `TNS_ADMIN`, and releases the guard immediately after `OCISessionBegin`.
 
 5. **Service Context Handle (`OCISvcCtx`)**:
    - The operational composite handle containing references to both the active `OCIServer` and `OCISession`.
    - All statement execution, transactions, and commits are dispatched through the service context.
 
 6. **Statement Handle (`OCIStmt`)**:
-   - Prepared via `OCIStmtPrepare2` (supporting OCI session statement caching when `oracle_stmt_cache_size > 0`) and released with `OCIStmtRelease`, or allocated via `OCIHandleAlloc` (`OCI_HTYPE_STMT`).
+   - Allocated via `AllocateOCIStatement` or `AllocateSharedOCIStatement` (`OCIHandleAlloc` with `OCI_HTYPE_STMT`), prepared via `OCIStmtPrepare`, and freed via `OCIHandleFree(stmt, OCI_HTYPE_STMT)` before connection handles are destroyed.
    - Represents a prepared SQL statement, its bind variables (`OCIBind`), and its output column defines (`OCIDefine`).
 
 ## Connection Pooling & Session Caching
@@ -87,9 +88,9 @@ OCI enforces strict parent-child relationships between handles. Freeing a parent
 `OracleConnectionManager` (`src/oracle_connection_manager.cpp`) maintains a connection cache:
 
 - **Cache Key**: A deterministic key derived from the normalized connection string, wallet path, and effective connection settings.
-- **Session Reuse**: When enabled (`oracle_connection_cache = true`), connections are returned to the pool after query execution or metadata discovery and reused by subsequent queries, avoiding the high latency of physical connect and `OCISessionBegin`.
-- **Concurrency Guard**: Access to the pool is protected by a standard mutex (`std::mutex`). Connections checked out of the pool are wrapped in `std::shared_ptr<OracleConnectionHandle>`, which returns the connection to the pool when all references drop while retaining `std::shared_ptr<OCIEnv>` ownership.
-- **Connection Ceiling & Call Timeout**: Bounded by `oracle_connection_limit` (default 8, validated up to 1024) and `oracle_call_timeout_ms` (default 30,000 ms, up to 3,600,000 ms).
+- **Session Reuse & Health Checks**: When enabled (`oracle_connection_cache = true`), `OracleConnectionHandle::~OracleConnectionHandle` rolls back any uncommitted transaction (`OCITransRollback`), verifies session health via `IsOracleContextHealthy` (`OCI_ATTR_SERVER_STATUS == OCI_SERVER_NORMAL` and `OCIPing`), and returns healthy handles to `pool->idle` (unlocking `pool->lock` before `pool->cv.notify_one()`). `Acquire()` also validates idle handles before checkout.
+- **Concurrency Guard**: Access to the pool is protected by a per-pool mutex (`std::mutex`) and condition variable (`std::condition_variable`) with deadline enforcement even across `pool->stale` invalidations.
+- **Connection Ceiling & Call Timeout**: Bounded by `oracle_connection_limit` (default 8, validated up to 1024), `oracle_call_timeout_ms` (default 30,000 ms, up to 3,600,000 ms), and `oracle_stmt_cache_size` (default 20, up to 1024).
 
 ## Thick Driver Runtime Integration
 

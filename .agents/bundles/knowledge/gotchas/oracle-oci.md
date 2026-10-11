@@ -40,27 +40,37 @@ Oracle Instant Client relies on Linux kernel asynchronous I/O (`libaio`).
 - On Ubuntu 24.04 (Noble Numbat) and modern Debian derivatives, package 64-bit time transition renamed the package to `libaio1t64`, providing `/usr/lib/x86_64-linux-gnu/libaio.so.1t64`. Instant Client will fail to load with `error while loading shared libraries: libaio.so.1: cannot open shared object file`.
 - **Resolution**: `Makefile` includes `ensure-libaio` macro that detects the library and symlinks `libaio.so.1t64 -> libaio.so.1`.
 
-## 3. String Buffer Cap (64 KB) vs Dynamic LOB Locators
+## 3. 64 KB (`65535`-Byte) Fetch Buffers & Indicator Truncation vs `ORA-24347`
 
-In `src/oracle_scan.cpp`:
-- Regular `VARCHAR2` / `CHAR` columns are fetched using `SQLT_STR` into 64 KB (`65535`-byte) pre-allocated row slots, with explicit truncation checks if `indicator > 0` or `-2`.
-- `CLOB`, `NCLOB`, `BLOB`, `SDO_UTIL.TO_WKTGEOMETRY(col)`, and `VECTOR_SERIALIZE(col RETURNING CLOB)` are fetched using `OCILobLocator*` descriptors (`SQLT_CLOB` / `SQLT_BLOB`) and dynamically streamed via `OCILobGetLength2` and `OCILobRead2` so large LOBs, complex WKT polygons, and high-dimensional vectors are never truncated at 64 KB.
+In `src/oracle_scan.cpp` and `src/storage/oracle_table_entry.cpp`:
+- Regular `VARCHAR2` / `CHAR` columns size their `SQLT_STR` buffer from `OCI_ATTR_CHAR_SIZE` / `OCI_ATTR_DATA_SIZE` (`ub2` 2-byte attributes), while `CLOB`, `NCLOB`, `BLOB`, `JSON`, `XMLTYPE`, `SDO_UTIL.TO_WKTGEOMETRY(col)`, and `VECTOR_SERIALIZE(col RETURNING CLOB)` allocate the maximum `ub2` define capacity (`65535` bytes via `IsLargeOracleCategory`).
+- During `OCIStmtFetch2`, `OracleQueryFunction` inspects `ind == -2 || ind > 0` across all fetched rows and columns *before* checking `status == OCI_SUCCESS_WITH_INFO`, and on `OCI_SUCCESS_WITH_INFO` only raises a generic truncation error if `OCIErrorCodeMatches(errhp, 1406)` (`ORA-01406`). This reports exact column/row truncation diagnostics while ignoring benign `ORA-24347` warnings (NULL column in an aggregate function).
 
 ## 4. Unconstrained NUMBER -> DOUBLE Precision Loss
 
-Oracle tables frequently declare numeric columns without precision or scale constraints: `col NUMBER`.
+Oracle tables frequently declare numeric columns without precision or scale constraints: `col NUMBER` (or `NUMBER(*, 0)` where `OCI_ATTR_PRECISION == 0` and `OCI_ATTR_SCALE == 0`).
 - DuckDB cannot map unconstrained `NUMBER` to fixed-width integer types (`BIGINT`) because Oracle numbers support up to 38 decimal digits.
-- DuckDB Oracle maps unconstrained `NUMBER` to `LogicalType::DOUBLE`.
+- Both `OracleTypeRegistry::ResolveMetadata` and `OracleTypeRegistry::ResolveOciDescribe` map unconstrained `NUMBER` and `NUMBER(*, 0)` to `LogicalType::DOUBLE`.
 - **Pitfall**: Double-precision floating point (`IEEE 754`) provides 53 bits of mantissa (~15-17 significant decimal digits). Integers or IDs exceeding $2^{53} - 1$ (9,007,199,254,740,991) will suffer silent precision loss. For exact precision, declare columns with explicit scale/precision (e.g. `NUMBER(19, 0)`) or use `TO_CHAR()` on the Oracle side.
 
 ## 5. Timezone Handling on TSTZ / LTZ
 
-When fetching `TIMESTAMP WITH TIME ZONE` or `TIMESTAMP WITH LOCAL TIME ZONE` columns:
-- `SQLT_TIMESTAMP_TZ` / `SQLT_TIMESTAMP_LTZ` descriptors preserve timezone offset calculation via `OCIDateTimeGetTimeZoneOffset`, converting timestamps to UTC microseconds for DuckDB's `LogicalType::TIMESTAMP_TZ`.
-- Verify that the session `TIME_ZONE` is synchronized when comparing local session timestamps.
+When fetching `TIMESTAMP WITH TIME ZONE` or `TIMESTAMP WITH LOCAL TIME ZONE` columns as `SQLT_STR`:
+- `OracleConnectionManager::CreateConnection` configures `NLS_TIMESTAMP_TZ_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM'` and `NLS_NUMERIC_CHARACTERS = '.,'` in `ALTER SESSION SET`.
+- `ParseTimestamp` (`src/oracle_type_conversion.cpp`) calls `Timestamp::TryConvertTimestamp(str_val.c_str(), str_val.size(), result, true)` (`use_offset = true`) so timezone offsets are converted into UTC microseconds for DuckDB's `LogicalType::TIMESTAMP_TZ`.
 
 ## 6. Configurable Call Timeout (`oracle_call_timeout_ms`)
 
-`oracle_scan.cpp` and `oracle_connection_manager.cpp` configure `OCI_ATTR_CALL_TIMEOUT` from `oracle_call_timeout_ms` (default `30000` ms, validated between `0` and `3600000` ms):
+`oracle_scan.cpp`, `oracle_functions.cpp`, and `oracle_connection_manager.cpp` configure `OCI_ATTR_CALL_TIMEOUT` from `oracle_call_timeout_ms` (default `30000` ms, validated between `0` and `3600000` ms):
 - Long-running analytical scans that take more than 30 seconds per round-trip without returning rows will timeout with `ORA-01013: user requested cancel of current operation`.
 - Increase `SET oracle_call_timeout_ms = 600000;` (or `0` to disable), tune `oracle_prefetch_rows`, or apply predicate pushdown for heavy queries.
+
+## 7. Per-`ATTACH` Options vs `DBConfig::AddExtensionOption`
+
+In DuckDB `v1.5.x`, `DBConfig::AddExtensionOption` inserts default values directly into `db_config.user_settings`, causing `ClientContext::TryGetCurrentSetting` to return a `SettingScope::GLOBAL` match even when the user never ran `SET oracle_*`.
+- **Resolution (`src/oracle_settings.cpp`, `src/oracle_connection_resolver.cpp`)**: `ApplyAttachOptions` records every explicitly provided `ATTACH` option's global setting key in `OracleSettings::attach_overridden_keys`, and `GetOracleSettings` preserves `state->settings` for any key in `attach_overridden_keys` unless `lookup.GetScope() == SettingScope::LOCAL`.
+
+## 8. Oracle Empty String (`''`) NULL Semantics in Filter Pushdown
+
+Oracle treats empty `VARCHAR2` literals (`''`) as `NULL`, so `WHERE col = ''` and `WHERE col <> ''` always evaluate to `UNKNOWN` in Oracle (returning 0 rows), whereas DuckDB evaluates `''` as a non-null zero-length string.
+- **Resolution (`src/oracle_pushdown.cpp`)**: `ConstantToSQL` and `TryExtractLike` / `TryExtractPrefix` / `TryExtractSuffix` / `TryExtractContains` refuse to push down empty string literals (`str_val.empty()`), leaving empty-string predicates for DuckDB's local filter executor.

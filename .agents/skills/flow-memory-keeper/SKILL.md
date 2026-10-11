@@ -114,4 +114,6 @@ Before claiming a task, phase, or flow is complete, verify:
 
 - This consumer skill is installed at `.agents/skills/flow-memory-keeper/SKILL.md`;
   `.agents/skills/` is the only operational project-skill authority.
-- Add short, durable project-specific reminders here as they are discovered.
+- `duckdb/.clang-tidy` enforces both `cppcoreguidelines-pro-type-cstyle-cast` and `cppcoreguidelines-pro-type-const-cast`: pass `reinterpret_cast<const OraText *>(str.c_str())` directly to `OCIStmtPrepare` and `OCIServerAttach`, and pass mutable `std::string` buffers (`&str[0]`) to `OCIAttrSet` instead of `const_cast`.
+- Run `DUCKDB_FORMAT_SKIP_VERSION_CHECKS=1 make format-check` (or `make format-fix`) when the local `clang-format` binary version differs from `11.0.1`.
+- `DBConfig::AddExtensionOption` populates `db_config.user_settings`, so per-`ATTACH` options must be recorded in `OracleSettings::attach_overridden_keys` and preserved in `GetOracleSettings` unless overridden at `SettingScope::LOCAL`.

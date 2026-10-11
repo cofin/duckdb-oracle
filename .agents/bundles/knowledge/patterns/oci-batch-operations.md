@@ -69,16 +69,15 @@ DuckDB DataChunk (Vector of Rows, up to 2048)
 OCIBindByPos(stmt, &bindhp, errhp, 1, values, sizeof(int64_t),
              SQLT_INT, ind, nullptr, nullptr, 0, nullptr, OCI_DEFAULT);
        |
-       v  (Executed with iters = chunk.size())
-OCIStmtExecute(svchp, stmt, errhp, iters /* chunk.size() */, 0,
-               nullptr, nullptr, OCI_BATCH_ERRORS);
+       v  (Executed with iters = current_batch_rows)
+OCIStmtExecute(svchp, stmt, errhp, iters /* current_batch_rows */, 0,
+               nullptr, nullptr, OCI_DEFAULT);
 ```
 
 ### Column-Wise Array Binding Invariants
 
-1. **Contiguous Storage & Stride**: Column buffers must be contiguous in memory across all rows in the batch, with string buffers sized to 64 KB (`65536` bytes) per row slot and `DATE` columns bound via 7-byte `OCIDate` (`SQLT_ODT`) structs.
+1. **Contiguous Storage & Stride**: Column buffers must be contiguous in memory across all rows in the batch, with string buffers sized to the maximum value length in the batch (validated `<= 65535` bytes, `NumericLimits<ub2>::Maximum()`) and `DATE` columns bound via 7-byte `OCIDate` (`SQLT_ODT`) structs.
 2. **Indicator Parallelism**: Each column buffer requires an `sb2` indicator array of equal length. For every row `i`:
-   - If DuckDB `ValidityMask::RowIsValid(i)` is true: `indicators[i] = OCI_IND_NOTNULL` (`0`).
-   - If row is null: `indicators[i] = OCI_IND_NULL` (`-1`).
-3. **Execution Iterations (`iters`)**: In `OCIStmtExecute`, pass `iters = chunk.size()`. Oracle processes all `N` rows in a single batch round-trip.
-4. **Bulk Error Tracking (`OCI_BATCH_ERRORS`)**: Prevents a single failing row from aborting the entire pipeline without identifying the offending index. The server records failed row indices in `OCI_ATTR_DML_ROW_OFFSET`.
+   - If DuckDB `ValidityMask::RowIsValid(i)` is true: `indicators[i] = 0`.
+   - If row is null: `indicators[i] = -1`.
+3. **Execution Iterations (`iters`)**: In `OCIStmtExecute`, pass `iters = current_batch_rows` with `OCI_DEFAULT`. Oracle processes all `N` rows in a single batch round-trip, and `OracleWriteGlobalState` rolls back the active transaction via `OCITransRollback` if any batch execution fails before `Finalize` commits.
