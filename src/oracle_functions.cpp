@@ -7,6 +7,7 @@
 #include "oracle_secret.hpp"
 #include "oracle_table_function.hpp"
 #include "oracle_utils.hpp"
+#include "oracle_write.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/function/scalar_function.hpp"
@@ -17,86 +18,122 @@
 namespace duckdb {
 
 static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto connection_value = args.data[0].GetValue(0);
-	auto sql_value = args.data[1].GetValue(0);
+	RejectOracleWriteInExplicitTransaction(state.GetContext());
 
-	if (connection_value.IsNull() || sql_value.IsNull()) {
-		result.SetValue(0, Value());
-		return;
-	}
+	UnifiedVectorFormat conn_format;
+	UnifiedVectorFormat sql_format;
+	args.data[0].ToUnifiedFormat(args.size(), conn_format);
+	args.data[1].ToUnifiedFormat(args.size(), sql_format);
 
-	auto connection_string = connection_value.ToString();
-	auto sql_statement = sql_value.ToString();
-	if (connection_string.empty()) {
-		result.SetValue(0, Value());
-		return;
-	}
+	auto conn_data = UnifiedVectorFormat::GetData<string_t>(conn_format);
+	auto sql_data = UnifiedVectorFormat::GetData<string_t>(sql_format);
 
-	if (getenv("ORACLE_DEBUG")) {
-		fprintf(stderr, "[oracle] execute start: %s\n", sql_statement.c_str());
-	}
+	result.SetVectorType(VectorType::FLAT_VECTOR);
+	auto result_data = FlatVector::GetData<string_t>(result);
+	auto &result_validity = FlatVector::Validity(result);
 
-	auto resolved = ResolveOracleConnection(state.GetContext(), connection_string, nullptr, true, "oracle_execute");
-	auto conn_handle = OracleConnectionManager::Instance().Acquire(resolved.connection_string, resolved.wallet_path,
-	                                                               resolved.settings);
-	auto ctx = conn_handle->Get();
+	for (idx_t row_idx = 0; row_idx < args.size(); row_idx++) {
+		auto conn_idx = conn_format.sel->get_index(row_idx);
+		auto sql_idx = sql_format.sel->get_index(row_idx);
 
-	auto stmthp = AllocateOCIStatement(ctx->envhp, ctx->errhp, "Failed to allocate OCI statement handle");
+		if (!conn_format.validity.RowIsValid(conn_idx) || !sql_format.validity.RowIsValid(sql_idx)) {
+			result_validity.SetInvalid(row_idx);
+			continue;
+		}
 
-	sword status = OCIStmtPrepare(stmthp.get(), ctx->errhp, (OraText *)sql_statement.c_str(), sql_statement.size(),
-	                              OCI_NTV_SYNTAX, OCI_DEFAULT);
-	CheckOCIError(status, ctx->errhp, "Failed to prepare OCI statement");
-
-	status = OCIStmtExecute(ctx->svchp, stmthp.get(), ctx->errhp, 1, 0, nullptr, nullptr, OCI_COMMIT_ON_SUCCESS);
-	CheckOCIError(status, ctx->errhp, "Failed to execute OCI statement");
-
-	string result_msg;
-	if (stmthp) {
-		ub2 stmt_type = 0;
-		CheckOCIError(OCIAttrGet(stmthp.get(), OCI_HTYPE_STMT, &stmt_type, 0, OCI_ATTR_STMT_TYPE, ctx->errhp),
-		              ctx->errhp, "Failed to get OCI statement type");
-
-		ub4 row_count = 0;
-		CheckOCIError(OCIAttrGet(stmthp.get(), OCI_HTYPE_STMT, &row_count, 0, OCI_ATTR_ROW_COUNT, ctx->errhp),
-		              ctx->errhp, "Failed to get OCI row count");
+		auto connection_string = conn_data[conn_idx].GetString();
+		auto sql_statement = sql_data[sql_idx].GetString();
+		if (connection_string.empty()) {
+			result_validity.SetInvalid(row_idx);
+			continue;
+		}
 
 		if (getenv("ORACLE_DEBUG")) {
-			fprintf(stderr, "[oracle] execute stmt_type: %d, row_count: %llu\n", stmt_type,
-			        static_cast<unsigned long long>(row_count));
+			fprintf(stderr, "[oracle] execute start: %s\n", sql_statement.c_str());
+		}
+
+		auto resolved = ResolveOracleConnection(state.GetContext(), connection_string, nullptr, true, "oracle_execute");
+		StringUtil::Trim(sql_statement);
+		if (sql_statement.empty()) {
+			throw InvalidInputException("oracle_execute SQL statement cannot be empty");
+		}
+
+		auto conn_handle = OracleConnectionManager::Instance().Acquire(resolved.connection_string, resolved.wallet_path,
+		                                                               resolved.settings);
+		auto ctx = conn_handle->Get();
+
+		auto stmthp = AllocateOCIStatement(ctx->envhp, ctx->errhp, "Failed to allocate OCI statement handle");
+
+		ub4 call_timeout_ms = static_cast<ub4>(resolved.settings.call_timeout_ms);
+		if (call_timeout_ms > 0) {
+			CheckOCIOptionalAttributeORA24315(
+			    OCIAttrSet(stmthp.get(), OCI_HTYPE_STMT, &call_timeout_ms, 0, OCI_ATTR_CALL_TIMEOUT, ctx->errhp),
+			    ctx->errhp, "Failed to set OCI statement call timeout");
+		}
+
+		sword status =
+		    OCIStmtPrepare(stmthp.get(), ctx->errhp, reinterpret_cast<const OraText *>(sql_statement.c_str()),
+		                   sql_statement.size(), OCI_NTV_SYNTAX, OCI_DEFAULT);
+		CheckOCIError(status, ctx->errhp, "Failed to prepare OCI statement");
+
+		ub2 stmt_type = 0;
+		CheckOCIError(OCIAttrGet(stmthp.get(), OCI_HTYPE_STMT, &stmt_type, nullptr, OCI_ATTR_STMT_TYPE, ctx->errhp),
+		              ctx->errhp, "Failed to get OCI statement type");
+		if (stmt_type == OCI_STMT_SELECT) {
+			throw InvalidInputException("oracle_execute does not support SELECT statements; use oracle_query instead");
+		}
+
+		status = OCIStmtExecute(ctx->svchp, stmthp.get(), ctx->errhp, 1, 0, nullptr, nullptr, OCI_COMMIT_ON_SUCCESS);
+		CheckOCIError(status, ctx->errhp, "Failed to execute OCI statement");
+
+		ub8 row_count = 0;
+		CheckOCIError(OCIAttrGet(stmthp.get(), OCI_HTYPE_STMT, &row_count, nullptr, OCI_ATTR_UB8_ROW_COUNT, ctx->errhp),
+		              ctx->errhp, "Failed to get OCI row count");
+
+		if (resolved.catalog_state &&
+		    (stmt_type == OCI_STMT_CREATE || stmt_type == OCI_STMT_DROP || stmt_type == OCI_STMT_ALTER)) {
+			resolved.catalog_state->ClearCaches();
+		}
+
+		auto row_count_str = std::to_string(row_count);
+		if (getenv("ORACLE_DEBUG")) {
+			fprintf(stderr, "[oracle] execute stmt_type: %d, row_count: %s\n", stmt_type, row_count_str.c_str());
 		}
 
 		bool is_dml = (stmt_type == OCI_STMT_UPDATE || stmt_type == OCI_STMT_DELETE || stmt_type == OCI_STMT_INSERT ||
 		               stmt_type == OCI_STMT_MERGE);
 
+		string result_msg;
 		if (row_count > 0 || is_dml) {
-			result_msg = StringUtil::Format("Statement executed successfully (%llu rows affected)",
-			                                static_cast<unsigned long long>(row_count));
+			result_msg =
+			    StringUtil::Format("Statement executed successfully (%s rows affected)", row_count_str.c_str());
 		} else {
 			result_msg = "Statement executed successfully";
 		}
-	} else {
-		result_msg = "Statement executed successfully";
-	}
 
-	if (getenv("ORACLE_DEBUG")) {
-		fprintf(stderr, "[oracle] execute success: %s\n", result_msg.c_str());
-	}
+		if (getenv("ORACLE_DEBUG")) {
+			fprintf(stderr, "[oracle] execute success: %s\n", result_msg.c_str());
+		}
 
-	result.SetValue(0, Value(result_msg));
+		result_data[row_idx] = StringVector::AddString(result, result_msg);
+	}
 }
 
 static void OracleClearCache(DataChunk &, ExpressionState &, Vector &result) {
 	OracleCatalogState::ClearAllCaches();
 	OracleConnectionManager::Instance().Clear();
 	result.SetValue(0, Value("oracle caches cleared"));
+	result.SetVectorType(VectorType::CONSTANT_VECTOR);
 }
 
 static void OracleDebugResetStatsFunction(DataChunk &, ExpressionState &, Vector &result) {
 	OracleDebugResetStats();
 	result.SetValue(0, Value("oracle debug stats reset"));
+	result.SetVectorType(VectorType::CONSTANT_VECTOR);
 }
 
 static void OracleDebugCounterFunction(DataChunk &args, ExpressionState &, Vector &result) {
+	result.SetVectorType(VectorType::FLAT_VECTOR);
 	auto count = args.size();
 	for (idx_t i = 0; i < count; i++) {
 		auto value = args.data[0].GetValue(i);
@@ -110,9 +147,11 @@ static void OracleDebugCounterFunction(DataChunk &args, ExpressionState &, Vecto
 
 static void OracleDebugLastQueryFunction(DataChunk &, ExpressionState &, Vector &result) {
 	result.SetValue(0, Value(OracleDebugGetLastQuery()));
+	result.SetVectorType(VectorType::CONSTANT_VECTOR);
 }
 
 static void OracleDebugPartitionMetadataFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	result.SetVectorType(VectorType::FLAT_VECTOR);
 	auto count = args.size();
 	for (idx_t i = 0; i < count; i++) {
 		auto connection_value = args.data[0].GetValue(i);
@@ -164,6 +203,8 @@ void RegisterOracleFunctions(ExtensionLoader &loader) {
 	oracle_scan_func.filter_pushdown = false;
 	oracle_scan_func.pushdown_complex_filter = OraclePushdownComplexFilter;
 	oracle_scan_func.projection_pushdown = true;
+	oracle_scan_func.named_parameters["as_of_scn"] = LogicalType::UBIGINT;
+	oracle_scan_func.named_parameters["as_of_timestamp"] = LogicalType::VARCHAR;
 	loader.RegisterFunction(oracle_scan_func);
 
 	auto oracle_query_func = TableFunction("oracle_query", {LogicalType::VARCHAR, LogicalType::VARCHAR},
@@ -174,27 +215,33 @@ void RegisterOracleFunctions(ExtensionLoader &loader) {
 	loader.RegisterFunction(oracle_query_func);
 
 	auto clear_cache_func = ScalarFunction("oracle_clear_cache", {}, LogicalType::VARCHAR, OracleClearCache);
+	clear_cache_func.stability = FunctionStability::VOLATILE;
 	loader.RegisterFunction(clear_cache_func);
 
 	auto debug_reset_func =
 	    ScalarFunction("oracle_debug_reset_stats", {}, LogicalType::VARCHAR, OracleDebugResetStatsFunction);
+	debug_reset_func.stability = FunctionStability::VOLATILE;
 	loader.RegisterFunction(debug_reset_func);
 
 	auto debug_counter_func = ScalarFunction("oracle_debug_counter", {LogicalType::VARCHAR}, LogicalType::UBIGINT,
 	                                         OracleDebugCounterFunction);
+	debug_counter_func.stability = FunctionStability::VOLATILE;
 	loader.RegisterFunction(debug_counter_func);
 
 	auto debug_last_query_func =
 	    ScalarFunction("oracle_debug_last_query", {}, LogicalType::VARCHAR, OracleDebugLastQueryFunction);
+	debug_last_query_func.stability = FunctionStability::VOLATILE;
 	loader.RegisterFunction(debug_last_query_func);
 
 	auto debug_partition_metadata_func = ScalarFunction(
 	    "oracle_debug_partition_metadata", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
 	    LogicalType::VARCHAR, OracleDebugPartitionMetadataFunction);
+	debug_partition_metadata_func.stability = FunctionStability::VOLATILE;
 	loader.RegisterFunction(debug_partition_metadata_func);
 
 	auto oracle_execute_func = ScalarFunction("oracle_execute", {LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                                          LogicalType::VARCHAR, OracleExecuteFunction);
+	oracle_execute_func.stability = FunctionStability::VOLATILE;
 	loader.RegisterFunction(oracle_execute_func);
 }
 

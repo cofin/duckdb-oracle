@@ -1,5 +1,6 @@
 #include "oracle_type_conversion.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/operator/cast_operators.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/timestamp.hpp"
 #include <cmath>
@@ -10,18 +11,15 @@ static string ReadOracleString(const char *data, ub2 length) {
 	if (!data || length == 0) {
 		return string();
 	}
-	string result(data, length);
-	auto nul_pos = result.find('\0');
-	if (nul_pos != string::npos) {
-		result.resize(nul_pos);
-	}
-	return result;
+	size_t actual_len = (data[length - 1] == '\0') ? static_cast<size_t>(length - 1) : static_cast<size_t>(length);
+	return string(data, actual_len);
 }
 
 static string ConversionPrefix(const OracleConversionContext &context) {
-	return StringUtil::Format("Failed to convert Oracle value for column \"%s\" (Oracle %s -> DuckDB %s, row %llu)",
+	auto row_str = std::to_string(context.row_index);
+	return StringUtil::Format("Failed to convert Oracle value for column \"%s\" (Oracle %s -> DuckDB %s, row %s)",
 	                          context.column_name.c_str(), context.oracle_type.c_str(), context.duckdb_type.ToString(),
-	                          static_cast<unsigned long long>(context.row_index));
+	                          row_str.c_str());
 }
 
 static string DisplayValue(const string &value) {
@@ -42,43 +40,67 @@ static string TrimmedText(const char *data, ub2 length) {
 	return value;
 }
 
-static void RequireFullParse(const string &value, size_t parsed, const OracleConversionContext &context,
-                             const string &target_name) {
-	if (parsed != value.size()) {
-		ThrowConversionError(context, value, "expected complete " + target_name + " literal");
+bool TryParseOracleMetadataInt(const string &raw, int32_t &out) {
+	auto trimmed = raw;
+	StringUtil::Trim(trimmed);
+	if (trimmed.empty()) {
+		return false;
 	}
+	return TryCast::Operation<string_t, int32_t>(string_t(trimmed.data(), trimmed.size()), out);
+}
+
+bool TryParseOracleMetadataIndex(const string &raw, idx_t &out) {
+	auto trimmed = raw;
+	StringUtil::Trim(trimmed);
+	if (trimmed.empty() || trimmed.front() == '-') {
+		return false;
+	}
+	uint64_t parsed = 0;
+	if (!TryCast::Operation<string_t, uint64_t>(string_t(trimmed.data(), trimmed.size()), parsed)) {
+		return false;
+	}
+	out = static_cast<idx_t>(parsed);
+	return true;
 }
 
 static int64_t ParseBigInt(const string &value, const OracleConversionContext &context) {
-	try {
-		size_t parsed = 0;
-		auto result = std::stoll(value, &parsed);
-		RequireFullParse(value, parsed, context, "BIGINT");
-		return result;
-	} catch (const std::exception &ex) {
-		ThrowConversionError(context, value, "expected BIGINT literal: " + string(ex.what()));
+	int64_t result = 0;
+	if (value.empty() || !TryCast::Operation<string_t, int64_t>(string_t(value.data(), value.size()), result)) {
+		ThrowConversionError(context, value, "expected BIGINT literal");
 	}
-	throw InternalException("unreachable BIGINT conversion path");
+	return result;
+}
+
+static float ParseFloat(const string &value, const OracleConversionContext &context) {
+	double dval = 0;
+	if (value.empty() || !TryCast::Operation<string_t, double>(string_t(value.data(), value.size()), dval)) {
+		ThrowConversionError(context, value, "expected FLOAT literal");
+	}
+	float result = static_cast<float>(dval);
+	if (std::isfinite(dval) && !std::isfinite(result)) {
+		ThrowConversionError(context, value, "FLOAT literal out of range");
+	}
+	return result;
 }
 
 static double ParseDouble(const string &value, const OracleConversionContext &context) {
-	try {
-		size_t parsed = 0;
-		auto result = std::stod(value, &parsed);
-		RequireFullParse(value, parsed, context, "DOUBLE");
-		return result;
-	} catch (const std::exception &ex) {
-		ThrowConversionError(context, value, "expected DOUBLE literal: " + string(ex.what()));
+	double result = 0;
+	if (value.empty() || !TryCast::Operation<string_t, double>(string_t(value.data(), value.size()), result)) {
+		ThrowConversionError(context, value, "expected DOUBLE literal");
 	}
-	throw InternalException("unreachable DOUBLE conversion path");
+	return result;
 }
 
 static timestamp_t ParseTimestamp(const string &value, const OracleConversionContext &context) {
 	if (value.empty()) {
 		ThrowConversionError(context, value, "expected TIMESTAMP literal");
 	}
+	timestamp_t result;
+	if (Timestamp::TryConvertTimestamp(value.c_str(), value.size(), result, true) == TimestampCastResult::SUCCESS) {
+		return result;
+	}
 	try {
-		return Timestamp::FromString(value, false);
+		return Timestamp::FromString(value, true);
 	} catch (const std::exception &ex) {
 		ThrowConversionError(context, value, "expected TIMESTAMP literal: " + string(ex.what()));
 	}
@@ -94,37 +116,23 @@ static Value ParseDecimal(const string &value, const LogicalType &target_type, c
 	throw InternalException("unreachable DECIMAL conversion path");
 }
 
-static double ParseVectorElement(const string &value, const OracleConversionContext &context) {
-	try {
-		size_t parsed = 0;
-		auto result = std::stod(value, &parsed);
-		RequireFullParse(value, parsed, context, "numeric VECTOR element");
-		if (!std::isfinite(result)) {
-			ThrowConversionError(context, value, "NaN and Infinity are not supported for VECTOR reads");
-		}
-		return result;
-	} catch (const InvalidInputException &) {
-		throw;
-	} catch (const std::exception &ex) {
-		ThrowConversionError(context, value, "expected numeric VECTOR element: " + string(ex.what()));
-	}
-	throw InternalException("unreachable VECTOR conversion path");
-}
-
-static Value ParseVectorJsonToList(const string &json_str, const LogicalType &target_type,
-                                   const OracleConversionContext &context) {
-	vector<Value> elements;
-	auto value = json_str;
+void ParseOracleVectorElements(const string &text, const LogicalType &element_type, idx_t expected_dims,
+                               vector<Value> &elements) {
+	elements.clear();
+	auto value = text;
 	StringUtil::Trim(value);
 	if (value.size() < 2 || value.front() != '[' || value.back() != ']') {
-		ThrowConversionError(context, json_str, "expected VECTOR_SERIALIZE JSON array");
+		throw InvalidInputException("expected VECTOR_SERIALIZE JSON array");
 	}
 
-	const auto &child_type = ListType::GetChildType(target_type);
 	value = value.substr(1, value.size() - 2);
 	StringUtil::Trim(value);
 	if (value.empty()) {
-		return Value::LIST(child_type, std::move(elements));
+		if (expected_dims > 0) {
+			auto expected_str = std::to_string(expected_dims);
+			throw InvalidInputException("Oracle VECTOR dimension mismatch: expected %s, got 0", expected_str.c_str());
+		}
+		return;
 	}
 
 	auto parts = StringUtil::Split(value, ',');
@@ -132,21 +140,53 @@ static Value ParseVectorJsonToList(const string &json_str, const LogicalType &ta
 	for (auto &part : parts) {
 		StringUtil::Trim(part);
 		if (part.empty()) {
-			ThrowConversionError(context, json_str, "empty VECTOR element");
+			throw InvalidInputException("empty VECTOR element");
 		}
-		auto element = ParseVectorElement(part, context);
-		if (child_type.id() == LogicalTypeId::DOUBLE) {
-			elements.push_back(Value::DOUBLE(element));
+		double val = 0;
+		if (!TryCast::Operation<string_t, double>(string_t(part.data(), part.size()), val)) {
+			throw InvalidInputException("expected numeric VECTOR element: %s", DisplayValue(part).c_str());
+		}
+		if (!std::isfinite(val)) {
+			throw InvalidInputException("NaN and Infinity are not supported for VECTOR reads");
+		}
+		if (element_type.id() == LogicalTypeId::DOUBLE) {
+			elements.push_back(Value::DOUBLE(val));
 		} else {
-			elements.push_back(Value::FLOAT(static_cast<float>(element)));
+			float fval = static_cast<float>(val);
+			if (!std::isfinite(fval)) {
+				throw InvalidInputException("VECTOR FLOAT element out of range: %s", DisplayValue(part).c_str());
+			}
+			elements.push_back(Value::FLOAT(fval));
 		}
+	}
+	if (expected_dims > 0 && elements.size() != expected_dims) {
+		auto expected_str = std::to_string(expected_dims);
+		auto actual_str = std::to_string(elements.size());
+		throw InvalidInputException("Oracle VECTOR dimension mismatch: expected %s, got %s", expected_str.c_str(),
+		                            actual_str.c_str());
+	}
+}
+
+static Value ParseVectorJsonToList(const string &json_str, const LogicalType &target_type,
+                                   const OracleConversionContext &context) {
+	const auto &child_type = ListType::GetChildType(target_type);
+	vector<Value> elements;
+	try {
+		ParseOracleVectorElements(json_str, child_type, 0, elements);
+	} catch (const std::exception &ex) {
+		ThrowConversionError(context, json_str, ex.what());
 	}
 	return Value::LIST(child_type, std::move(elements));
 }
 
 static void SetStringLikeValue(Vector &output_vector, idx_t row_index, const char *data, ub2 length) {
-	string_t val(data, length);
-	FlatVector::GetData<string_t>(output_vector)[row_index] = StringVector::AddString(output_vector, val);
+	auto value = ReadOracleString(data, length);
+	auto target_data = FlatVector::GetData<string_t>(output_vector);
+	if (output_vector.GetType().id() == LogicalTypeId::BLOB) {
+		target_data[row_index] = StringVector::AddStringOrBlob(output_vector, string_t(value.data(), value.size()));
+	} else {
+		target_data[row_index] = StringVector::AddString(output_vector, value);
+	}
 }
 
 void SetOracleOutputValue(ClientContext &context, Vector &output_vector, idx_t row_index, const char *data, ub2 length,
@@ -161,6 +201,11 @@ void SetOracleOutputValue(ClientContext &context, Vector &output_vector, idx_t r
 		FlatVector::GetData<int64_t>(output_vector)[row_index] = ParseBigInt(value, conversion_context);
 		break;
 	}
+	case LogicalTypeId::FLOAT: {
+		auto value = TrimmedText(data, length);
+		FlatVector::GetData<float>(output_vector)[row_index] = ParseFloat(value, conversion_context);
+		break;
+	}
 	case LogicalTypeId::DOUBLE: {
 		auto value = TrimmedText(data, length);
 		FlatVector::GetData<double>(output_vector)[row_index] = ParseDouble(value, conversion_context);
@@ -171,7 +216,8 @@ void SetOracleOutputValue(ClientContext &context, Vector &output_vector, idx_t r
 		output_vector.SetValue(row_index, ParseDecimal(value, target_type, conversion_context));
 		break;
 	}
-	case LogicalTypeId::TIMESTAMP: {
+	case LogicalTypeId::TIMESTAMP:
+	case LogicalTypeId::TIMESTAMP_TZ: {
 		auto value = TrimmedText(data, length);
 		FlatVector::GetData<timestamp_t>(output_vector)[row_index] = ParseTimestamp(value, conversion_context);
 		break;

@@ -60,7 +60,6 @@ struct OracleTypeDecision {
 	bool supported = true;
 	bool needs_server_conversion = false;
 	bool pushdown_eligible = false;
-	ub2 fetch_type = SQLT_STR;
 	ub2 write_bind_type = SQLT_CHR;
 
 	bool RequiresQueryRewrite(const OracleVersionInfo &version) const;

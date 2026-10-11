@@ -49,26 +49,26 @@ The vectorized scan, pushdown, type conversion, type registry, and scalar functi
 
 ### Phase 1: Type Registry, Type Conversion, Filter/Projection Pushdown, Scan & Scalar Functions
 
-- [ ] **Task 1.1: Fix VECTOR_SERIALIZE CLOB return, CHAR pushdown eligibility, TIMESTAMP_TZ, NUMBER(*,0), BINARY_FLOAT, and DATE write bind type** -> [tasks/1.1.md](tasks/1.1.md)
+- [x] **Task 1.1: Fix VECTOR_SERIALIZE CLOB return, CHAR pushdown eligibility, TIMESTAMP_TZ, NUMBER(*,0), BINARY_FLOAT, and DATE write bind type** -> [tasks/1.1.md](tasks/1.1.md)
   - **Objective**: Remediate `H-07` (registry part), `H-13` (registry part), `H-15` (registry part), `H-16` (registry part), `H-23` (registry part), `M-13`, `M-16`, and `L-06` (registry part) in `oracle_type_registry.*`.
   - **Verification Strategy**: `tdd`
   - **Files**: `src/include/oracle_type_registry.hpp`, `src/oracle_type_registry.cpp`
-- [ ] **Task 1.2: Fix BLOB AddStringOrBlob, TIMESTAMP_TZ offset parsing, locale-safe number/vector parsing, and shared conversion helpers** -> [tasks/1.2.md](tasks/1.2.md)
+- [x] **Task 1.2: Fix BLOB AddStringOrBlob, TIMESTAMP_TZ offset parsing, locale-safe number/vector parsing, and shared conversion helpers** -> [tasks/1.2.md](tasks/1.2.md)
   - **Objective**: Remediate `H-14`, `H-15` (conversion part), `M-15`, and `L-06` (conversion part) in `oracle_type_conversion.*`.
   - **Verification Strategy**: `tdd`
   - **Depends On**: `scan-pushdown-types:1.1`
   - **Files**: `src/include/oracle_type_conversion.hpp`, `src/oracle_type_conversion.cpp`
-- [ ] **Task 1.3: Fix complex filter pushdown column/type preservation, empty-string/NaN/Inf/Date literal safety, and LIKE pushdown** -> [tasks/1.3.md](tasks/1.3.md)
+- [x] **Task 1.3: Fix complex filter pushdown column/type preservation, empty-string/NaN/Inf/Date literal safety, and LIKE pushdown** -> [tasks/1.3.md](tasks/1.3.md)
   - **Objective**: Remediate `H-09` (pushdown part), `H-10` (pushdown part), `H-11`, `H-12`, `H-13` (pushdown part), `M-11` (pushdown part), `M-12`, `M-14`, and `L-05` in `oracle_pushdown.*`.
   - **Verification Strategy**: `tdd`
   - **Depends On**: `scan-pushdown-types:1.1`
   - **Files**: `src/include/oracle_pushdown.hpp`, `src/oracle_pushdown.cpp`
-- [ ] **Task 1.4: Implement projection pushdown in OracleInitGlobal, widen 64KB buffers, fix truncation indicators, and harden OracleScanState** -> [tasks/1.4.md](tasks/1.4.md)
+- [x] **Task 1.4: Implement projection pushdown in OracleInitGlobal, widen 64KB buffers, fix truncation indicators, and harden OracleScanState** -> [tasks/1.4.md](tasks/1.4.md)
   - **Objective**: Remediate `H-07` (scan part), `H-08`, `H-09` (scan part), `H-10` (scan part), `H-13` (scan part), `H-16` (scan part), `M-07` (scan part), `M-09`, `M-10`, `M-11` (scan part), and `L-04` in `oracle_table_function.hpp` and `oracle_scan.cpp`.
   - **Verification Strategy**: `tdd`
   - **Depends On**: `scan-pushdown-types:1.1`, `scan-pushdown-types:1.2`, `scan-pushdown-types:1.3`
   - **Files**: `src/include/oracle_table_function.hpp`, `src/oracle_scan.cpp`
-- [ ] **Task 1.5: Fix scalar function multi-row iteration, VOLATILE stability, SELECT rejection, 64-bit row count, and DDL cache invalidation** -> [tasks/1.5.md](tasks/1.5.md)
+- [x] **Task 1.5: Fix scalar function multi-row iteration, VOLATILE stability, SELECT rejection, 64-bit row count, and DDL cache invalidation** -> [tasks/1.5.md](tasks/1.5.md)
   - **Objective**: Remediate `H-17`, `M-17`, and `L-07` in `oracle_functions.hpp` and `oracle_functions.cpp`.
   - **Verification Strategy**: `tdd`
   - **Depends On**: `scan-pushdown-types:1.4`

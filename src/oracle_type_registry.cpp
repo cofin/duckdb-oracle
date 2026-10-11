@@ -21,11 +21,8 @@ static bool IsObjectTypeOwner(const OracleTypeMetadata &metadata) {
 	return owner != "SYS" && owner != "MDSYS";
 }
 
-static LogicalType NumberLogicalType(idx_t precision, int32_t scale, bool has_scale, bool direct_oci_describe) {
-	if (direct_oci_describe && precision == 0 && (!has_scale || scale == 0)) {
-		return LogicalType::BIGINT;
-	}
-	if (precision == 0 || precision > 38 || scale < 0) {
+static LogicalType NumberLogicalType(idx_t precision, int32_t scale, bool has_scale) {
+	if (!has_scale || precision == 0 || precision > 38 || scale < 0) {
 		return LogicalType::DOUBLE;
 	}
 	if (scale > static_cast<int32_t>(precision)) {
@@ -40,6 +37,9 @@ static ub2 BindTypeForDuckDBType(const LogicalType &type) {
 	case LogicalTypeId::SMALLINT:
 	case LogicalTypeId::INTEGER:
 	case LogicalTypeId::BIGINT:
+	case LogicalTypeId::UTINYINT:
+	case LogicalTypeId::USMALLINT:
+	case LogicalTypeId::UINTEGER:
 		return SQLT_INT;
 	case LogicalTypeId::FLOAT:
 	case LogicalTypeId::DOUBLE:
@@ -61,7 +61,6 @@ static OracleTypeDecision Unsupported(OracleTypeCategory category, const string 
 	decision.supported = false;
 	decision.unsupported_reason = reason;
 	decision.duckdb_type = LogicalType::VARCHAR;
-	decision.fetch_type = SQLT_STR;
 	decision.write_bind_type = SQLT_CHR;
 	return decision;
 }
@@ -76,14 +75,13 @@ static OracleTypeDecision Supported(OracleTypeCategory category, const string &n
 	decision.supported = true;
 	decision.needs_server_conversion = needs_server_conversion;
 	decision.pushdown_eligible = pushdown_eligible;
-	decision.fetch_type = duckdb_type.id() == LogicalTypeId::BLOB ? SQLT_BIN : SQLT_STR;
 	decision.write_bind_type = BindTypeForDuckDBType(duckdb_type);
 	return decision;
 }
 
 static bool IsCharType(const string &type) {
 	return type == "CHAR" || type == "NCHAR" || type == "VARCHAR2" || type == "NVARCHAR2" || type == "VARCHAR" ||
-	       type == "NATIONAL CHARACTER" || type == "NATIONAL CHAR";
+	       type == "NATIONAL CHARACTER" || type == "NATIONAL CHAR" || type == "CHARACTER";
 }
 
 static bool IsTimestampType(const string &type) {
@@ -91,14 +89,14 @@ static bool IsTimestampType(const string &type) {
 }
 
 static bool IsTimestampTZType(const string &type) {
-	return type == "TIMESTAMP WITH TIME ZONE" || StringUtil::Contains(type, "TIMESTAMP") &&
-	                                                 StringUtil::Contains(type, "WITH TIME ZONE") &&
-	                                                 !StringUtil::Contains(type, "LOCAL");
+	return type == "TIMESTAMP WITH TIME ZONE" ||
+	       (StringUtil::Contains(type, "TIMESTAMP") && StringUtil::Contains(type, "WITH TIME ZONE") &&
+	        !StringUtil::Contains(type, "LOCAL"));
 }
 
 static bool IsTimestampLTZType(const string &type) {
 	return type == "TIMESTAMP WITH LOCAL TIME ZONE" ||
-	       StringUtil::Contains(type, "TIMESTAMP") && StringUtil::Contains(type, "LOCAL TIME ZONE");
+	       (StringUtil::Contains(type, "TIMESTAMP") && StringUtil::Contains(type, "LOCAL TIME ZONE"));
 }
 
 static bool IsIntervalType(const string &type) {
@@ -115,17 +113,10 @@ bool OracleTypeDecision::RequiresQueryRewrite(const OracleVersionInfo &version) 
 	switch (category) {
 	case OracleTypeCategory::SPATIAL:
 	case OracleTypeCategory::XML:
-		return true;
 	case OracleTypeCategory::VECTOR:
 		return true;
 	case OracleTypeCategory::JSON:
 		return version.supports_json_type;
-	case OracleTypeCategory::LOB_BLOB:
-	case OracleTypeCategory::RAW:
-	case OracleTypeCategory::LONG_RAW:
-		return needs_server_conversion;
-	case OracleTypeCategory::LOB_CLOB:
-		return needs_server_conversion;
 	default:
 		return false;
 	}
@@ -136,7 +127,7 @@ string OracleTypeDecision::ConversionExpression(const string &quoted_col, const 
 	case OracleTypeCategory::SPATIAL:
 		return StringUtil::Format("SDO_UTIL.TO_WKTGEOMETRY(%s)", quoted_col.c_str());
 	case OracleTypeCategory::VECTOR:
-		return StringUtil::Format("VECTOR_SERIALIZE(%s)", quoted_col.c_str());
+		return StringUtil::Format("VECTOR_SERIALIZE(%s RETURNING CLOB)", quoted_col.c_str());
 	case OracleTypeCategory::JSON:
 		if (version.supports_json_type) {
 			return StringUtil::Format("JSON_SERIALIZE(%s RETURNING CLOB)", quoted_col.c_str());
@@ -144,18 +135,6 @@ string OracleTypeDecision::ConversionExpression(const string &quoted_col, const 
 		return quoted_col;
 	case OracleTypeCategory::XML:
 		return StringUtil::Format("XMLSERIALIZE(CONTENT %s AS CLOB)", quoted_col.c_str());
-	case OracleTypeCategory::LOB_BLOB:
-	case OracleTypeCategory::RAW:
-	case OracleTypeCategory::LONG_RAW:
-		if (needs_server_conversion) {
-			return StringUtil::Format("RAWTOHEX(%s)", quoted_col.c_str());
-		}
-		return quoted_col;
-	case OracleTypeCategory::LOB_CLOB:
-		if (needs_server_conversion) {
-			return StringUtil::Format("TO_CHAR(%s)", quoted_col.c_str());
-		}
-		return quoted_col;
 	default:
 		return quoted_col;
 	}
@@ -225,9 +204,12 @@ OracleTypeDecision OracleTypeRegistry::ResolveMetadata(const OracleTypeMetadata 
 	}
 	if (type == "NUMBER") {
 		return Supported(OracleTypeCategory::NUMERIC, type,
-		                 NumberLogicalType(metadata.precision, metadata.scale, metadata.has_scale, false), false, true);
+		                 NumberLogicalType(metadata.precision, metadata.scale, metadata.has_scale), false, true);
 	}
-	if (type == "FLOAT" || type == "BINARY_FLOAT" || type == "BINARY_DOUBLE") {
+	if (type == "BINARY_FLOAT") {
+		return Supported(OracleTypeCategory::FLOATING, type, LogicalType::FLOAT, false, true);
+	}
+	if (type == "FLOAT" || type == "BINARY_DOUBLE") {
 		return Supported(OracleTypeCategory::FLOATING, type, LogicalType::DOUBLE, false, true);
 	}
 	if (IsTimestampTZType(type)) {
@@ -243,7 +225,9 @@ OracleTypeDecision OracleTypeRegistry::ResolveMetadata(const OracleTypeMetadata 
 		return Supported(OracleTypeCategory::INTERVAL, type, LogicalType::VARCHAR, false, false);
 	}
 	if (IsCharType(type)) {
-		return Supported(OracleTypeCategory::STANDARD, type, LogicalType::VARCHAR, false, true);
+		bool pushdown_eligible = (type != "CHAR" && type != "NCHAR" && type != "NATIONAL CHAR" &&
+		                          type != "NATIONAL CHARACTER" && type != "CHARACTER");
+		return Supported(OracleTypeCategory::STANDARD, type, LogicalType::VARCHAR, false, pushdown_eligible);
 	}
 	if (IsObjectTypeOwner(metadata)) {
 		return Unsupported(OracleTypeCategory::OBJECT, type, "Oracle object/user-defined types are not supported");
@@ -257,22 +241,24 @@ OracleTypeDecision OracleTypeRegistry::ResolveOciDescribe(const OracleTypeMetada
 		return ResolveMetadata(metadata, settings);
 	}
 	switch (metadata.oci_type) {
-	case SQLT_CHR:
 	case SQLT_AFC:
+		return Supported(OracleTypeCategory::STANDARD, "CHAR", LogicalType::VARCHAR, false, false);
+	case SQLT_CHR:
 	case SQLT_VCS:
 	case SQLT_AVC:
-		return Supported(OracleTypeCategory::STANDARD, "OCI CHARACTER", LogicalType::VARCHAR, false, true);
+		return Supported(OracleTypeCategory::STANDARD, "VARCHAR2", LogicalType::VARCHAR, false, true);
 	case SQLT_NUM:
 	case SQLT_VNU:
 		return Supported(OracleTypeCategory::NUMERIC, "OCI NUMBER",
-		                 NumberLogicalType(metadata.precision, metadata.scale, metadata.has_scale, true), false, true);
+		                 NumberLogicalType(metadata.precision, metadata.scale, metadata.has_scale), false, true);
 	case SQLT_INT:
 	case SQLT_UIN:
 		return Supported(OracleTypeCategory::NUMERIC, "OCI INTEGER", LogicalType::BIGINT, false, true);
-	case SQLT_FLT:
 	case SQLT_BFLOAT:
-	case SQLT_BDOUBLE:
 	case SQLT_IBFLOAT:
+		return Supported(OracleTypeCategory::FLOATING, "OCI FLOAT", LogicalType::FLOAT, false, true);
+	case SQLT_FLT:
+	case SQLT_BDOUBLE:
 	case SQLT_IBDOUBLE:
 		return Supported(OracleTypeCategory::FLOATING, "OCI FLOAT", LogicalType::DOUBLE, false, true);
 	case SQLT_DAT:
@@ -306,7 +292,13 @@ OracleTypeDecision OracleTypeRegistry::ResolveOciDescribe(const OracleTypeMetada
 	case SQLT_JSON:
 		return Supported(OracleTypeCategory::JSON, "OCI JSON", LogicalType::JSON(), true, false);
 	case SQLT_VEC: {
-		return Supported(OracleTypeCategory::VECTOR, "OCI VECTOR", LogicalType::LIST(LogicalType::FLOAT), true, false);
+		auto vec_type = NormalizeTypeName(metadata);
+		if (StringUtil::Contains(vec_type, "INT8") || StringUtil::Contains(vec_type, "BINARY")) {
+			return Unsupported(OracleTypeCategory::VECTOR, vec_type.empty() ? "OCI VECTOR" : vec_type,
+			                   "VECTOR INT8 and BINARY formats are not supported by the DuckDB conversion path yet");
+		}
+		auto child_type = StringUtil::Contains(vec_type, "FLOAT64") ? LogicalType::DOUBLE : LogicalType::FLOAT;
+		return Supported(OracleTypeCategory::VECTOR, "OCI VECTOR", LogicalType::LIST(child_type), true, false);
 	}
 	case SQLT_NTY:
 	case SQLT_REF:
@@ -332,6 +324,13 @@ OracleTypeDecision OracleTypeRegistry::ResolveWrite(const OracleTypeMetadata &me
 		return decision;
 	}
 	decision.write_bind_type = BindTypeForDuckDBType(duckdb_type);
+	if (decision.normalized_type == "DATE" &&
+	    (duckdb_type.id() == LogicalTypeId::DATE || duckdb_type.id() == LogicalTypeId::TIMESTAMP ||
+	     duckdb_type.id() == LogicalTypeId::TIMESTAMP_TZ)) {
+		decision.write_bind_type = SQLT_ODT;
+	} else if (decision.duckdb_type.id() == LogicalTypeId::BIGINT && duckdb_type.IsIntegral()) {
+		decision.write_bind_type = SQLT_INT;
+	}
 	return decision;
 }
 
