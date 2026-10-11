@@ -75,18 +75,146 @@ SELECT oracle_execute(oracle_test_conn(), 'INSERT INTO zzz_read_limit_target VAL
 
 # Test 1: Test lazy schema loading enabled (default)
 statement ok
+SET oracle_metadata_result_limit = 10000;
 SET oracle_lazy_schema_loading = true;
 
 # Attach with lazy loading - should only enumerate current schema
 statement ok
 ATTACH '' AS ora_lazy (TYPE oracle, SECRET oracle_meta_test);
 
-# Test 2: Verify current schema was detected
-# Query information about the attached catalog
+# Test 2: Verify duckdb_databases() metadata and credential redaction
+query IIII
+SELECT database_name, type, internal, readonly FROM duckdb_databases() WHERE database_name = 'ora_lazy';
+----
+ora_lazy	oracle	false	false
+
+query I
+SELECT path LIKE '%***@%' FROM duckdb_databases() WHERE database_name = 'ora_lazy';
+----
+true
+
+# Test 2b: Verify current schema was detected in both duckdb_schemas() and duckdb_schemas view
 query I
 SELECT COUNT(*) > 0 FROM duckdb_schemas() WHERE database_name = 'ora_lazy';
 ----
 true
+
+query I
+SELECT COUNT(*) > 0 FROM duckdb_schemas WHERE database_name = 'ora_lazy' AND NOT internal;
+----
+true
+
+# Test 2c: Verify duckdb_tables, duckdb_columns, and information_schema views enumerate Oracle tables
+query I
+SELECT COUNT(*) > 0 FROM duckdb_tables WHERE database_name = 'ora_lazy' AND table_name = 'ZZZ_READ_LIMIT_TARGET';
+----
+true
+
+query I
+SELECT COUNT(*) > 0 FROM information_schema.tables WHERE table_catalog = 'ora_lazy' AND table_name = 'ZZZ_READ_LIMIT_TARGET';
+----
+true
+
+query III
+SELECT column_name, data_type, is_nullable FROM duckdb_columns WHERE database_name = 'ora_lazy' AND table_name = 'ZZZ_READ_LIMIT_TARGET';
+----
+ID	DOUBLE	true
+
+# Test 2d: Non-table synonym and unsupported column type resilience during schema scan
+statement ok
+SELECT oracle_execute(oracle_test_conn(), '
+    BEGIN
+       EXECUTE IMMEDIATE ''DROP SYNONYM syn_meta_test_seq'';
+    EXCEPTION
+       WHEN OTHERS THEN NULL;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), '
+    BEGIN
+       EXECUTE IMMEDIATE ''DROP SEQUENCE meta_test_seq'';
+    EXCEPTION
+       WHEN OTHERS THEN NULL;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), '
+    BEGIN
+       EXECUTE IMMEDIATE ''DROP TABLE meta_unsupported_long_tbl'';
+    EXCEPTION
+       WHEN OTHERS THEN NULL;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), '
+    BEGIN
+       EXECUTE IMMEDIATE ''DROP TABLE meta_dynamic_ddl_tbl'';
+    EXCEPTION
+       WHEN OTHERS THEN NULL;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), 'CREATE SEQUENCE meta_test_seq')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), 'CREATE SYNONYM syn_meta_test_seq FOR meta_test_seq')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), 'CREATE TABLE meta_unsupported_long_tbl (id NUMBER NOT NULL, payload LONG)')
+
+statement ok
+SELECT oracle_clear_cache();
+
+query I
+SELECT COUNT(*) > 0 FROM duckdb_tables() WHERE database_name = 'ora_lazy';
+----
+true
+
+query I
+SELECT COUNT(*) FROM duckdb_tables() WHERE database_name = 'ora_lazy' AND table_name IN ('SYN_META_TEST_SEQ', 'META_UNSUPPORTED_LONG_TBL');
+----
+0
+
+query I
+SELECT COUNT(*) > 0 FROM duckdb_columns() WHERE database_name = 'ora_lazy';
+----
+true
+
+statement error
+SELECT * FROM ora_lazy.meta_unsupported_long_tbl;
+----
+Unsupported Oracle type "LONG"
+
+# Test 2e: Dynamic DDL invalidation and NOT NULL constraint discovery
+statement ok
+SELECT oracle_execute(oracle_test_conn(), 'CREATE TABLE meta_dynamic_ddl_tbl (id NUMBER(10,0) NOT NULL, label VARCHAR2(20))')
+
+query I
+SELECT COUNT(*) FROM duckdb_tables() WHERE database_name = 'ora_lazy' AND table_name = 'META_DYNAMIC_DDL_TBL';
+----
+1
+
+query II
+SELECT column_name, is_nullable FROM duckdb_columns WHERE database_name = 'ora_lazy' AND table_name = 'META_DYNAMIC_DDL_TBL' ORDER BY column_index;
+----
+ID	false
+LABEL	true
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), 'DROP TABLE meta_dynamic_ddl_tbl')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), 'DROP TABLE meta_unsupported_long_tbl')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), 'DROP SYNONYM syn_meta_test_seq')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), 'DROP SEQUENCE meta_test_seq')
 
 # Test 3: Query table in current schema (should work)
 # Assumes duckdb_test schema has at least DUAL or a test table

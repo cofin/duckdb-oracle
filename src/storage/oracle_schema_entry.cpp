@@ -1,39 +1,124 @@
 #include "oracle_catalog.hpp"
-#include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
-#include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/catalog.hpp"
-#include "duckdb/catalog/default/default_generator.hpp"
+#include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/default/default_schemas.hpp"
-#include "duckdb/parser/parsed_data/create_schema_info.hpp"
-#include "duckdb/parser/parsed_data/create_view_info.hpp"
-#include "duckdb/parser/keyword_helper.hpp"
+#include "duckdb/catalog/similar_catalog_entry.hpp"
+#include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/value.hpp"
-#include "duckdb/main/attached_database.hpp"
-#include "duckdb/transaction/duck_transaction_manager.hpp"
-#include "duckdb/catalog/duck_catalog.hpp"
-#include "duckdb/planner/operator/logical_create_table.hpp"
-#include "duckdb/planner/operator/logical_insert.hpp"
-#include "duckdb/planner/operator/logical_delete.hpp"
-#include "duckdb/planner/operator/logical_update.hpp"
 #include "duckdb/execution/physical_plan_generator.hpp"
+#include "duckdb/main/attached_database.hpp"
+#include "duckdb/parser/keyword_helper.hpp"
+#include "duckdb/parser/parsed_data/create_schema_info.hpp"
+#include "duckdb/parser/parsed_data/create_view_info.hpp"
+#include "duckdb/planner/operator/logical_create_table.hpp"
+#include "duckdb/planner/operator/logical_delete.hpp"
+#include "duckdb/planner/operator/logical_insert.hpp"
+#include "duckdb/planner/operator/logical_update.hpp"
+#include "duckdb/storage/database_size.hpp"
 #include "oracle_catalog_state.hpp"
-#include "oracle_insert.hpp"
-#include "oracle_write.hpp"
 #include "oracle_connection_resolver.hpp"
-#include "oracle_utils.hpp"
-#include <memory>
+#include "oracle_insert.hpp"
 #include "oracle_table_entry.hpp"
+#include "oracle_utils.hpp"
+#include "oracle_write.hpp"
+#include <memory>
+#include <mutex>
 
 namespace duckdb {
 
-// Forward declaration
-class OracleTableGenerator;
-
-class OracleSchemaEntry : public DuckSchemaEntry {
+class OracleSchemaEntry : public SchemaCatalogEntry {
 public:
-	OracleSchemaEntry(Catalog &catalog, CreateSchemaInfo &info, shared_ptr<OracleCatalogState> state,
-	                  string oracle_schema_p = "");
+	OracleSchemaEntry(Catalog &catalog, CreateSchemaInfo &info, shared_ptr<OracleCatalogState> state_p,
+	                  string oracle_schema_p = "")
+	    : SchemaCatalogEntry(catalog, info), state(std::move(state_p)), oracle_schema(std::move(oracle_schema_p)) {
+		if (oracle_schema.empty()) {
+			oracle_schema = info.schema;
+		}
+	}
+
+	void Scan(ClientContext &context, CatalogType type, const std::function<void(CatalogEntry &)> &callback) override {
+		(void)context;
+		Scan(type, callback);
+	}
+
+	void Scan(CatalogType type, const std::function<void(CatalogEntry &)> &callback) override {
+		if (type != CatalogType::TABLE_ENTRY) {
+			return;
+		}
+		vector<reference<CatalogEntry>> entries;
+		{
+			lock_guard<std::mutex> guard(table_lock);
+			SyncCacheGenerationLocked();
+			if (!tables_enumerated) {
+				auto object_names = state->ListObjects(oracle_schema, state->settings.metadata_object_types);
+				for (auto &obj_name : object_names) {
+					if (tables.find(obj_name) != tables.end() ||
+					    unresolvable_entries.find(obj_name) != unresolvable_entries.end()) {
+						continue;
+					}
+					try {
+						auto loaded = LoadTableEntryLocked(obj_name);
+						if (!loaded) {
+							unresolvable_entries.insert(obj_name);
+						}
+					} catch (const Exception &) {
+						unresolvable_entries.insert(obj_name);
+					}
+				}
+				tables_enumerated = true;
+			}
+			entries.reserve(tables.size());
+			for (auto &entry : tables) {
+				entries.push_back(*entry.second);
+			}
+		}
+		sort(entries.begin(), entries.end(), [](const reference<CatalogEntry> &a, const reference<CatalogEntry> &b) {
+			return a.get().name < b.get().name;
+		});
+		for (auto &entry_ref : entries) {
+			callback(entry_ref.get());
+		}
+	}
+
+	optional_ptr<CatalogEntry> LookupEntry(CatalogTransaction transaction,
+	                                       const EntryLookupInfo &lookup_info) override {
+		(void)transaction;
+		if (lookup_info.GetCatalogType() != CatalogType::TABLE_ENTRY) {
+			return nullptr;
+		}
+		lock_guard<std::mutex> guard(table_lock);
+		SyncCacheGenerationLocked();
+		return LoadTableEntryLocked(lookup_info.GetEntryName());
+	}
+
+	SimilarCatalogEntry GetSimilarEntry(CatalogTransaction transaction, const EntryLookupInfo &lookup_info) override {
+		(void)transaction;
+		SimilarCatalogEntry result;
+		if (lookup_info.GetCatalogType() != CatalogType::TABLE_ENTRY) {
+			return result;
+		}
+		const auto &target_name = lookup_info.GetEntryName();
+		auto consider_candidate = [&](const string &candidate) {
+			auto score = StringUtil::SimilarityRating(candidate, target_name);
+			if (score > result.score) {
+				result.score = score;
+				result.name = candidate;
+			}
+		};
+		try {
+			auto object_names = state->ListObjects(oracle_schema, state->settings.metadata_object_types);
+			for (auto &obj_name : object_names) {
+				consider_candidate(obj_name);
+			}
+		} catch (...) {
+		}
+		lock_guard<std::mutex> guard(table_lock);
+		for (auto &entry : tables) {
+			consider_candidate(entry.second->name);
+		}
+		return result;
+	}
 
 	optional_ptr<CatalogEntry> CreateTable(CatalogTransaction transaction, BoundCreateTableInfo &info) override {
 		(void)transaction;
@@ -119,110 +204,68 @@ public:
 		throw BinderException("Oracle catalog does not support DDL operations directly; use oracle_execute() instead");
 	}
 
+	shared_ptr<OracleCatalogState> state;
 	string oracle_schema;
-};
 
-class OracleTableGenerator : public DefaultGenerator {
-public:
-	OracleTableGenerator(Catalog &catalog, SchemaCatalogEntry &schema, shared_ptr<OracleCatalogState> state)
-	    : DefaultGenerator(catalog), schema(schema), state(std::move(state)) {
+private:
+	void SyncCacheGenerationLocked() {
+		auto current_gen = state ? state->GetCacheGeneration() : 0;
+		if (cached_generation != current_gen) {
+			for (auto &entry : tables) {
+				retired_tables.push_back(std::move(entry.second));
+			}
+			tables.clear();
+			unresolvable_entries.clear();
+			tables_enumerated = false;
+			cached_generation = current_gen;
+		}
 	}
 
-	vector<string> GetDefaultEntries() override {
-		auto &ora_schema = schema.Cast<OracleSchemaEntry>();
-		// Use ListObjects with metadata_object_types setting
-		return state->ListObjects(ora_schema.oracle_schema, state->settings.metadata_object_types);
-	}
+	optional_ptr<CatalogEntry> LoadTableEntryLocked(const string &entry_name) {
+		auto existing = tables.find(entry_name);
+		if (existing != tables.end()) {
+			return existing->second.get();
+		}
 
-	unique_ptr<CatalogEntry> CreateDefaultEntry(ClientContext &context, const string &entry_name) override {
-		(void)context;
-		auto &ora_schema = schema.Cast<OracleSchemaEntry>();
-		string schema_name = ora_schema.oracle_schema;
-
-		// Try on-demand loading if not in enumerated list (handles objects beyond limit)
+		unique_ptr<OracleTableEntry> created;
 		string real_owner;
 		string real_name;
-		if (state->GetObjectName(schema_name, entry_name, "'TABLE','VIEW','MATERIALIZED VIEW'", real_owner,
+		if (state->GetObjectName(oracle_schema, entry_name, "'TABLE','VIEW','MATERIALIZED VIEW'", real_owner,
 		                         real_name)) {
-			return OracleTableEntry::Create(catalog, schema, real_owner, real_name, state, entry_name);
-		}
-
-		// Try synonym resolution as fallback
-		bool found = false;
-		auto resolved = state->ResolveSynonym(schema_name, entry_name, found);
-		if (found) {
-			return OracleTableEntry::Create(catalog, schema, resolved.first, resolved.second, state, entry_name);
-		}
-
-		return nullptr;
-	}
-
-private:
-	SchemaCatalogEntry &schema;
-	shared_ptr<OracleCatalogState> state;
-};
-
-OracleSchemaEntry::OracleSchemaEntry(Catalog &catalog, CreateSchemaInfo &info, shared_ptr<OracleCatalogState> state,
-                                     string oracle_schema_p)
-    : DuckSchemaEntry(catalog, info), oracle_schema(std::move(oracle_schema_p)) {
-	if (oracle_schema.empty()) {
-		oracle_schema = info.schema;
-	}
-	auto &table_set = GetCatalogSet(CatalogType::TABLE_ENTRY);
-	table_set.SetDefaultGenerator(make_uniq<OracleTableGenerator>(catalog, *this, std::move(state)));
-}
-
-class OracleSchemaGenerator : public DefaultGenerator {
-public:
-	OracleSchemaGenerator(Catalog &catalog, shared_ptr<OracleCatalogState> state)
-	    : DefaultGenerator(catalog), state(std::move(state)) {
-	}
-
-	vector<string> GetDefaultEntries() override {
-		return state->ListSchemas();
-	}
-
-	unique_ptr<CatalogEntry> CreateDefaultEntry(ClientContext &context, const string &entry_name) override {
-		(void)context;
-		CreateSchemaInfo info;
-		string oracle_schema;
-
-		// Handle default "main" schema mapping
-		if ((entry_name == DEFAULT_SCHEMA || entry_name == "main") && state->settings.use_current_schema) {
-			string current = state->GetCurrentSchema();
-			if (current.empty()) {
-				state->DetectCurrentSchema();
-				current = state->GetCurrentSchema();
+			auto existing_real = tables.find(real_name);
+			if (existing_real != tables.end()) {
+				return existing_real->second.get();
 			}
-
-			if (!current.empty()) {
-				info.schema = entry_name; // Keep catalog name as "main"
-				oracle_schema = current;  // Map to current schema (e.g., "HR")
-				info.internal = true;
-				info.on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
-				return make_uniq<OracleSchemaEntry>(catalog, info, state, oracle_schema);
-			}
-		}
-
-		string real_name = state->GetRealSchemaName(entry_name);
-		if (!real_name.empty()) {
-			info.schema = real_name;
+			created = OracleTableEntry::Create(catalog, *this, real_owner, real_name, state, real_name);
 		} else {
-			info.schema = entry_name;
+			bool found = false;
+			auto resolved = state->ResolveSynonym(oracle_schema, entry_name, found);
+			if (found) {
+				created = OracleTableEntry::Create(catalog, *this, resolved.first, resolved.second, state, entry_name);
+			}
 		}
-		info.internal = true;
-		info.on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
 
-		return make_uniq<OracleSchemaEntry>(catalog, info, state);
+		if (!created) {
+			return nullptr;
+		}
+		auto *ptr = created.get();
+		tables[created->name] = std::move(created);
+		return ptr;
 	}
 
-private:
-	shared_ptr<OracleCatalogState> state;
+	mutable std::mutex table_lock;
+	case_insensitive_map_t<unique_ptr<OracleTableEntry>> tables;
+	vector<unique_ptr<OracleTableEntry>> retired_tables;
+	case_insensitive_set_t unresolvable_entries;
+	bool tables_enumerated = false;
+	uint64_t cached_generation = 0;
 };
 
 OracleCatalog::OracleCatalog(AttachedDatabase &db, shared_ptr<OracleCatalogState> state)
-    : DuckCatalog(db), state(std::move(state)) {
+    : Catalog(db), state(std::move(state)) {
 }
+
+OracleCatalog::~OracleCatalog() = default;
 
 string OracleCatalog::GetCatalogType() {
 	return "oracle";
@@ -239,14 +282,122 @@ optional_idx OracleCatalog::GetCatalogVersion(ClientContext &context) {
 
 void OracleCatalog::Initialize(bool load_builtin) {
 	(void)load_builtin;
-	// Attempt connection early to fail fast
 	state->Connect();
-
-	// Detect current schema and Oracle version after successful connection
 	state->DetectCurrentSchema();
 	state->DetectOracleVersion();
+}
 
-	GetSchemaCatalogSet().SetDefaultGenerator(make_uniq<OracleSchemaGenerator>(*this, state));
+string OracleCatalog::GetDefaultSchema() const {
+	if (state && !state->settings.use_current_schema) {
+		auto current = state->GetCurrentSchema();
+		if (!current.empty()) {
+			return current;
+		}
+	}
+	return DEFAULT_SCHEMA;
+}
+
+void OracleCatalog::SyncCacheGenerationLocked() {
+	auto current_gen = state ? state->GetCacheGeneration() : 0;
+	if (cached_generation != current_gen) {
+		for (auto &entry : schemas) {
+			retired_schemas.push_back(std::move(entry.second));
+		}
+		schemas.clear();
+		schemas_enumerated = false;
+		cached_generation = current_gen;
+	}
+}
+
+optional_ptr<SchemaCatalogEntry> OracleCatalog::GetOrCreateSchemaLocked(const string &entry_name, bool verify_exists) {
+	auto existing = schemas.find(entry_name);
+	if (existing != schemas.end()) {
+		return existing->second.get();
+	}
+
+	if ((StringUtil::CIEquals(entry_name, DEFAULT_SCHEMA) || StringUtil::CIEquals(entry_name, "main")) &&
+	    state->settings.use_current_schema) {
+		string current = state->GetCurrentSchema();
+		if (current.empty()) {
+			state->DetectCurrentSchema();
+			current = state->GetCurrentSchema();
+		}
+		if (!current.empty()) {
+			CreateSchemaInfo info;
+			info.schema = DEFAULT_SCHEMA;
+			info.internal = false;
+			info.on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+			auto schema_entry = make_uniq<OracleSchemaEntry>(*this, info, state, current);
+			auto *ptr = schema_entry.get();
+			schemas[info.schema] = std::move(schema_entry);
+			return ptr;
+		}
+	}
+
+	string schema_name = entry_name;
+	if (verify_exists) {
+		string real_name = state->GetRealSchemaName(entry_name);
+		if (real_name.empty()) {
+			return nullptr;
+		}
+		schema_name = std::move(real_name);
+		auto existing_real = schemas.find(schema_name);
+		if (existing_real != schemas.end()) {
+			return existing_real->second.get();
+		}
+	}
+
+	CreateSchemaInfo info;
+	info.schema = schema_name;
+	info.internal = false;
+	info.on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
+	auto schema_entry = make_uniq<OracleSchemaEntry>(*this, info, state, schema_name);
+	auto *ptr = schema_entry.get();
+	schemas[info.schema] = std::move(schema_entry);
+	return ptr;
+}
+
+optional_ptr<SchemaCatalogEntry> OracleCatalog::LookupSchema(CatalogTransaction transaction,
+                                                             const EntryLookupInfo &schema_lookup,
+                                                             OnEntryNotFound if_not_found) {
+	(void)transaction;
+	optional_ptr<SchemaCatalogEntry> result;
+	{
+		lock_guard<std::mutex> guard(schema_lock);
+		SyncCacheGenerationLocked();
+		result = GetOrCreateSchemaLocked(schema_lookup.GetEntryName(), true);
+	}
+	if (!result && if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+		throw CatalogException::MissingEntry(schema_lookup, "");
+	}
+	return result;
+}
+
+void OracleCatalog::ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) {
+	(void)context;
+	vector<reference<SchemaCatalogEntry>> result;
+	{
+		lock_guard<std::mutex> guard(schema_lock);
+		SyncCacheGenerationLocked();
+		if (!schemas_enumerated) {
+			auto schema_names = state->ListSchemas();
+			for (auto &schema_name : schema_names) {
+				GetOrCreateSchemaLocked(schema_name, false);
+			}
+			schemas_enumerated = true;
+		}
+		result.reserve(schemas.size());
+		for (auto &entry : schemas) {
+			result.push_back(*entry.second);
+		}
+	}
+	sort(result.begin(), result.end(),
+	     [](const reference<SchemaCatalogEntry> &a, const reference<SchemaCatalogEntry> &b) {
+		     return a.get().name < b.get().name;
+	     });
+	for (auto &schema_ref : result) {
+		callback(schema_ref.get());
+	}
 }
 
 bool OracleCatalog::InMemory() {

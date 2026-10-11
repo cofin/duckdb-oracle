@@ -202,11 +202,11 @@ jobs:
         env:
           RUNNER_OS_NAME: ${{ runner.os }}
         run: |
-          # Verify extension loads cleanly and reports installed + loaded
-          EXT_STATUS=$(./build/release/duckdb -unsigned -csv -noheader -c "LOAD 'build/release/extension/oracle/oracle.duckdb_extension'; SELECT installed, loaded FROM duckdb_extensions() WHERE extension_name = 'oracle';")
+          # Verify extension installs and loads cleanly via local INSTALL + LOAD
+          EXT_STATUS=$(./build/release/duckdb -unsigned -csv -noheader -c "INSTALL 'build/release/extension/oracle/oracle.duckdb_extension'; LOAD oracle; SELECT installed, loaded FROM duckdb_extensions() WHERE extension_name = 'oracle';" | tr -d '\r')
           echo "Extension status: $EXT_STATUS"
           if [ "$EXT_STATUS" != "true,true" ]; then
-            echo "::error::Failed to load oracle extension (status: $EXT_STATUS)"
+            echo "::error::Failed to install/load oracle extension (status: $EXT_STATUS)"
             exit 1
           fi
 
@@ -242,17 +242,40 @@ jobs:
           # Compress extension for GitHub Pages deployment
           gzip -c build/release/extension/oracle/oracle.duckdb_extension > deploy/${DUCKDB_VERSION}/${DUCKDB_PLATFORM}/oracle.duckdb_extension.gz
 
-          # Create release directory with platform-specific filename
-          # This prevents overwrites when artifacts are merged
+          # Create release directory with both platform-named binary and archive containing oracle.duckdb_extension
           mkdir -p deploy/release
           cp "build/release/extension/oracle/oracle.duckdb_extension" "deploy/release/oracle-${DUCKDB_PLATFORM}.duckdb_extension"
 
-          # Generate checksum for this platform's artifact (use shasum on macOS, sha256sum elsewhere)
+          PYTHON_BIN=$(command -v python3 || command -v python)
+          "$PYTHON_BIN" - "$DUCKDB_PLATFORM" <<'PYEOF'
+          import sys
+          import tarfile
+          import zipfile
+
+          platform = sys.argv[1]
+          src = "build/release/extension/oracle/oracle.duckdb_extension"
+          if platform.startswith("windows"):
+              archive_path = f"deploy/release/oracle-{platform}.zip"
+              with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                  zf.write(src, arcname="oracle.duckdb_extension")
+          else:
+              archive_path = f"deploy/release/oracle-{platform}.tar.gz"
+              with tarfile.open(archive_path, "w:gz") as tf:
+                  tf.add(src, arcname="oracle.duckdb_extension")
+          PYEOF
+
+          if [[ "$DUCKDB_PLATFORM" == windows* ]]; then
+            ARCHIVE_FILE="oracle-${DUCKDB_PLATFORM}.zip"
+          else
+            ARCHIVE_FILE="oracle-${DUCKDB_PLATFORM}.tar.gz"
+          fi
+
+          # Generate checksums for this platform's artifacts (use shasum on macOS, sha256sum elsewhere)
           cd deploy/release
           if command -v sha256sum &> /dev/null; then
-            sha256sum "oracle-${DUCKDB_PLATFORM}.duckdb_extension" > "oracle-${DUCKDB_PLATFORM}.sha256"
+            sha256sum "oracle-${DUCKDB_PLATFORM}.duckdb_extension" "$ARCHIVE_FILE" > "oracle-${DUCKDB_PLATFORM}.sha256"
           else
-            shasum -a 256 "oracle-${DUCKDB_PLATFORM}.duckdb_extension" > "oracle-${DUCKDB_PLATFORM}.sha256"
+            shasum -a 256 "oracle-${DUCKDB_PLATFORM}.duckdb_extension" "$ARCHIVE_FILE" > "oracle-${DUCKDB_PLATFORM}.sha256"
           fi
 
       - name: Upload Artifact
@@ -293,6 +316,7 @@ jobs:
           fi
 
           mkdir -p deploy_content
+          touch deploy_content/.nojekyll
           
           # Move v* directories (e.g., v1.1.3/linux_amd64/...) to deploy_content
           mv artifacts/v* deploy_content/
@@ -332,19 +356,21 @@ jobs:
         id: validate
         run: |
           echo "=== Artifact Structure ==="
-          find artifacts -type f -name "*.duckdb_extension" -o -name "*.sha256" | sort
+          find artifacts -type f \( -name "*.duckdb_extension" -o -name "*.zip" -o -name "*.tar.gz" -o -name "*.sha256" \) | sort
           echo ""
 
-          # Count platform-specific extension files
+          # Count platform-specific extension files and archives
           # NOTE: Update this count if adding new platforms to the build matrix
           EXPECTED_COUNT=4  # linux_amd64, linux_arm64, osx_arm64, windows_amd64
           ACTUAL_COUNT=$(find artifacts/release -name "*.duckdb_extension" 2>/dev/null | wc -l | tr -d ' ')
+          ARCHIVE_COUNT=$(find artifacts/release \( -name "*.zip" -o -name "*.tar.gz" \) 2>/dev/null | wc -l | tr -d ' ')
 
           echo "Expected artifacts: $EXPECTED_COUNT"
-          echo "Found artifacts: $ACTUAL_COUNT"
+          echo "Found extension artifacts: $ACTUAL_COUNT"
+          echo "Found archive artifacts: $ARCHIVE_COUNT"
 
-          if [ "$ACTUAL_COUNT" -ne "$EXPECTED_COUNT" ]; then
-            echo "::error::Expected $EXPECTED_COUNT platform artifacts, found $ACTUAL_COUNT"
+          if [ "$ACTUAL_COUNT" -ne "$EXPECTED_COUNT" ] || [ "$ARCHIVE_COUNT" -ne "$EXPECTED_COUNT" ]; then
+            echo "::error::Expected $EXPECTED_COUNT platform extensions and $EXPECTED_COUNT archives, found $ACTUAL_COUNT extensions and $ARCHIVE_COUNT archives"
             echo "Contents of artifacts directory:"
             ls -laR artifacts/
             exit 1
@@ -369,14 +395,21 @@ jobs:
           echo "" >> "$GITHUB_OUTPUT"
           echo "Built for DuckDB $DUCKDB_VERSION" >> "$GITHUB_OUTPUT"
           echo "" >> "$GITHUB_OUTPUT"
+          echo "## Prerequisites" >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
+          echo "Oracle Instant Client Basic (23ai or 19c/21c) must be installed and available on the system library path:" >> "$GITHUB_OUTPUT"
+          echo "- **Windows**: Add the Instant Client directory containing \`oci.dll\` to \`PATH\`." >> "$GITHUB_OUTPUT"
+          echo "- **Linux**: Add the Instant Client directory containing \`libclntsh.so\` to \`LD_LIBRARY_PATH\` (or \`ldconfig\`)." >> "$GITHUB_OUTPUT"
+          echo "- **macOS**: Add the Instant Client directory containing \`libclntsh.dylib\` to \`DYLD_LIBRARY_PATH\`." >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
           echo "## Platform Downloads" >> "$GITHUB_OUTPUT"
           echo "" >> "$GITHUB_OUTPUT"
-          echo "| Platform | Architecture | File |" >> "$GITHUB_OUTPUT"
-          echo "|----------|--------------|------|" >> "$GITHUB_OUTPUT"
-          echo "| Linux | x86_64 (AMD64) | \`oracle-linux_amd64.duckdb_extension\` |" >> "$GITHUB_OUTPUT"
-          echo "| Linux | ARM64 | \`oracle-linux_arm64.duckdb_extension\` |" >> "$GITHUB_OUTPUT"
-          echo "| macOS | ARM64 (Apple Silicon) | \`oracle-osx_arm64.duckdb_extension\` |" >> "$GITHUB_OUTPUT"
-          echo "| Windows | x86_64 (AMD64) | \`oracle-windows_amd64.duckdb_extension\` |" >> "$GITHUB_OUTPUT"
+          echo "| Platform | Architecture | Archive (contains \`oracle.duckdb_extension\`) | Raw Binary |" >> "$GITHUB_OUTPUT"
+          echo "|----------|--------------|-----------------------------------------------|------------|" >> "$GITHUB_OUTPUT"
+          echo "| Linux | x86_64 (AMD64) | \`oracle-linux_amd64.tar.gz\` | \`oracle-linux_amd64.duckdb_extension\` |" >> "$GITHUB_OUTPUT"
+          echo "| Linux | ARM64 | \`oracle-linux_arm64.tar.gz\` | \`oracle-linux_arm64.duckdb_extension\` |" >> "$GITHUB_OUTPUT"
+          echo "| macOS | ARM64 (Apple Silicon) | \`oracle-osx_arm64.tar.gz\` | \`oracle-osx_arm64.duckdb_extension\` |" >> "$GITHUB_OUTPUT"
+          echo "| Windows | x86_64 (AMD64) | \`oracle-windows_amd64.zip\` | \`oracle-windows_amd64.duckdb_extension\` |" >> "$GITHUB_OUTPUT"
           echo "" >> "$GITHUB_OUTPUT"
           echo "## Verify Download" >> "$GITHUB_OUTPUT"
           echo "" >> "$GITHUB_OUTPUT"
@@ -387,10 +420,23 @@ jobs:
           echo "" >> "$GITHUB_OUTPUT"
           echo "## Installation" >> "$GITHUB_OUTPUT"
           echo "" >> "$GITHUB_OUTPUT"
+          echo "### Option 1: Remote Custom Extension Repository" >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
           echo "\`\`\`sql" >> "$GITHUB_OUTPUT"
-          echo "-- Install from custom repository" >> "$GITHUB_OUTPUT"
+          echo "-- Start DuckDB with -unsigned, then install from the custom repository:" >> "$GITHUB_OUTPUT"
           echo "SET custom_extension_repository = 'https://cofin.github.io/duckdb-oracle';" >> "$GITHUB_OUTPUT"
+          echo "-- Or directly from the gh-pages branch:" >> "$GITHUB_OUTPUT"
+          echo "-- SET custom_extension_repository = 'https://raw.githubusercontent.com/cofin/duckdb-oracle/gh-pages';" >> "$GITHUB_OUTPUT"
           echo "INSTALL oracle;" >> "$GITHUB_OUTPUT"
+          echo "LOAD oracle;" >> "$GITHUB_OUTPUT"
+          echo "\`\`\`" >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
+          echo "### Option 2: Offline / Local Installation" >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
+          echo "Extract \`oracle.duckdb_extension\` from the platform archive (or rename \`oracle-<platform>.duckdb_extension\` to \`oracle.duckdb_extension\`):" >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
+          echo "\`\`\`sql" >> "$GITHUB_OUTPUT"
+          echo "INSTALL '/path/to/oracle.duckdb_extension';" >> "$GITHUB_OUTPUT"
           echo "LOAD oracle;" >> "$GITHUB_OUTPUT"
           echo "\`\`\`" >> "$GITHUB_OUTPUT"
           echo "" >> "$GITHUB_OUTPUT"
@@ -416,4 +462,6 @@ jobs:
           prerelease: ${{ needs.validate-version.outputs.is_prerelease }}
           files: |
             artifacts/release/*.duckdb_extension
+            artifacts/release/*.zip
+            artifacts/release/*.tar.gz
             artifacts/release/SHA256SUMS.txt

@@ -70,7 +70,7 @@ static unordered_map<string, string> LoadVectorColumnTypes(OracleCatalogState &s
 }
 
 static void LoadColumns(OracleCatalogState &state, string &schema, string &table, vector<ColumnDefinition> &columns,
-                        vector<OracleColumnMetadata> &metadata) {
+                        vector<OracleColumnMetadata> &metadata, vector<idx_t> &not_null_columns) {
 	auto query = "SELECT owner, table_name, column_name, data_type, data_length, data_precision, data_scale, nullable, "
 	             "data_type_owner, char_used, char_length "
 	             "FROM all_tab_columns "
@@ -171,6 +171,10 @@ static void LoadColumns(OracleCatalogState &state, string &schema, string &table
 		meta.srid = type_metadata.srid;
 		meta.decision = decision;
 
+		if (row[7] == "N") {
+			not_null_columns.push_back(columns.size());
+		}
+
 		ColumnDefinition col_def(col_name, decision.duckdb_type);
 		columns.push_back(std::move(col_def));
 
@@ -193,14 +197,15 @@ unique_ptr<OracleTableEntry> OracleTableEntry::Create(Catalog &catalog, SchemaCa
 	string resolved_table = table_name;
 	vector<ColumnDefinition> cols;
 	vector<OracleColumnMetadata> metadata;
-	LoadColumns(*state, resolved_schema, resolved_table, cols, metadata);
+	vector<idx_t> not_null_columns;
+	LoadColumns(*state, resolved_schema, resolved_table, cols, metadata, not_null_columns);
 	if (cols.empty()) {
 		bool found = false;
 		auto syn = state->ResolveSynonym(schema_name, table_name, found);
 		if (found) {
 			resolved_schema = syn.first;
 			resolved_table = syn.second;
-			LoadColumns(*state, resolved_schema, resolved_table, cols, metadata);
+			LoadColumns(*state, resolved_schema, resolved_table, cols, metadata, not_null_columns);
 		}
 	}
 	if (cols.empty()) {
@@ -212,6 +217,9 @@ unique_ptr<OracleTableEntry> OracleTableEntry::Create(Catalog &catalog, SchemaCa
 	info->table = duckdb_entry_name.empty() ? resolved_table : duckdb_entry_name;
 	for (auto &col : cols) {
 		info->columns.AddColumn(col.Copy());
+	}
+	for (auto col_idx : not_null_columns) {
+		info->constraints.push_back(make_uniq<NotNullConstraint>(LogicalIndex(col_idx)));
 	}
 	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
 	return make_uniq<OracleTableEntry>(catalog, schema, std::move(info), std::move(state), resolved_schema,

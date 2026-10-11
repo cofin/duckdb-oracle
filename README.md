@@ -8,7 +8,7 @@ This extension allows DuckDB to directly read from and write to Oracle databases
 
 **1. Install & Load**
 
-> **Note**: This extension is currently **unsigned**. You must start DuckDB with `-unsigned` to load it.
+> **Note**: This extension is currently **unsigned** and links dynamically against the Oracle Instant Client (OCI) runtime library (`oci.dll` on Windows, `libclntsh.so` on Linux, `libclntsh.dylib` on macOS). Because it depends on Oracle's proprietary runtime libraries, it is distributed via this repository rather than the DuckDB Community Extensions repository (`FROM community`). You must install **Oracle Instant Client Basic** (`23ai` or `19c`/`21c`), ensure its directory is on your library search path (`PATH` on Windows, `LD_LIBRARY_PATH` or `ldconfig` on Linux, `DYLD_LIBRARY_PATH` on macOS), and start DuckDB with `-unsigned`.
 >
 > **Supported DuckDB version**: v1.5.6 — see [Compatibility Matrix](docs/COMPATIBILITY.md) for details.
 
@@ -16,12 +16,24 @@ This extension allows DuckDB to directly read from and write to Oracle databases
 ./duckdb -unsigned
 ```
 
+**Option A: Remote Custom Extension Repository**
+
 ```sql
--- Configure custom repository (hosted on GitHub Pages)
+-- Configure custom repository (GitHub Pages or raw gh-pages fallback)
 SET custom_extension_repository = 'https://cofin.github.io/duckdb-oracle';
+-- Or: SET custom_extension_repository = 'https://raw.githubusercontent.com/cofin/duckdb-oracle/gh-pages';
 
 -- Install and load
 INSTALL oracle;
+LOAD oracle;
+```
+
+**Option B: Offline / Local Installation (GitHub Releases)**
+
+DuckDB derives both the installed extension name and the C++ initialization entrypoint (`oracle_duckdb_cpp_init`) from the filename stem before the first `.`. When installing from a local file downloaded from [GitHub Releases](https://github.com/cofin/duckdb-oracle/releases), extract `oracle.duckdb_extension` from the platform archive (`oracle-windows_amd64.zip`, `oracle-linux_amd64.tar.gz`, `oracle-linux_arm64.tar.gz`, or `oracle-osx_arm64.tar.gz`)—or rename `oracle-<platform>.duckdb_extension` to `oracle.duckdb_extension`—before running `INSTALL`:
+
+```sql
+INSTALL 'C:/path/to/oracle.duckdb_extension';
 LOAD oracle;
 ```
 

@@ -7,6 +7,7 @@
 #include "duckdb/common/types/value.hpp"
 #include "oracle_connection.hpp"
 #include "oracle_settings.hpp"
+#include <atomic>
 #include <string>
 #include <memory>
 
@@ -48,6 +49,9 @@ public:
 	                                                 const std::vector<std::string> &bind_values);
 	void ApplyOptions(const unordered_map<string, Value> &options);
 	void ClearCaches();
+	uint64_t GetCacheGeneration() const noexcept {
+		return cache_generation.load(std::memory_order_acquire);
+	}
 
 	static void Register(const shared_ptr<OracleCatalogState> &state, const string &alias);
 	static void ClearAllCaches();
@@ -90,6 +94,7 @@ private:
 	bool version_detected = false;
 	vector<string> schema_cache;
 	unordered_map<string, vector<string>> object_cache;
+	std::atomic<uint64_t> cache_generation {1};
 };
 
 } // namespace duckdb

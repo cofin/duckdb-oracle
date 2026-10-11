@@ -84,15 +84,17 @@ DuckDB organizes attached databases into a tree of catalog objects with strict p
 
 1. **`OracleCatalogState` (`src/storage/oracle_catalog.cpp`)**:
    - Encapsulates metadata discovery queries (`ALL_USERS`, `ALL_OBJECTS`, `ALL_SYNONYMS`, `ALL_TAB_COLUMNS`, `ALL_VEC_COLUMNS`, `ALL_PART_TABLES`, `ALL_TAB_PARTITIONS`) using parameterized bind variables (`ExecuteMetadataQueryWithStringBinds`), lazy schema discovery (`oracle_lazy_schema_loading`), `CURRENT_SCHEMA` resolution, and per-catalog metadata caches.
+   - Maintains an atomic `cache_generation` counter incremented by `ClearCaches()` so `OracleCatalog` and `OracleSchemaEntry` synchronize their in-memory entry caches in $O(1)$ time while moving evicted entries to `retired_schemas` / `retired_tables` to preserve pointer stability for in-flight queries.
+   - Filters `SYNONYM` rows in `ListObjects` so only local (`db_link IS NULL`) synonyms targeting `TABLE`, `VIEW`, or `MATERIALIZED VIEW` objects in `ALL_OBJECTS` are enumerated.
    - Acquires a short-lived `OracleConnection` inside `ExecuteMetadataQuery` / `ExecuteMetadataQueryWithStringBinds` that immediately returns its pooled handle to `OracleConnectionManager` after each metadata query, preventing self-deadlock when `oracle_connection_limit = 1`.
    - Records per-`ATTACH` options in `settings.attach_overridden_keys` so `GetOracleSettings` preserves `ATTACH`-level overrides unless a session explicitly sets a `SettingScope::LOCAL` override.
 
 2. **`OracleCatalog` & `OracleSchemaEntry` (`src/storage/oracle_schema_entry.cpp`)**:
-   - `OracleCatalog` subclasses `duckdb::Catalog`, overriding `InMemory()`, `GetDBPath()` (redacting passwords via `RedactOracleConnectionString`), `GetDatabaseSize()`, and `PlanInsert` (passing resolved `oracle_table.GetSchemaName()` and `oracle_table.GetTableName()` to `PhysicalOracleInsert` for cross-schema and synonym-backed targets).
-   - `OracleSchemaEntry` subclasses `duckdb::SchemaCatalogEntry`, lazily loading table, view, materialized view, and synonym entries into `OracleTableEntry` instances and throwing clean `BinderException` diagnostics for unsupported DDL operations.
+   - `OracleCatalog` subclasses `duckdb::Catalog` directly (never `DuckCatalog`), overriding `LookupSchema`, `ScanSchemas`, `GetDefaultSchema`, `InMemory()`, `GetDBPath()` (redacting passwords via `RedactOracleConnectionString`), `GetDatabaseSize()`, and `PlanInsert` (passing resolved `oracle_table.GetSchemaName()` and `oracle_table.GetTableName()` to `PhysicalOracleInsert` for cross-schema and synonym-backed targets).
+   - `OracleSchemaEntry` subclasses `duckdb::SchemaCatalogEntry` directly with `info.internal = false` (so DuckDB system views `duckdb_schemas`, `duckdb_tables`, `duckdb_columns`, and `information_schema.*` include attached Oracle schemas and tables), overriding `LookupEntry`, `GetSimilarEntry` (scoring against `ListObjects` without triggering $N$ `all_tab_columns` queries), and `Scan` (skipping tables with unsupported column types via `unresolvable_entries` while keeping direct `LookupEntry` strict), and throwing clean `BinderException` diagnostics for unsupported DDL operations.
 
 3. **`OracleTableEntry` (`src/storage/oracle_table_entry.cpp`)**:
-   - Subclasses `duckdb::TableCatalogEntry`, loading column metadata from `ALL_TAB_COLUMNS` (and enriching Oracle 23ai `VECTOR` columns from `ALL_VEC_COLUMNS` and spatial SRIDs from `ALL_SDO_GEOM_METADATA`).
+   - Subclasses `duckdb::TableCatalogEntry`, loading column metadata and `NotNullConstraint` (`NULLABLE = 'N'`) from `ALL_TAB_COLUMNS` (and enriching Oracle 23ai `VECTOR` columns from `ALL_VEC_COLUMNS` and spatial SRIDs from `ALL_SDO_GEOM_METADATA`).
    - Overrides `GetScanFunction` to construct an `OracleBindData` with full column metadata, `original_types`, and 65,535-byte buffer sizing for special/rewritten categories.
 
 ## 4. SecretManager Integration (`src/oracle_secret.cpp`)

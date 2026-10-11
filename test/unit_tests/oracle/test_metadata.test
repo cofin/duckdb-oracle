@@ -91,3 +91,55 @@ statement ok
 SET oracle_lazy_schema_loading = true;
 SET oracle_metadata_object_types = 'TABLE,VIEW,SYNONYM,MATERIALIZED VIEW';
 SET oracle_metadata_result_limit = 10000;
+
+# Test 12: Verify catalog introspection functions and views work with oracle extension loaded
+query I
+SELECT COUNT(*) >= 1 FROM duckdb_databases();
+----
+true
+
+query I
+SELECT COUNT(*) >= 1 FROM duckdb_schemas();
+----
+true
+
+query I
+SELECT COUNT(*) >= 0 FROM duckdb_schemas;
+----
+true
+
+query I
+SELECT COUNT(*) >= 0 FROM duckdb_tables();
+----
+true
+
+query I
+SELECT COUNT(*) >= 0 FROM duckdb_tables;
+----
+true
+
+query I
+SELECT COUNT(*) >= 0 FROM duckdb_columns();
+----
+true
+
+query I
+SELECT COUNT(*) >= 0 FROM duckdb_columns;
+----
+true
+
+query I
+SELECT COUNT(*) >= 1 FROM information_schema.schemata;
+----
+true
+
+query I
+SELECT COUNT(*) >= 0 FROM information_schema.tables;
+----
+true
+
+query I
+SELECT COUNT(*) >= 0 FROM information_schema.columns;
+----
+true
+

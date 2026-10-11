@@ -117,6 +117,7 @@ void OracleCatalogState::ClearCaches() {
 	current_schema.clear();
 	version_detected = false;
 	version_info = OracleVersionInfo();
+	cache_generation.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void OracleCatalogState::Register(const shared_ptr<OracleCatalogState> &state, const string &alias) {
@@ -314,12 +315,19 @@ vector<string> OracleCatalogState::ListObjects(const string &schema, const strin
 	string types_sql = StringUtil::Join(placeholders, ", ");
 
 	auto metadata_result_limit = OracleEffectiveMetadataResultLimit(settings);
-	string query = StringUtil::Format("SELECT * FROM ("
-	                                  "SELECT DISTINCT object_name FROM all_objects "
-	                                  "WHERE (owner = :1 OR owner = UPPER(:2)) AND object_type IN (%s) "
-	                                  "ORDER BY object_name"
-	                                  ") WHERE ROWNUM <= %llu",
-	                                  types_sql.c_str(), static_cast<uint64_t>(metadata_result_limit));
+	string query = StringUtil::Format(
+	    "SELECT * FROM ("
+	    "SELECT DISTINCT o.object_name FROM all_objects o "
+	    "WHERE (o.owner = :1 OR o.owner = UPPER(:2)) AND o.object_type IN (%s) "
+	    "AND (o.object_type != 'SYNONYM' OR EXISTS ("
+	    "SELECT 1 FROM all_synonyms s "
+	    "JOIN all_objects target_obj ON target_obj.owner = s.table_owner AND target_obj.object_name = s.table_name "
+	    "WHERE s.owner = o.owner AND s.synonym_name = o.object_name "
+	    "AND s.db_link IS NULL AND target_obj.object_type IN ('TABLE', 'VIEW', 'MATERIALIZED VIEW')"
+	    ")) "
+	    "ORDER BY o.object_name"
+	    ") WHERE ROWNUM <= %llu",
+	    types_sql.c_str(), static_cast<uint64_t>(metadata_result_limit));
 
 	auto result = ExecuteMetadataQueryWithStringBinds(query, bind_values);
 	vector<string> objects;
@@ -516,6 +524,10 @@ string OracleCatalogState::GetRealSchemaName(const string &name) {
 	auto result = ExecuteMetadataQueryWithStringBinds(query, {name, name, name});
 	if (!result.rows.empty() && !result.rows[0].empty()) {
 		return result.rows[0][0];
+	}
+	auto current = GetCurrentSchema();
+	if (!current.empty() && StringUtil::CIEquals(name, current)) {
+		return current;
 	}
 	return "";
 }
