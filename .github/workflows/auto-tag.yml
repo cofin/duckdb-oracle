@@ -34,18 +34,27 @@ jobs:
             exit 1
           fi
           TAG_NAME="v${EXT_VERSION}"
-          echo "ext_version=${EXT_VERSION}" >> $GITHUB_OUTPUT
-          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
+          echo "ext_version=${EXT_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
           echo "Extension version: ${EXT_VERSION}, Tag: ${TAG_NAME}"
 
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG_NAME}" >/dev/null 2>&1; then
+            echo "Tag $TAG_NAME already exists on remote."
+            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Tag $TAG_NAME does not exist. Proceeding with release."
+            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create Tag If Needed
+        if: steps.versions.outputs.tag_exists != 'true'
         env:
           TAG_NAME: ${{ steps.versions.outputs.tag_name }}
           GITHUB_TOKEN: ${{ secrets.WORKFLOW_UPDATE_TOKEN }}
         shell: bash
         run: |
           # Check if tag already exists on remote
-          if git ls-remote --tags origin "$TAG_NAME" | grep -q "$TAG_NAME"; then
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG_NAME}" >/dev/null 2>&1; then
             echo "Tag $TAG_NAME already exists on remote. Skipping."
             exit 0
           fi

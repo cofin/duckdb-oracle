@@ -30,6 +30,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.version || github.ref_name }}
           fetch-depth: 0
           submodules: true
 
@@ -49,31 +50,42 @@ jobs:
             echo "::error::Could not determine DuckDB version from submodule or workflow file"
             exit 1
           fi
-          echo "duckdb_version=$DUCKDB_VERSION" >> $GITHUB_OUTPUT
+          echo "duckdb_version=$DUCKDB_VERSION" >> "$GITHUB_OUTPUT"
           echo "Detected DuckDB version: $DUCKDB_VERSION"
 
       - name: Get Version
         id: get_version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ inputs.version }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            VERSION="$INPUT_VERSION"
           else
-            VERSION="${{ github.ref_name }}"
+            VERSION="$REF_NAME"
           fi
           
           # Verify format (vX.Y.Z or vX.Y.Z-suffix)
           if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
-            echo "Error: Invalid version format '$VERSION'. Must start with 'v' followed by semver (e.g. v1.0.0)."
+            echo "::error::Invalid version format '$VERSION'. Must start with 'v' followed by semver (e.g. v1.0.0)."
+            exit 1
+          fi
+
+          DESC_VERSION=$(grep '^  version:' description.yml | awk '{print $2}')
+          EXPECTED_DESC_VERSION="${VERSION#v}"
+          if [ "$DESC_VERSION" != "$EXPECTED_DESC_VERSION" ]; then
+            echo "::error::Version mismatch: tag/input version '${EXPECTED_DESC_VERSION}' does not match description.yml version '${DESC_VERSION}'."
             exit 1
           fi
           
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           
           # Check if prerelease
           if [[ "$VERSION" == *"-"* ]]; then
-            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
           else
-            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
   build-matrix:
@@ -105,6 +117,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ needs.validate-version.outputs.version }}
           fetch-depth: 0
           submodules: true
 
@@ -126,11 +139,14 @@ jobs:
 
       - name: Install Oracle Instant Client
         shell: bash
+        env:
+          RUNNER_OS_NAME: ${{ runner.os }}
+          SETUP_SCRIPT: ${{ matrix.setup_script }}
         run: |
-          if [ "${{ runner.os }}" == "Windows" ]; then
-            pwsh -ExecutionPolicy Bypass -File ${{ matrix.setup_script }}
+          if [ "$RUNNER_OS_NAME" == "Windows" ]; then
+            pwsh -ExecutionPolicy Bypass -File "$SETUP_SCRIPT"
           else
-            ./${{ matrix.setup_script }}
+            "./$SETUP_SCRIPT"
           fi
 
       - name: Setup Python
@@ -140,12 +156,14 @@ jobs:
 
       - name: Install CMake
         if: runner.os != 'Windows'
+        env:
+          RUNNER_OS_NAME: ${{ runner.os }}
         run: |
           # Check if cmake is installed, if not install it
           if ! command -v cmake &> /dev/null; then
-             if [ "${{ runner.os }}" == "Linux" ]; then
+             if [ "$RUNNER_OS_NAME" == "Linux" ]; then
                 sudo apt-get install -y cmake
-             elif [ "${{ runner.os }}" == "macOS" ]; then
+             elif [ "$RUNNER_OS_NAME" == "macOS" ]; then
                 brew install cmake
              fi
           fi
@@ -157,15 +175,20 @@ jobs:
           vcpkgGitCommitId: ce613c41372b23b1f51333815feb3edd87ef8a8b
           vcpkgGitURL: https://github.com/microsoft/vcpkg.git
 
+      - name: Setup MSVC Developer Command Prompt (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Build Extension (Windows)
         if: runner.os == 'Windows'
-        shell: cmd
+        shell: pwsh
         env:
           VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}\vcpkg\scripts\buildsystems\vcpkg.cmake
           VCPKG_TARGET_TRIPLET: x64-windows
         run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-          mv "C:\Program Files\Git\usr\bin\link.exe" "C:\Program Files\Git\usr\bin\link-git.exe"
+          if (Test-Path "C:\Program Files\Git\usr\bin\link.exe") {
+            Move-Item -Force "C:\Program Files\Git\usr\bin\link.exe" "C:\Program Files\Git\usr\bin\link-git.exe"
+          }
           make release
 
       - name: Build Extension (Unix)
@@ -176,20 +199,28 @@ jobs:
 
       - name: Run Smoke Tests
         shell: bash
+        env:
+          RUNNER_OS_NAME: ${{ runner.os }}
         run: |
-          # Verify extension loads and runs basic query
-          ./build/release/duckdb -unsigned -c "LOAD 'build/release/extension/oracle/oracle.duckdb_extension'; SELECT oracle_query('dummy', 'SELECT 1');" 2>&1 | grep "ORA-" || echo "Smoke test passed (expected Oracle error)"
-          
-          # Verify version (if we had a version function, we would check it here)
-          ./build/release/duckdb -unsigned -c "LOAD 'build/release/extension/oracle/oracle.duckdb_extension'; SELECT * FROM duckdb_extensions() WHERE extension_name='oracle';"
+          # Verify extension loads cleanly and reports installed + loaded
+          EXT_STATUS=$(./build/release/duckdb -unsigned -csv -noheader -c "LOAD 'build/release/extension/oracle/oracle.duckdb_extension'; SELECT installed, loaded FROM duckdb_extensions() WHERE extension_name = 'oracle';")
+          echo "Extension status: $EXT_STATUS"
+          if [ "$EXT_STATUS" != "true,true" ]; then
+            echo "::error::Failed to load oracle extension (status: $EXT_STATUS)"
+            exit 1
+          fi
+
+          if [ "$RUNNER_OS_NAME" != "Windows" ]; then
+            ./build/release/test/unittest "test/unit_tests/*"
+          fi
 
       - name: Prepare Artifacts
         shell: bash
+        env:
+          DUCKDB_VERSION: ${{ needs.validate-version.outputs.duckdb_version }}
+          PLATFORM: ${{ matrix.platform }}
+          ARCH: ${{ matrix.arch }}
         run: |
-          DUCKDB_VERSION=${{ needs.validate-version.outputs.duckdb_version }}
-          PLATFORM=${{ matrix.platform }}
-          ARCH=${{ matrix.arch }}
-
           # Map to DuckDB platform strings
           if [ "$PLATFORM" == "linux" ] && [ "$ARCH" == "x86_64" ]; then
             DUCKDB_PLATFORM="linux_amd64"
@@ -239,6 +270,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ needs.validate-version.outputs.version }}
           fetch-depth: 0
 
       - name: Download Artifacts
@@ -249,6 +281,17 @@ jobs:
 
       - name: Prepare Deployment
         run: |
+          EXPECTED_COUNT=4  # linux_amd64, linux_arm64, osx_arm64, windows_amd64
+          ACTUAL_COUNT=$(find artifacts -name "oracle.duckdb_extension.gz" 2>/dev/null | wc -l | tr -d ' ')
+          echo "Expected gh-pages artifacts: $EXPECTED_COUNT"
+          echo "Found gh-pages artifacts: $ACTUAL_COUNT"
+
+          if [ "$ACTUAL_COUNT" -ne "$EXPECTED_COUNT" ]; then
+            echo "::error::Expected $EXPECTED_COUNT platform artifacts for GitHub Pages, found $ACTUAL_COUNT"
+            ls -laR artifacts/ || true
+            exit 1
+          fi
+
           mkdir -p deploy_content
           
           # Move v* directories (e.g., v1.1.3/linux_amd64/...) to deploy_content
@@ -257,7 +300,7 @@ jobs:
           # We don't need the flat copies for Pages, so we ignore them (they stay in artifacts/)
 
       - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
+        uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./deploy_content
@@ -276,6 +319,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ needs.validate-version.outputs.version }}
           fetch-depth: 0
 
       - name: Download Artifacts
@@ -294,15 +338,16 @@ jobs:
           # Count platform-specific extension files
           # NOTE: Update this count if adding new platforms to the build matrix
           EXPECTED_COUNT=4  # linux_amd64, linux_arm64, osx_arm64, windows_amd64
-          ACTUAL_COUNT=$(find artifacts/release -name "*.duckdb_extension" 2>/dev/null | wc -l)
+          ACTUAL_COUNT=$(find artifacts/release -name "*.duckdb_extension" 2>/dev/null | wc -l | tr -d ' ')
 
           echo "Expected artifacts: $EXPECTED_COUNT"
           echo "Found artifacts: $ACTUAL_COUNT"
 
-          if [ "$ACTUAL_COUNT" -lt "$EXPECTED_COUNT" ]; then
-            echo "::warning::Expected $EXPECTED_COUNT platform artifacts, found $ACTUAL_COUNT"
+          if [ "$ACTUAL_COUNT" -ne "$EXPECTED_COUNT" ]; then
+            echo "::error::Expected $EXPECTED_COUNT platform artifacts, found $ACTUAL_COUNT"
             echo "Contents of artifacts directory:"
             ls -laR artifacts/
+            exit 1
           fi
 
           # Merge all SHA256 checksums into single file
@@ -312,57 +357,57 @@ jobs:
 
       - name: Generate Release Notes
         id: release_notes
+        env:
+          VERSION: ${{ needs.validate-version.outputs.version }}
+          DUCKDB_VERSION: ${{ needs.validate-version.outputs.duckdb_version }}
         run: |
-          VERSION=${{ needs.validate-version.outputs.version }}
-          DUCKDB_VERSION=${{ needs.validate-version.outputs.duckdb_version }}
-
           # Get previous tag
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
 
-          echo "notes<<EOF" >> $GITHUB_OUTPUT
-          echo "## DuckDB Oracle Extension $VERSION" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "Built for DuckDB $DUCKDB_VERSION" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "## Platform Downloads" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "| Platform | Architecture | File |" >> $GITHUB_OUTPUT
-          echo "|----------|--------------|------|" >> $GITHUB_OUTPUT
-          echo "| Linux | x86_64 (AMD64) | \`oracle-linux_amd64.duckdb_extension\` |" >> $GITHUB_OUTPUT
-          echo "| Linux | ARM64 | \`oracle-linux_arm64.duckdb_extension\` |" >> $GITHUB_OUTPUT
-          echo "| macOS | ARM64 (Apple Silicon) | \`oracle-osx_arm64.duckdb_extension\` |" >> $GITHUB_OUTPUT
-          echo "| Windows | x86_64 (AMD64) | \`oracle-windows_amd64.duckdb_extension\` |" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "## Verify Download" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "\`\`\`bash" >> $GITHUB_OUTPUT
-          echo "# Download SHA256SUMS.txt and verify" >> $GITHUB_OUTPUT
-          echo "sha256sum -c SHA256SUMS.txt" >> $GITHUB_OUTPUT
-          echo "\`\`\`" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "## Installation" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "\`\`\`sql" >> $GITHUB_OUTPUT
-          echo "-- Install from custom repository" >> $GITHUB_OUTPUT
-          echo "SET custom_extension_repository = 'https://cofin.github.io/duckdb-oracle';" >> $GITHUB_OUTPUT
-          echo "INSTALL oracle;" >> $GITHUB_OUTPUT
-          echo "LOAD oracle;" >> $GITHUB_OUTPUT
-          echo "\`\`\`" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "## Changes" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
+          echo "notes<<EOF" >> "$GITHUB_OUTPUT"
+          echo "## DuckDB Oracle Extension $VERSION" >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
+          echo "Built for DuckDB $DUCKDB_VERSION" >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
+          echo "## Platform Downloads" >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
+          echo "| Platform | Architecture | File |" >> "$GITHUB_OUTPUT"
+          echo "|----------|--------------|------|" >> "$GITHUB_OUTPUT"
+          echo "| Linux | x86_64 (AMD64) | \`oracle-linux_amd64.duckdb_extension\` |" >> "$GITHUB_OUTPUT"
+          echo "| Linux | ARM64 | \`oracle-linux_arm64.duckdb_extension\` |" >> "$GITHUB_OUTPUT"
+          echo "| macOS | ARM64 (Apple Silicon) | \`oracle-osx_arm64.duckdb_extension\` |" >> "$GITHUB_OUTPUT"
+          echo "| Windows | x86_64 (AMD64) | \`oracle-windows_amd64.duckdb_extension\` |" >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
+          echo "## Verify Download" >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
+          echo "\`\`\`bash" >> "$GITHUB_OUTPUT"
+          echo "# Download SHA256SUMS.txt and verify" >> "$GITHUB_OUTPUT"
+          echo "sha256sum -c SHA256SUMS.txt" >> "$GITHUB_OUTPUT"
+          echo "\`\`\`" >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
+          echo "## Installation" >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
+          echo "\`\`\`sql" >> "$GITHUB_OUTPUT"
+          echo "-- Install from custom repository" >> "$GITHUB_OUTPUT"
+          echo "SET custom_extension_repository = 'https://cofin.github.io/duckdb-oracle';" >> "$GITHUB_OUTPUT"
+          echo "INSTALL oracle;" >> "$GITHUB_OUTPUT"
+          echo "LOAD oracle;" >> "$GITHUB_OUTPUT"
+          echo "\`\`\`" >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
+          echo "## Changes" >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
 
           if [ -z "$PREV_TAG" ]; then
-            git log --pretty=format:"- %h %s" >> $GITHUB_OUTPUT
+            git log --pretty=format:"- %h %s" >> "$GITHUB_OUTPUT"
           else
-            git log --pretty=format:"- %h %s" ${PREV_TAG}..HEAD >> $GITHUB_OUTPUT
+            git log --pretty=format:"- %h %s" "${PREV_TAG}..HEAD" >> "$GITHUB_OUTPUT"
           fi
 
-          echo "" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.validate-version.outputs.version }}
           name: Release ${{ needs.validate-version.outputs.version }}

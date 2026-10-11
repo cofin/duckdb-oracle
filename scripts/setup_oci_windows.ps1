@@ -29,8 +29,8 @@ New-Item -ItemType Directory -Path $INSTALL_DIR | Out-Null
 Write-Host "Downloading Oracle Instant Client ${OCI_VER_FULL} for Windows ${OCI_ARCH}..."
 
 # Download files
-$BasicZip = Join-Path $PWD "basic.zip"
-$SdkZip = Join-Path $PWD "sdk.zip"
+$BasicZip = Join-Path $INSTALL_DIR "basic.zip"
+$SdkZip = Join-Path $INSTALL_DIR "sdk.zip"
 
 try {
     Invoke-WebRequest -Uri "${BASE_URL}/${BASIC_FILE}" -OutFile $BasicZip

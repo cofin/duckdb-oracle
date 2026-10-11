@@ -47,21 +47,21 @@ The CI/CD workflows, OCI setup scripts, CMake/Makefile build configuration, and 
 
 ### Phase 1: GitHub Actions Workflows, OCI Setup/Test Scripts, Build Config & License Metadata
 
-- [ ] **Task 1.1: Fix duckdb-update-check.yml daily PR churn, script injection, and auto-tag.yml exact tag check** -> [tasks/1.1.md](tasks/1.1.md)
+- [x] **Task 1.1: Fix duckdb-update-check.yml daily PR churn, script injection, and auto-tag.yml exact tag check** -> [tasks/1.1.md](tasks/1.1.md)
   - **Objective**: Remediate `H-24` (`duckdb-update-check.yml` part) and `M-23` (`duckdb-update-check.yml` and `auto-tag.yml` parts) in `.github/workflows/duckdb-update-check.yml` and `.github/workflows/auto-tag.yml`.
   - **Verification Strategy**: `Verify workflow YAML syntax and shell logic via python3/actionlint`
   - **Files**: `.github/workflows/duckdb-update-check.yml`, `.github/workflows/auto-tag.yml`
-- [ ] **Task 1.2: Harden release-unsigned.yml artifact count & smoke test gates, fix integration-tests.yml OCI paths, and upgrade deprecated actions** -> [tasks/1.2.md](tasks/1.2.md)
+- [x] **Task 1.2: Harden release-unsigned.yml artifact count & smoke test gates, fix integration-tests.yml OCI paths, and upgrade deprecated actions** -> [tasks/1.2.md](tasks/1.2.md)
   - **Objective**: Remediate `H-24` (`release-unsigned.yml` and `integration-tests.yml` parts), `M-23` (`release-unsigned.yml` part), and `M-24` across `.github/workflows/release-unsigned.yml`, `.github/workflows/integration-tests.yml`, and `.github/workflows/main-distribution-pipeline.yml`.
   - **Verification Strategy**: `Verify workflow YAML syntax via python3`
   - **Depends On**: `ci-build-release-hardening:1.1`
   - **Files**: `.github/workflows/release-unsigned.yml`, `.github/workflows/integration-tests.yml`, `.github/workflows/main-distribution-pipeline.yml`
-- [ ] **Task 1.3: Fix GITHUB_ENV library path expansion, macOS OCI version/DMG cleanup, and portable sed/sort in shell scripts** -> [tasks/1.3.md](tasks/1.3.md)
+- [x] **Task 1.3: Fix GITHUB_ENV library path expansion, macOS OCI version/DMG cleanup, and portable sed/sort in shell scripts** -> [tasks/1.3.md](tasks/1.3.md)
   - **Objective**: Remediate `M-25` and `M-26` (scripts part) across `scripts/setup_oci_linux.sh`, `scripts/setup_oci_macos.sh`, `scripts/setup_oci_windows.ps1`, `scripts/test_integration.sh`, and `scripts/bump_duckdb_version.sh`.
   - **Verification Strategy**: `Run bash -n on all shell scripts`
   - **Depends On**: `ci-build-release-hardening:1.2`
   - **Files**: `scripts/setup_oci_linux.sh`, `scripts/setup_oci_macos.sh`, `scripts/setup_oci_windows.ps1`, `scripts/test_integration.sh`, `scripts/bump_duckdb_version.sh`
-- [ ] **Task 1.4: Align description.yml license with LICENSE, configure extension_config.cmake TEST_DIR, and harden CMakeLists.txt & Makefile** -> [tasks/1.4.md](tasks/1.4.md)
+- [x] **Task 1.4: Align description.yml license with LICENSE, configure extension_config.cmake TEST_DIR, and harden CMakeLists.txt & Makefile** -> [tasks/1.4.md](tasks/1.4.md)
   - **Objective**: Remediate `H-24` (license part), `M-26` (CMake/Makefile part), and `L-10` in `extension_config.cmake`, `CMakeLists.txt`, `Makefile`, `description.yml`, and `LICENSE`.
   - **Verification Strategy**: `tdd`
   - **Depends On**: `ci-build-release-hardening:1.3`

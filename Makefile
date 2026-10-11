@@ -32,26 +32,30 @@ endif
 
 # Helper function to ensure libaio is available (needed for Oracle Instant Client)
 define ensure_libaio
-	@if ! [ -f /usr/lib/x86_64-linux-gnu/libaio.so.1 ] && ! [ -f /lib/x86_64-linux-gnu/libaio.so.1 ] && ! [ -f /usr/lib64/libaio.so.1 ] && ! [ -f /usr/lib/aarch64-linux-gnu/libaio.so.1 ] && ! [ -f /lib/aarch64-linux-gnu/libaio.so.1 ]; then \
+	@SUDO=""; \
+	if [ "$$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then \
+		SUDO="sudo"; \
+	fi; \
+	if ! [ -f /usr/lib/x86_64-linux-gnu/libaio.so.1 ] && ! [ -f /lib/x86_64-linux-gnu/libaio.so.1 ] && ! [ -f /usr/lib64/libaio.so.1 ] && ! [ -f /usr/lib/aarch64-linux-gnu/libaio.so.1 ] && ! [ -f /lib/aarch64-linux-gnu/libaio.so.1 ]; then \
 		echo "libaio.so.1 not found - installing..."; \
 		if command -v apt-get >/dev/null 2>&1; then \
-			apt-get update -qq && (apt-get install -y --no-install-recommends libaio1t64 || apt-get install -y --no-install-recommends libaio1 || apt-get install -y --no-install-recommends libaio-dev); \
+			$$SUDO apt-get update -qq && ($$SUDO apt-get install -y --no-install-recommends libaio1t64 || $$SUDO apt-get install -y --no-install-recommends libaio1 || $$SUDO apt-get install -y --no-install-recommends libaio-dev); \
 		elif command -v yum >/dev/null 2>&1; then \
-			yum install -y libaio; \
+			$$SUDO yum install -y libaio; \
 		elif command -v dnf >/dev/null 2>&1; then \
-			dnf install -y libaio; \
+			$$SUDO dnf install -y libaio; \
 		elif command -v apk >/dev/null 2>&1; then \
-			apk add --no-cache libaio; \
+			$$SUDO apk add --no-cache libaio; \
 		else \
 			echo "ERROR: No supported package manager found (apt-get, yum, dnf, apk)"; \
 			exit 1; \
 		fi; \
-	fi
-	@if [ -f /usr/lib/x86_64-linux-gnu/libaio.so.1t64 ] && ! [ -f /usr/lib/x86_64-linux-gnu/libaio.so.1 ]; then \
-		ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1 || true; \
-	fi
-	@if [ -f /usr/lib/aarch64-linux-gnu/libaio.so.1t64 ] && ! [ -f /usr/lib/aarch64-linux-gnu/libaio.so.1 ]; then \
-		ln -sf /usr/lib/aarch64-linux-gnu/libaio.so.1t64 /usr/lib/aarch64-linux-gnu/libaio.so.1 || true; \
+	fi; \
+	if [ -f /usr/lib/x86_64-linux-gnu/libaio.so.1t64 ] && ! [ -f /usr/lib/x86_64-linux-gnu/libaio.so.1 ]; then \
+		$$SUDO ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1 || true; \
+	fi; \
+	if [ -f /usr/lib/aarch64-linux-gnu/libaio.so.1t64 ] && ! [ -f /usr/lib/aarch64-linux-gnu/libaio.so.1 ]; then \
+		$$SUDO ln -sf /usr/lib/aarch64-linux-gnu/libaio.so.1t64 /usr/lib/aarch64-linux-gnu/libaio.so.1 || true; \
 	fi
 endef
 
@@ -74,6 +78,8 @@ endif
 TESTS_BASE_DIRECTORY = test/unit_tests/
 test-unit: test
 test_release_internal: ensure-libaio
+test_debug_internal: ensure-libaio
+test_reldebug_internal: ensure-libaio
 ensure-libaio:
 ifeq ($(UNAME_S),Linux)
 	$(call ensure_libaio)
