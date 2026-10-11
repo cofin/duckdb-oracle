@@ -7,9 +7,7 @@
 
 namespace duckdb {
 
-namespace {
-
-static int64_t ExtractSignedOptionInt(const Value &val, const char *name, idx_t min_value, idx_t max_value) {
+int64_t ExtractSignedOptionInt(const Value &val, const char *name, idx_t min_value, idx_t max_value) {
 	if (val.type().id() == LogicalTypeId::UBIGINT) {
 		auto raw = val.GetValue<uint64_t>();
 		if (raw > static_cast<uint64_t>(NumericLimits<int64_t>::Maximum())) {
@@ -21,8 +19,6 @@ static int64_t ExtractSignedOptionInt(const Value &val, const char *name, idx_t 
 	}
 	return val.GetValue<int64_t>();
 }
-
-} // namespace
 
 void ValidatePositiveRange(const string &name, int64_t val, int64_t min_val, int64_t max_val) {
 	if (val < 0 || val < min_val || val > max_val) {

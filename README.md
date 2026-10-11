@@ -97,11 +97,11 @@ Tables, views, materialized views, and synonyms are automatically discovered via
 
 ### Flashback Queries (`as_of_scn` / `as_of_timestamp`)
 
-`oracle_scan` and `oracle_query` accept optional `as_of_scn` (`UBIGINT`) or `as_of_timestamp` (`VARCHAR`) named parameters (mutually exclusive) to execute Oracle Flashback queries:
+`oracle_scan` accepts optional `as_of_scn` (`UBIGINT`) or `as_of_timestamp` (`VARCHAR`) named parameters (mutually exclusive) to execute Oracle Flashback queries:
 
 ```sql
 SELECT * FROM oracle_scan('ora', 'HR', 'EMPLOYEES', as_of_scn := 12345678);
-SELECT * FROM oracle_query('ora', 'SELECT * FROM HR.EMPLOYEES', as_of_timestamp := '2026-01-01 00:00:00');
+SELECT * FROM oracle_scan('ora', 'HR', 'EMPLOYEES', as_of_timestamp := '2026-01-01 00:00:00');
 ```
 
 ## Authentication

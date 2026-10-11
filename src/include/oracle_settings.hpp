@@ -61,6 +61,7 @@ idx_t OracleEffectiveStmtCacheSize(const OracleSettings &settings);
 idx_t OracleEffectiveMetadataResultLimit(const OracleSettings &settings);
 idx_t OracleValidatedSettingValue(int64_t value, const char *name, idx_t min_value, idx_t max_value);
 idx_t OracleValidatedMetadataResultLimit(int64_t value);
+int64_t ExtractSignedOptionInt(const Value &val, const char *name, idx_t min_value, idx_t max_value);
 void ValidatePositiveRange(const string &name, int64_t val, int64_t min_val, int64_t max_val);
 void ApplyAttachOptions(const case_insensitive_map_t<Value> &options, OracleSettings &settings);
 

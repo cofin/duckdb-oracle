@@ -1,5 +1,6 @@
 #include "oracle_pushdown.hpp"
 #include "oracle_table_function.hpp"
+#include "oracle_utils.hpp"
 #include "duckdb/common/limits.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/date.hpp"
@@ -146,17 +147,6 @@ static idx_t ResolveBoundRefColumnIndex(idx_t ref_idx, const vector<ColumnIndex>
 		}
 	}
 	return ref_idx;
-}
-
-static bool HasDuplicateColumnNames(const vector<string> &names) {
-	for (idx_t i = 0; i < names.size(); i++) {
-		for (idx_t j = i + 1; j < names.size(); j++) {
-			if (names[i] == names[j]) {
-				return true;
-			}
-		}
-	}
-	return false;
 }
 
 static bool IsColumnRef(Expression *expr) {

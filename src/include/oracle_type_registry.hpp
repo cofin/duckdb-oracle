@@ -99,4 +99,20 @@ public:
 	static void ValidateSupported(const OracleTypeDecision &decision, const OracleTypeMetadata &metadata);
 };
 
+inline bool IsLargeOracleCategory(OracleTypeCategory category) {
+	switch (category) {
+	case OracleTypeCategory::JSON:
+	case OracleTypeCategory::VECTOR:
+	case OracleTypeCategory::SPATIAL:
+	case OracleTypeCategory::XML:
+	case OracleTypeCategory::LOB_CLOB:
+	case OracleTypeCategory::LOB_BLOB:
+	case OracleTypeCategory::LONG_TEXT:
+	case OracleTypeCategory::LONG_RAW:
+		return true;
+	default:
+		return false;
+	}
+}
+
 } // namespace duckdb

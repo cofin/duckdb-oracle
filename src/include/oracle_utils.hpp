@@ -130,4 +130,15 @@ inline std::shared_ptr<OCIStmt> AllocateSharedOCIStatement(OCIEnv *envhp, OCIErr
 	});
 }
 
+inline bool HasDuplicateColumnNames(const vector<string> &names) {
+	for (idx_t i = 0; i < names.size(); i++) {
+		for (idx_t j = i + 1; j < names.size(); j++) {
+			if (names[i] == names[j]) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
 } // namespace duckdb

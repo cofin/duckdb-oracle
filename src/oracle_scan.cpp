@@ -24,33 +24,6 @@ static string TryGetParamStringAttr(OCIParam *param, OCIError *errhp, ub4 attr) 
 	return string(reinterpret_cast<char *>(text), text_len);
 }
 
-static bool IsLargeBufferCategory(OracleTypeCategory category) {
-	switch (category) {
-	case OracleTypeCategory::JSON:
-	case OracleTypeCategory::VECTOR:
-	case OracleTypeCategory::SPATIAL:
-	case OracleTypeCategory::XML:
-	case OracleTypeCategory::LOB_CLOB:
-	case OracleTypeCategory::LOB_BLOB:
-	case OracleTypeCategory::LONG_TEXT:
-	case OracleTypeCategory::LONG_RAW:
-		return true;
-	default:
-		return false;
-	}
-}
-
-static bool HasDuplicateNames(const vector<string> &names) {
-	for (idx_t i = 0; i < names.size(); i++) {
-		for (idx_t j = i + 1; j < names.size(); j++) {
-			if (names[i] == names[j]) {
-				return true;
-			}
-		}
-	}
-	return false;
-}
-
 static vector<string> SplitTopLevelSelectExpressions(const string &select_list_sql) {
 	vector<string> result;
 	if (select_list_sql.empty()) {
@@ -263,7 +236,7 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, const string
 		OracleTypeRegistry::ValidateSupported(decision, type_metadata);
 		result->oracle_type_names.push_back(decision.normalized_type);
 		result->pushdown_eligible.push_back(decision.pushdown_eligible);
-		if (IsLargeBufferCategory(decision.category)) {
+		if (IsLargeOracleCategory(decision.category)) {
 			result->oci_sizes.back() = NumericLimits<ub2>::Maximum();
 		}
 		return_types.push_back(decision.duckdb_type);
@@ -438,7 +411,7 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &, TableFunc
 		}
 	}
 
-	bool cannot_prune_query_columns = bind.direct_from_sql.empty() && HasDuplicateNames(bind.original_names);
+	bool cannot_prune_query_columns = bind.direct_from_sql.empty() && HasDuplicateColumnNames(bind.original_names);
 	if (cannot_prune_query_columns) {
 		state->active_bind_cols.reserve(bind.original_names.size());
 		for (idx_t i = 0; i < bind.original_names.size(); i++) {

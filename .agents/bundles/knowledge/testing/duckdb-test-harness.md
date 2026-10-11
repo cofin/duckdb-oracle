@@ -20,36 +20,51 @@ The `duckdb-oracle` repository maintains a two-tiered testing harness:
 test/
 ├── README.md                                  # Test suite and manual verification guide
 ├── unit_tests/                                # Fast offline unit tests (executed by make test-unit)
+│   ├── test_attach_and_scan.test              # ATTACH, DETACH, and oracle_scan offline validation
+│   ├── test_connection_resolver.test          # Connection string and secret resolution validation
+│   ├── test_execute_failures.test             # oracle_execute failure and transaction guard checks
 │   ├── test_extension_metadata.test           # Extension version and load verification
-│   ├── test_oracle_wallet.test                # Offline wallet validation and secret resolution
+│   ├── test_filter_pushdown.test              # Offline filter pushdown and parameter validation
+│   ├── test_oracle_write_removed.test         # Verification that legacy oracle_write is not exposed
+│   ├── test_public_surface.test               # Registered functions, settings, and secret types
+│   ├── test_query_function.test               # oracle_query input validation
+│   ├── test_secret_basic.test                 # Secret creation, wallet/SEPS, and TNS alias shapes
+│   ├── test_secret_errors.test                # Secret parameter validation and error handling
+│   ├── test_wallet_and_settings.test          # Wallet path and setting interaction checks
+│   ├── spatial/
+│   │   └── test_spatial_basic.test            # Spatial setting and WKT type surface checks
 │   └── oracle/
-│       ├── connection_milestone.test          # Connection string and secret parsing unit tests
-│       ├── execution_milestone.test           # Execution and setting validation unit tests
-│       ├── pushdown_milestone.test            # Filter and projection pushdown unit tests
-│       ├── storage_milestone.test             # Attached catalog and storage unit tests
+│       ├── test_execute.test                  # oracle_execute argument and error checks
 │       ├── test_metadata.test                 # Lazy schema loading and metadata object type settings
 │       ├── test_schema_resolution.test        # CURRENT_SCHEMA resolution settings
-│       └── test_tuning_settings.test          # Tuning settings defaults and range validation
+│       ├── test_settings.test                 # Combined Oracle extension settings smoke checks
+│       └── test_tuning_settings.test          # Tuning settings defaults, call_timeout_ms, stmt_cache_size, and overflow bounds
 └── integration_tests/                         # Full containerized integration tests (make integration)
     ├── init_sql/
     │   └── 01_setup.sql                       # Test user creation and grants (duckdb_test on FREEPDB1)
-    ├── test_connection.test                   # Live connection and secret authentication tests
-    ├── test_datatypes.test                    # Core Oracle data type mappings
+    ├── test_connection_pool_lifecycle.test    # Connection pool reuse, health checks, and limits
     ├── test_edge_cases.test                   # NULLs, empty tables, and multi-kilobyte CLOBs
-    ├── test_metadata_queries.test             # Metadata enumeration and lazy loading against Oracle
     ├── test_pipelined.test                    # Pipelined table functions via oracle_query
-    ├── test_pushdown.test                     # Predicate and projection pushdown integration tests
-    ├── test_security.test                     # Credential redaction and privilege boundary tests
-    ├── test_types_comprehensive.test          # Comprehensive numeric, temporal, LOB, and vector types
     ├── test_views_matviews.test               # Views, materialized views, and synonyms
+    ├── test_write_lobs.test                   # CLOB/BLOB read and write round-trips
     └── oracle/
-        ├── connection.test                    # Connection pooling and wallet/secret integration
-        ├── execution.test                     # oracle_query, oracle_scan, and flashback queries
+        ├── edge_cases.test                    # Boundary conditions and large payloads
+        ├── execute.test                       # Live DDL/DML execution via oracle_execute
+        ├── json.test                          # Oracle JSON read/write integration
+        ├── metadata.test                      # Metadata enumeration and lazy loading against Oracle
         ├── partition_pruning.test             # Partition metadata and partition-key filter pushdown
-        ├── pushdown.test                      # Complex filter pushdown verification
+        ├── pushdown.test                      # Filter and projection pushdown verification
+        ├── schema_resolution.test             # Live CURRENT_SCHEMA and cross-schema resolution
         ├── spatial.test                       # SDO_GEOMETRY WKT point/polygon read/write round-trips
+        ├── streaming.test                     # Multi-chunk cursor fetch and streaming verification
+        ├── type_conversion.test               # Numeric, temporal, and binary type conversions
+        ├── type_registry.test                 # Metadata and OCI describe type registry resolution
+        ├── vector.test                        # Oracle 23ai VECTOR read queries
         ├── write.test                         # Bulk array INSERT INTO attached Oracle tables
-        ├── write_transaction.test             # Statement-atomic commit, rollback, and transaction guards
+        ├── write_identifiers.test             # Quoted and case-sensitive identifier writes
+        ├── write_json.test                    # JSON column writes
+        ├── write_rollback.test                # Error rollback and recovery verification
+        ├── write_transactions.test            # Statement-atomic commit and explicit transaction guards
         └── write_vector.test                  # Oracle 23ai VECTOR read/write round-trips
 ```
 

@@ -23,19 +23,6 @@ static bool HasDirectConnectionStringShape(const string &connection_ref) {
 	return at_pos > slash_pos + 1;
 }
 
-static int64_t ExtractSignedSettingRaw(const Value &option_value, const char *name, idx_t min_value, idx_t max_value) {
-	if (option_value.type().id() == LogicalTypeId::UBIGINT) {
-		auto raw = option_value.GetValue<uint64_t>();
-		if (raw > static_cast<uint64_t>(NumericLimits<int64_t>::Maximum())) {
-			auto min_str = std::to_string(min_value);
-			auto max_str = std::to_string(max_value);
-			throw InvalidInputException("%s must be between %s and %s", name, min_str.c_str(), max_str.c_str());
-		}
-		return static_cast<int64_t>(raw);
-	}
-	return option_value.GetValue<int64_t>();
-}
-
 } // namespace
 
 OracleSettings GetOracleSettings(ClientContext &context, OracleCatalogState *state) {
@@ -70,7 +57,7 @@ OracleSettings GetOracleSettings(ClientContext &context, OracleCatalogState *sta
 	}
 	lookup = context.TryGetCurrentSetting("oracle_prefetch_rows", option_value);
 	if (lookup) {
-		auto raw = ExtractSignedSettingRaw(option_value, "oracle_prefetch_rows", 1, MAX_ORACLE_PREFETCH_ROWS);
+		auto raw = ExtractSignedOptionInt(option_value, "oracle_prefetch_rows", 1, MAX_ORACLE_PREFETCH_ROWS);
 		auto val = OracleValidatedSettingValue(raw, "oracle_prefetch_rows", 1, MAX_ORACLE_PREFETCH_ROWS);
 		if (should_apply("oracle_prefetch_rows", lookup.GetScope(), settings.prefetch_rows != defaults.prefetch_rows,
 		                 val != defaults.prefetch_rows)) {
@@ -79,7 +66,7 @@ OracleSettings GetOracleSettings(ClientContext &context, OracleCatalogState *sta
 	}
 	lookup = context.TryGetCurrentSetting("oracle_prefetch_memory", option_value);
 	if (lookup) {
-		auto raw = ExtractSignedSettingRaw(option_value, "oracle_prefetch_memory", 0, MAX_ORACLE_PREFETCH_MEMORY);
+		auto raw = ExtractSignedOptionInt(option_value, "oracle_prefetch_memory", 0, MAX_ORACLE_PREFETCH_MEMORY);
 		auto val = OracleValidatedSettingValue(raw, "oracle_prefetch_memory", 0, MAX_ORACLE_PREFETCH_MEMORY);
 		if (should_apply("oracle_prefetch_memory", lookup.GetScope(),
 		                 settings.prefetch_memory != defaults.prefetch_memory, val != defaults.prefetch_memory)) {
@@ -88,7 +75,7 @@ OracleSettings GetOracleSettings(ClientContext &context, OracleCatalogState *sta
 	}
 	lookup = context.TryGetCurrentSetting("oracle_array_size", option_value);
 	if (lookup) {
-		auto raw = ExtractSignedSettingRaw(option_value, "oracle_array_size", 1, STANDARD_VECTOR_SIZE);
+		auto raw = ExtractSignedOptionInt(option_value, "oracle_array_size", 1, STANDARD_VECTOR_SIZE);
 		auto val = OracleValidatedSettingValue(raw, "oracle_array_size", 1, STANDARD_VECTOR_SIZE);
 		if (should_apply("oracle_array_size", lookup.GetScope(), settings.array_size != defaults.array_size,
 		                 val != defaults.array_size)) {
@@ -105,7 +92,7 @@ OracleSettings GetOracleSettings(ClientContext &context, OracleCatalogState *sta
 	}
 	lookup = context.TryGetCurrentSetting("oracle_connection_limit", option_value);
 	if (lookup) {
-		auto raw = ExtractSignedSettingRaw(option_value, "oracle_connection_limit", 1, MAX_ORACLE_CONNECTION_LIMIT);
+		auto raw = ExtractSignedOptionInt(option_value, "oracle_connection_limit", 1, MAX_ORACLE_CONNECTION_LIMIT);
 		auto val = OracleValidatedSettingValue(raw, "oracle_connection_limit", 1, MAX_ORACLE_CONNECTION_LIMIT);
 		if (should_apply("oracle_connection_limit", lookup.GetScope(),
 		                 settings.connection_limit != defaults.connection_limit, val != defaults.connection_limit)) {
@@ -123,7 +110,7 @@ OracleSettings GetOracleSettings(ClientContext &context, OracleCatalogState *sta
 	}
 	lookup = context.TryGetCurrentSetting("oracle_call_timeout_ms", option_value);
 	if (lookup) {
-		auto raw = ExtractSignedSettingRaw(option_value, "oracle_call_timeout_ms", 0, MAX_ORACLE_CALL_TIMEOUT_MS);
+		auto raw = ExtractSignedOptionInt(option_value, "oracle_call_timeout_ms", 0, MAX_ORACLE_CALL_TIMEOUT_MS);
 		auto val = OracleValidatedSettingValue(raw, "oracle_call_timeout_ms", 0, MAX_ORACLE_CALL_TIMEOUT_MS);
 		if (should_apply("oracle_call_timeout_ms", lookup.GetScope(),
 		                 settings.call_timeout_ms != defaults.call_timeout_ms, val != defaults.call_timeout_ms)) {
@@ -132,7 +119,7 @@ OracleSettings GetOracleSettings(ClientContext &context, OracleCatalogState *sta
 	}
 	lookup = context.TryGetCurrentSetting("oracle_stmt_cache_size", option_value);
 	if (lookup) {
-		auto raw = ExtractSignedSettingRaw(option_value, "oracle_stmt_cache_size", 0, MAX_ORACLE_STMT_CACHE_SIZE);
+		auto raw = ExtractSignedOptionInt(option_value, "oracle_stmt_cache_size", 0, MAX_ORACLE_STMT_CACHE_SIZE);
 		auto val = OracleValidatedSettingValue(raw, "oracle_stmt_cache_size", 0, MAX_ORACLE_STMT_CACHE_SIZE);
 		if (should_apply("oracle_stmt_cache_size", lookup.GetScope(),
 		                 settings.stmt_cache_size != defaults.stmt_cache_size, val != defaults.stmt_cache_size)) {
@@ -160,7 +147,7 @@ OracleSettings GetOracleSettings(ClientContext &context, OracleCatalogState *sta
 	lookup = context.TryGetCurrentSetting("oracle_metadata_result_limit", option_value);
 	if (lookup) {
 		auto raw =
-		    ExtractSignedSettingRaw(option_value, "oracle_metadata_result_limit", 1, MAX_ORACLE_METADATA_RESULT_LIMIT);
+		    ExtractSignedOptionInt(option_value, "oracle_metadata_result_limit", 1, MAX_ORACLE_METADATA_RESULT_LIMIT);
 		auto val = OracleValidatedMetadataResultLimit(raw);
 		if (should_apply("oracle_metadata_result_limit", lookup.GetScope(),
 		                 settings.metadata_result_limit != defaults.metadata_result_limit,

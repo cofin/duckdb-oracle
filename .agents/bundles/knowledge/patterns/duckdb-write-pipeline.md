@@ -10,7 +10,7 @@ status: stable
 
 # DuckDB Write Pipeline: Sink, Combine & Finalize
 
-DuckDB executes `INSERT INTO` queries using a physical pipeline sink pattern. When an Oracle table is the target of an insert, `OracleTableEntry::BindInsert` returns an instance of `PhysicalOracleInsert` (`src/storage/oracle_insert.cpp`), which implements DuckDB's `PhysicalOperator` sink interface.
+DuckDB executes `INSERT INTO` queries using a physical pipeline sink pattern. When an Oracle table is the target of an insert, `OracleCatalog::PlanInsert` (`src/storage/oracle_schema_entry.cpp`) returns an instance of `PhysicalOracleInsert` (`src/storage/oracle_insert.cpp`), which implements DuckDB's `PhysicalOperator` sink interface.
 
 ## Pipeline Architecture
 
@@ -22,8 +22,8 @@ PhysicalPlan: LogicalInsert -> PhysicalOracleInsert
     v                                                                     v
 1. GetGlobalSinkState(context)                               2. GetLocalSinkState(context)
    - OracleInsertGlobalState                                    - OracleInsertLocalState
-   - Shared connection & statement                              - Thread-local write state
-   - insert_count counter                                       - Thread-local buffers
+   - Shared connection & statement                              - Lightweight local sink state
+   - atomic insert_count counter
     |                                                                     |
     +----------------------------------+----------------------------------+
                                        |
@@ -36,12 +36,12 @@ PhysicalPlan: LogicalInsert -> PhysicalOracleInsert
                                        |
                                        v
 4. Combine(ExecutionContext, OperatorSinkCombineInput)
-   - Merges thread-local state into global state
+   - Completes sink thread execution
    - Returns SinkCombineResultType::FINISHED
                                        |
                                        v
 5. Finalize(Pipeline, Event, ClientContext, OperatorSinkFinalizeInput)
-   - Calls OCITransCommit via OracleWriteFinalize
+   - Calls OCITransCommit via OracleWriteGlobalState::Finalize
    - Flushes remaining pending batches and closes statement
    - Returns SinkFinalizeType::READY
 ```
@@ -49,38 +49,35 @@ PhysicalPlan: LogicalInsert -> PhysicalOracleInsert
 ## State Management
 
 ```cpp
-struct OracleInsertGlobalState : public GlobalSinkState {
-    OracleInsertGlobalState(unique_ptr<OracleWriteBindData> bind_data_p,
-                            unique_ptr<OracleWriteGlobalState> gstate_p)
-        : bind_data(std::move(bind_data_p)), gstate(std::move(gstate_p)), insert_count(0) {}
+class OracleInsertGlobalState : public GlobalSinkState {
+public:
+    explicit OracleInsertGlobalState(unique_ptr<OracleWriteGlobalState> write_state_p)
+        : write_state(std::move(write_state_p)), insert_count(0), returned(false) {}
 
-    unique_ptr<OracleWriteBindData> bind_data;
-    unique_ptr<OracleWriteGlobalState> gstate;
-    idx_t insert_count;
+    unique_ptr<OracleWriteGlobalState> write_state;
+    std::atomic<idx_t> insert_count {0};
+    bool returned = false;
 };
 
-struct OracleInsertLocalState : public LocalSinkState {
-    OracleInsertLocalState() : lstate(make_uniq<OracleWriteLocalState>()) {}
-    unique_ptr<OracleWriteLocalState> lstate;
-};
+class OracleInsertLocalState : public LocalSinkState {};
 ```
 
 ## Vector-to-Buffer Transposition
 
-In `OracleWriteSink`, DuckDB's column-major vectors are converted to OCI bind buffers:
+In `OracleWriteGlobalState::Sink`, DuckDB's column-major vectors are converted to OCI bind buffers:
 
-1. **Numeric & Decimal Vectors**: Fixed-width integers (`int16_t`, `int32_t`, `int64_t`) and floats copy directly into contiguous array buffers; `DECIMAL(p, s)` values are formatted with exact scale into string buffers.
-2. **Date & Timestamp Vectors**: Oracle `DATE` columns are populated as 7-byte `OCIDate` structs bound with `SQLT_ODT`, while `TIMESTAMP` and `TIMESTAMP WITH TIME ZONE` columns use `OCIDateTime*` descriptors.
-3. **String, Spatial & Vector Columns**: Strings (`string_t`), WKT geometries (`SDO_GEOMETRY(:b)`), and serialized vectors (`TO_VECTOR(:b)`) are copied into 64 KB (`65536`-byte) row slots with explicit overflow checking.
+1. **Numeric & Decimal Vectors**: Fixed-width integers (`int64_t`) and `double` values copy directly into contiguous array buffers via `FlatVector::GetData<T>`; `DECIMAL(p, s)` and `HUGEINT` values are formatted with exact scale into string buffers.
+2. **Date & Timestamp Vectors**: Oracle `DATE` columns are populated as 7-byte `OCIDate` structs bound with `SQLT_ODT`, while `TIMESTAMP` and `TIMESTAMP WITH TIME ZONE` columns format canonical strings wrapped in `TO_TIMESTAMP(:b, 'YYYY-MM-DD HH24:MI:SS.FF6')` / `TO_TIMESTAMP_TZ(:b, 'YYYY-MM-DD HH24:MI:SS.FF6 TZH:TZM')`.
+3. **String, Spatial & Vector Columns**: Strings (`string_t`), WKT geometries (`SDO_GEOMETRY(:b, srid)`), and serialized vectors (`TO_VECTOR(:b)`) are validated against `NumericLimits<ub2>::Maximum()` (`65535` bytes) and copied into contiguous stride buffers.
 4. **Validity Check**: For each row `i` in the chunk:
    ```cpp
-   if (FlatVector::IsNull(vector, i)) {
-       indicator_buffer[i] = OCI_IND_NULL;
+   if (!validity.RowIsValid(src_idx)) {
+       col_buf.indicators[row_idx] = -1;
    } else {
-       indicator_buffer[i] = OCI_IND_NOTNULL;
+       col_buf.indicators[row_idx] = 0;
    }
    ```
-5. **Execution & Batch Errors**: `OCIStmtExecute` executes `iters = chunk.size()` with `OCI_BATCH_ERRORS`.
+5. **Execution**: `OCIStmtExecute` executes `iters = current_batch_rows` with `OCI_DEFAULT` inside a mutex-serialized write lock.
 
 ## Finalization & Statement-Atomic Transaction Commit
 

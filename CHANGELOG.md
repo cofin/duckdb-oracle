@@ -7,15 +7,15 @@ All notable changes to the DuckDB Oracle extension are documented in this file.
 ### Added
 - **DuckDB v1.5.6 Support**: Upgraded target DuckDB version and CI release matrix to `v1.5.6`.
 - **Configurable OCI Timeouts & Statement Cache**: Added `oracle_call_timeout_ms` (default `30000`, `0`–`3600000`) and `oracle_stmt_cache_size` (default `20`, `0`–`1024`) settings.
-- **Flashback Query Support**: Added `as_of_scn` (`UBIGINT`) and `as_of_timestamp` (`VARCHAR`) named parameters on `oracle_scan` and `oracle_query`.
+- **Flashback Query Support**: Added `as_of_scn` (`UBIGINT`) and `as_of_timestamp` (`VARCHAR`) named parameters on `oracle_scan`.
 - **Spatial Integration Coverage**: Added `SDO_GEOMETRY` WKT point/polygon read/write round-trip integration tests (`test/integration_tests/oracle/spatial.test`).
 
 ### Fixed
-- **OCI Handle & Environment Lifetime**: Held `std::shared_ptr<OCIEnv>` inside `OracleConnectionContext` so cached connections and statements never outlive `OCIEnv`.
-- **CLOB & Vector Truncation**: Bound `VECTOR_SERIALIZE(... RETURNING CLOB)` and dynamically read multi-chunk `CLOB`/`BLOB` descriptors via `OCILobGetLength2`/`OCILobRead2` without 64 KB silent truncation.
-- **Projection Pushdown & Scan Re-preparation**: Deferred SQL generation and `OCIStmtPrepare2` to `OracleInitGlobal` after optimizer column projection and filter pushdown complete.
+- **OCI Handle & Environment Lifetime**: Held `std::shared_ptr<OCIEnv>` inside `OracleContext` so cached connections and statements never outlive `OCIEnv`.
+- **CLOB & Vector Truncation**: Bound `VECTOR_SERIALIZE(... RETURNING CLOB)` and sized `CLOB`/`BLOB`/special-type fetch buffers to `65535` bytes (`NumericLimits<ub2>::Maximum()`) with explicit truncation error detection (`ind == -2 || ind > 0`).
+- **Projection Pushdown & Scan Re-preparation**: Deferred projected SQL generation and `OCIStmtPrepare` to `OracleInitGlobal` after optimizer column projection and filter pushdown complete, and configured session-level `OCI_ATTR_STMTCACHESIZE`.
 - **Per-ATTACH Catalog State Isolation**: Moved schema/table metadata caches and connection keys from process-global singletons into per-`OracleCatalog` state.
-- **Write Pipeline Correctness**: Fixed `SQLT_ODT` `DATE` binding in `INSERT`, string buffer stride accounting, `NUMBER(p, s)` precision/scale mapping, and statement-atomic rollback on error.
+- **Write Pipeline Correctness**: Fixed `SQLT_ODT` `DATE` binding in `INSERT`, `> 65535`-byte string overflow checks, `NUMBER(p, s)` precision/scale mapping, and statement-atomic rollback on error.
 
 ## [0.2.2] - 2026-04-12
 
@@ -32,7 +32,7 @@ All notable changes to the DuckDB Oracle extension are documented in this file.
 ## [0.2.0] - 2026-03-10
 
 ### Added
-- **Attached Table Writes (`INSERT INTO`)**: Implemented `PhysicalOracleInsert` sink operator with OCI bulk array binding (`OCI_BATCH_ERRORS`).
+- **Attached Table Writes (`INSERT INTO`)**: Implemented `PhysicalOracleInsert` sink operator with OCI bulk array binding (`OCIStmtExecute`).
 - **DuckDB SecretManager Integration**: Added `CREATE SECRET ... (TYPE oracle, ...)` with `WALLET_PATH` support for Oracle Wallet / mTLS connections.
 
 ## [0.1.3] - 2026-02-15

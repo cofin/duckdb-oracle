@@ -2,16 +2,16 @@
 type: Spec
 flow_id: oci-connection-lifecycle
 title: "Chapter 1: OCI Connection Pool, Environment Lifetime, Authentication & Settings Resolution"
-state: planned
+state: completed
 plan_revision: 1
 plan_commit: 4d4fd44274bda21b9de7aa3efad471dd23b1789d
-state_revision: 1
+state_revision: 2
 current_task: null
-last_operation: null
+last_operation: finish
 operation_targets: []
-last_verified_checkpoint: null
+last_verified_checkpoint: 2026-10-11T18:35:00Z
 created_at: 2026-10-11T17:10:00Z
-updated_at: 2026-10-11T17:10:00Z
+updated_at: 2026-10-11T18:35:00Z
 description: Remediate OCIEnv static destruction use-after-free, ScopedTnsAdmin global mutex/env thread-safety hazards, pooled session health checks and rollback, password @ parsing, SEPS wallet and TNS alias secrets, per-ATTACH option preservation, and OracleConnection::Query double execution and 4095-byte truncation.
 tags: [bugfix, oracle-oci, connection-pool, security, settings]
 parent_prd: codebase-remediation-prd

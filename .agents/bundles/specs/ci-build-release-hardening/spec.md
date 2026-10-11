@@ -2,16 +2,16 @@
 type: Spec
 flow_id: ci-build-release-hardening
 title: "Chapter 4: GitHub Actions Workflows, Build System, OCI Setup Scripts & Licensing"
-state: planned
+state: completed
 plan_revision: 1
 plan_commit: 4d4fd44274bda21b9de7aa3efad471dd23b1789d
-state_revision: 1
+state_revision: 2
 current_task: null
-last_operation: null
+last_operation: finish
 operation_targets: []
-last_verified_checkpoint: null
+last_verified_checkpoint: 2026-10-11T18:35:00Z
 created_at: 2026-10-11T17:15:00Z
-updated_at: 2026-10-11T17:15:00Z
+updated_at: 2026-10-11T18:35:00Z
 description: Remediate duckdb-update-check.yml closing its own open PR daily, release-unsigned.yml publishing partial releases and masking smoke-test crashes, integration-tests.yml stale instantclient_23_6 env and double make release, GitHub Actions script injection, $GITHUB_ENV LD_LIBRARY_PATH expansion, macOS OCI version/mount cleanup, extension_config.cmake TEST_DIR, Makefile ensure_libaio, and LICENSE vs description.yml alignment.
 tags: [bugfix, ci-cd, github-actions, build, scripts, license]
 parent_prd: codebase-remediation-prd

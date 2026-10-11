@@ -46,8 +46,6 @@ public:
 	OracleResult ExecuteMetadataQuery(const std::string &query);
 	OracleResult ExecuteMetadataQueryWithStringBinds(const std::string &query,
 	                                                 const std::vector<std::string> &bind_values);
-	OracleResult Query(const std::string &query);
-	OracleResult QueryWithStringBinds(const std::string &query, const std::vector<std::string> &bind_values);
 	void ApplyOptions(const unordered_map<string, Value> &options);
 	void ClearCaches();
 

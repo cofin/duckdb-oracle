@@ -32,7 +32,7 @@ for (auto col_idx : input.column_ids) {
 }
 ```
 
-- SQL query construction and `OCIStmtPrepare2` are deferred to `OracleInitGlobal` after the optimizer finishes column projection and filter pushdown (`TableFilterSet` and `OraclePushdownComplexFilter`).
+- SQL query construction and `OCIStmtPrepare` are deferred to `OracleInitGlobal` after the optimizer finishes column projection and filter pushdown (`TableFilterSet` and `OraclePushdownComplexFilter`).
 - Unprojected columns are completely omitted from the generated Oracle `SELECT` statement, and OCI only defines buffers (`OCIDefineByPos`) for projected columns.
 
 ## 2. Filter Pushdown (`TableFilterSet`)

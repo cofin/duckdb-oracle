@@ -2,16 +2,16 @@
 type: Spec
 flow_id: scan-pushdown-types
 title: "Chapter 2: Vectorized Scan, Filter/Projection Pushdown, Type Conversion & Scalar Functions"
-state: planned
+state: completed
 plan_revision: 1
 plan_commit: 4d4fd44274bda21b9de7aa3efad471dd23b1789d
-state_revision: 1
+state_revision: 2
 current_task: null
-last_operation: null
+last_operation: finish
 operation_targets: []
-last_verified_checkpoint: null
+last_verified_checkpoint: 2026-10-11T18:35:00Z
 created_at: 2026-10-11T17:11:00Z
-updated_at: 2026-10-11T17:11:00Z
+updated_at: 2026-10-11T18:35:00Z
 description: Remediate VECTOR_SERIALIZE RETURNING CLOB, 64KB scan buffers, positive truncation indicators vs ORA-24347 warnings, projection pushdown in OracleInitGlobal, OraclePushdownComplexFilter column/type preservation, Oracle empty-string/NaN/Inf/LIKE/DATE pushdown bugs, BLOB AddStringOrBlob, TIMESTAMP WITH TIME ZONE parsing, and scalar function row iteration and volatility.
 tags: [bugfix, oracle-oci, scan, pushdown, type-conversion]
 parent_prd: codebase-remediation-prd

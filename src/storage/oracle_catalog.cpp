@@ -79,15 +79,6 @@ OracleResult OracleCatalogState::ExecuteMetadataQueryWithStringBinds(const std::
 	return conn.QueryWithStringBinds(query, bind_values);
 }
 
-OracleResult OracleCatalogState::Query(const std::string &query) {
-	return ExecuteMetadataQuery(query);
-}
-
-OracleResult OracleCatalogState::QueryWithStringBinds(const std::string &query,
-                                                      const std::vector<std::string> &bind_values) {
-	return ExecuteMetadataQueryWithStringBinds(query, bind_values);
-}
-
 void OracleCatalogState::ApplyOptions(const unordered_map<string, Value> &options) {
 	case_insensitive_map_t<Value> ci_options;
 	for (auto &entry : options) {

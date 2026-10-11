@@ -15,26 +15,6 @@
 
 namespace duckdb {
 
-namespace {
-
-static bool IsLargeOracleCategory(OracleTypeCategory category) {
-	switch (category) {
-	case OracleTypeCategory::JSON:
-	case OracleTypeCategory::VECTOR:
-	case OracleTypeCategory::SPATIAL:
-	case OracleTypeCategory::XML:
-	case OracleTypeCategory::LOB_CLOB:
-	case OracleTypeCategory::LOB_BLOB:
-	case OracleTypeCategory::LONG_TEXT:
-	case OracleTypeCategory::LONG_RAW:
-		return true;
-	default:
-		return false;
-	}
-}
-
-} // namespace
-
 //! Query ALL_SDO_GEOM_METADATA for SRID values of spatial columns in a table
 //! Returns a map of uppercase column_name -> SRID (0 if not found or query fails)
 static unordered_map<string, idx_t> LoadSpatialSRIDs(OracleCatalogState &state, const string &schema,
