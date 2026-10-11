@@ -2,17 +2,19 @@
 #include "duckdb/common/case_insensitive_map.hpp"
 #include <sys/stat.h>
 
-#ifdef _WIN32
-#include <direct.h>
-#define S_ISDIR(mode) (((mode) & _S_IFDIR) == _S_IFDIR)
-#endif
-
 namespace duckdb {
 
 namespace {
 static bool PathIsDirectory(const string &path) {
 	struct stat st {};
-	return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+	if (stat(path.c_str(), &st) != 0) {
+		return false;
+	}
+#ifdef _WIN32
+	return (st.st_mode & _S_IFDIR) == _S_IFDIR;
+#else
+	return S_ISDIR(st.st_mode);
+#endif
 }
 } // namespace
 
