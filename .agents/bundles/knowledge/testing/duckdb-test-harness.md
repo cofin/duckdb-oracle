@@ -11,8 +11,8 @@ status: stable
 # DuckDB Test Harness Architecture & Suites
 
 The `duckdb-oracle` repository maintains a two-tiered testing harness:
-1. **Fast Unit / Smoke Tests (`make test-unit`)**: Runs in seconds without requiring an external Oracle Database container.
-2. **Containerized Integration Tests (`make integration`)**: Spawns an Oracle Free 23ai container (`gvenzl/oracle-free:23-slim`) to validate full query execution, writes, transactions, spatial types, and pushdown against a live Oracle engine.
+1. **Fast Unit / Smoke Tests (`make test-unit`)**: Runs in seconds with zero external Oracle Instant Client or database container dependencies.
+2. **Containerized Integration Tests (`make integration`)**: Installs Oracle Instant Client Basic via `scripts/setup_oci_linux.sh` and spawns an Oracle Free 23ai container (`gvenzl/oracle-free:23-slim`) to validate full query execution, writes, transactions, spatial types, and pushdown against a live Oracle engine.
 
 ## 1. Test Harness Structure
 
@@ -119,6 +119,6 @@ Integration testing is orchestrated by `scripts/test_integration.sh`:
 
 | Command | Environment Required | Scope |
 | :--- | :--- | :--- |
-| `make test-unit` | Local OCI SDK only | Fast smoke tests; validates extension loading and syntax without a database. |
-| `make integration` | Docker / Podman + OCI SDK | Compiles release build, launches containerized Oracle Free 23ai, and runs all integration tests. |
-| `SKIP_BUILD=1 make integration` | Docker / Podman | Runs integration tests reusing an existing release binary. |
+| `make test-unit` | None (zero OCI SDK required) | Fast smoke tests; validates extension loading, settings, secrets, and syntax without Instant Client or a database. |
+| `make integration` | Docker / Podman + OCI Basic runtime | Compiles release build, installs Instant Client Basic on Linux, launches containerized Oracle Free 23ai, and runs all 22 integration test files. |
+| `SKIP_BUILD=1 make integration` | Docker / Podman + OCI Basic runtime | Runs integration tests reusing an existing release binary. |

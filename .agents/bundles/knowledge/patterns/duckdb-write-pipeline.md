@@ -62,22 +62,23 @@ public:
 class OracleInsertLocalState : public LocalSinkState {};
 ```
 
-## Vector-to-Buffer Transposition
+## Vector-to-Buffer Transposition (`UnifiedVectorFormat`)
 
-In `OracleWriteGlobalState::Sink`, DuckDB's column-major vectors are converted to OCI bind buffers:
+In `OracleWriteBatch` (`src/storage/oracle_write.cpp`), DuckDB's column vectors are normalized via `UnifiedVectorFormat` (`col_vec.ToUnifiedFormat(count, vdata)`) and transposed into OCI array bind buffers without per-row `Value` allocation:
 
-1. **Numeric & Decimal Vectors**: Fixed-width integers (`int64_t`) and `double` values copy directly into contiguous array buffers via `FlatVector::GetData<T>`; `DECIMAL(p, s)` and `HUGEINT` values are formatted with exact scale into string buffers.
-2. **Date & Timestamp Vectors**: Oracle `DATE` columns are populated as 7-byte `OCIDate` structs bound with `SQLT_ODT`, while `TIMESTAMP` and `TIMESTAMP WITH TIME ZONE` columns format canonical strings wrapped in `TO_TIMESTAMP(:b, 'YYYY-MM-DD HH24:MI:SS.FF6')` / `TO_TIMESTAMP_TZ(:b, 'YYYY-MM-DD HH24:MI:SS.FF6 TZH:TZM')`.
-3. **String, Spatial & Vector Columns**: Strings (`string_t`), WKT geometries (`SDO_GEOMETRY(:b, srid)`), and serialized vectors (`TO_VECTOR(:b)`) are validated against `NumericLimits<ub2>::Maximum()` (`65535` bytes) and copied into contiguous stride buffers.
-4. **Validity Check**: For each row `i` in the chunk:
+1. **Numeric Vectors**: Fixed-width integers (`TINYINT`, `SMALLINT`, `INTEGER`, `BIGINT`, `UTINYINT`, `USMALLINT`, `UINTEGER`) and floating-point (`FLOAT`, `DOUBLE`) values read directly from `UnifiedVectorFormat::GetData<T>(vdata)[idx]` into contiguous `int64_t` (`SQLT_INT`) or `double` (`SQLT_BDOUBLE`) arrays.
+2. **Date & Timestamp Vectors**: Oracle `DATE` columns convert `date_t` or `timestamp_t` values directly into 7-byte `OCIDate` structs bound with `SQLT_ODT`, while `TIMESTAMP` and `TIMESTAMP WITH TIME ZONE` columns format canonical strings wrapped in `TO_TIMESTAMP(:b, 'YYYY-MM-DD HH24:MI:SS.FF6')` / `TO_TIMESTAMP_TZ(:b, 'YYYY-MM-DD HH24:MI:SS.FF6 TZH:TZM')`.
+3. **Zero-Copy String, Spatial & Vector Columns**: `VARCHAR` and `BLOB` vectors read `string_t` slices directly via `s.GetData()` and `s.GetSize()` without intermediate `std::string` allocation, validate against `NumericLimits<ub2>::Maximum()` (`65535` bytes), and copy into contiguous stride buffers.
+4. **Validity Check**: For each row `r` in the batch (`idx = vdata.sel->get_index(offset + r)`):
    ```cpp
-   if (!validity.RowIsValid(src_idx)) {
-       col_buf.indicators[row_idx] = -1;
+   if (!vdata.validity.RowIsValid(idx)) {
+       ind_vec[r] = -1;
+       len_vec[r] = 0;
    } else {
-       col_buf.indicators[row_idx] = 0;
+       ind_vec[r] = 0;
    }
    ```
-5. **Execution**: `OCIStmtExecute` executes `iters = current_batch_rows` with `OCI_DEFAULT` inside a mutex-serialized write lock.
+5. **Execution & Source Cardinality**: `OCIStmtExecute` executes `iters = batch_rows` with `OCI_DEFAULT` inside a mutex-serialized write lock, and `PhysicalOracleInsert::GetDataInternal` sets `chunk.SetChildCardinality(1)` when returning the inserted row count.
 
 ## Finalization & Statement-Atomic Transaction Commit
 

@@ -61,18 +61,15 @@ Statement handles are allocated dynamically per query execution or bind phase. T
 ```cpp
 inline OCIHandlePtr<OCIStmt> AllocateOCIStatement(OCIEnv *envhp, OCIError *errhp, const std::string &msg) {
     OCIStmt *stmt = nullptr;
-    auto status = OCIHandleAlloc(envhp, reinterpret_cast<void **>(&stmt), OCI_HTYPE_STMT, 0, nullptr);
-    CheckOCIError(status, errhp, msg);
-    return OCIHandlePtr<OCIStmt>(stmt, OCIHandleFreeDeleter(OCI_HTYPE_STMT));
+    CheckOCIError(OCIHandleAlloc(envhp, reinterpret_cast<dvoid **>(&stmt), OCI_HTYPE_STMT, 0, nullptr), errhp, msg);
+    return OCIHandlePtr<OCIStmt>(stmt, OCIHandleFreeDeleter {OCI_HTYPE_STMT});
 }
 
 inline std::shared_ptr<OCIStmt> AllocateSharedOCIStatement(OCIEnv *envhp, OCIError *errhp, const std::string &msg) {
-    OCIStmt *stmt = nullptr;
-    auto status = OCIHandleAlloc(envhp, reinterpret_cast<void **>(&stmt), OCI_HTYPE_STMT, 0, nullptr);
-    CheckOCIError(status, errhp, msg);
-    return std::shared_ptr<OCIStmt>(stmt, [=](OCIStmt *s) {
-        if (s) {
-            OCIHandleFree(s, OCI_HTYPE_STMT);
+    auto stmt = AllocateOCIStatement(envhp, errhp, msg);
+    return std::shared_ptr<OCIStmt>(stmt.release(), [](OCIStmt *ptr) {
+        if (ptr) {
+            OCIHandleFree(ptr, OCI_HTYPE_STMT);
         }
     });
 }

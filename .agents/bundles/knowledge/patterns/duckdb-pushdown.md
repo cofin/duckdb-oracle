@@ -45,45 +45,42 @@ TableFilterSet (Iterative Entries() -> FilterEntry{idx_t col_idx, TableFilter &f
 
 ### Translating to Oracle SQL (`src/oracle_pushdown.cpp`)
 
-The extension translates supported DuckDB filter trees into Oracle SQL:
+`OraclePushdownComplexFilter` and `OraclePushdownFilterSet` translate supported DuckDB filter expressions into Oracle `WHERE` clauses while checking `bind_data.pushdown_eligible[col_idx]`:
 
 ```cpp
-void OraclePushdownComplexFilter(ClientContext &context, LogicalGet &get,
+void OraclePushdownComplexFilter(ClientContext &, LogicalGet &get,
                                  FunctionData *bind_data_p,
                                  vector<unique_ptr<Expression>> &expressions) {
     auto &bind_data = bind_data_p->Cast<OracleBindData>();
-    if (!bind_data.settings.enable_pushdown || !bind_data.pushdown_eligible) {
+    if (!bind_data.settings.enable_pushdown) {
         return;
     }
 
-    vector<string> where_clauses;
-    vector<idx_t> expressions_to_remove;
-
-    for (idx_t i = 0; i < expressions.size(); i++) {
-        string oracle_expr;
-        if (TransformExpressionToOracleSQL(*expressions[i], bind_data, oracle_expr)) {
-            where_clauses.push_back(oracle_expr);
-            // Mark expression so DuckDB knows it was pushed down
-            expressions_to_remove.push_back(i);
+    const auto &column_ids = get.GetColumnIds();
+    for (idx_t i = 0; i < expressions.size();) {
+        string clause;
+        if (TryExtractPushdownExpression(*expressions[i], column_ids, bind_data.original_names,
+                                         bind_data.pushdown_eligible, clause) &&
+            !clause.empty()) {
+            bind_data.pushdown_clauses.push_back(clause);
+            expressions.erase(expressions.begin() + static_cast<ptrdiff_t>(i));
+        } else {
+            i++;
         }
-    }
-
-    if (!where_clauses.empty()) {
-        bind_data.pushdown_clauses = where_clauses;
-        bind_data.query = ReconstructOracleQuery(bind_data);
     }
 }
 ```
 
 ### Supported Pushdown Predicates
 
-| DuckDB Expression | Generated Oracle SQL | Safe Types |
+| DuckDB Expression / Filter | Generated Oracle SQL | Safe Types |
 | :--- | :--- | :--- |
-| `col = 'ABC'` | `"COL" = 'ABC'` | Numeric, Varchar, Date |
-| `col >= 100 AND col < 200` | `"COL" >= 100 AND "COL" < 200` | Numeric, Date |
-| `col IN (1, 2, 3)` | `"COL" IN (1, 2, 3)` | Integer, Varchar |
-| `col IS NOT NULL` | `"COL" IS NOT NULL` | All types |
-| `col LIKE 'PREFIX%'` | `"COL" LIKE 'PREFIX%'` | Varchar |
+| `col = 'ABC'` (`CONSTANT_COMPARISON`) | `"COL" = 'ABC'` | Numeric, `VARCHAR2` (non-empty), `DATE`, `TIMESTAMP` |
+| `col >= 100 AND col < 200` (`CONJUNCTION_AND`) | `"COL" >= 100 AND "COL" < 200` | Numeric, `DATE`, `TIMESTAMP` |
+| `col IN (1, 2, 3)` (`IN_FILTER` / `COMPARE_IN`) | `"COL" IN (1, 2, 3)` | Numeric, `VARCHAR2` (non-empty) |
+| `col IS NULL` / `col IS NOT NULL` | `"COL" IS NULL` / `"COL" IS NOT NULL` | All pushdown-eligible columns |
+| `col LIKE 'PREFIX%'` / `prefix` / `suffix` / `contains` | `"COL" LIKE 'PREFIX%' ESCAPE '\'` | `VARCHAR2` (non-empty) |
+| `DYNAMIC_FILTER` / `BLOOM_FILTER` | Skipped (`return true` with empty `out_sql`) | Evaluated locally by DuckDB without aborting static filter pushdown |
 
 ### Fallback Invariant
 
