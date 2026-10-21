@@ -40,12 +40,16 @@ DuckDB uses a vectorized relational execution model based on Morsel-driven paral
    - Compiles by default to `2048` rows.
    - All batch operators, table functions, and sinks must handle chunks with $0 \le \text{size} \le \text{STANDARD\_VECTOR\_SIZE}$.
 
-2. **`ValidityMask`**:
+2. **`ValidityMask` & Mutable Vector Access (`v2.0.0`)**:
    - High-performance bitmap tracking NULL values ($1 = \text{valid}, 0 = \text{null}$).
-   - `FlatVector::SetNull(vector, row_idx, is_null)` or `vector.GetValidity().SetInvalid(row_idx)`.
-   - Bypasses branching during vectorized arithmetic if `validity.AllValid()` returns true.
+   - In DuckDB `v2.0.0`, read-only and mutable vector access are strictly separated: use `FlatVector::GetDataMutable<T>(vector)` for writable buffers, `FlatVector::ValidityMutable(vector)` for writable validity masks, `ListVector::GetEntryMutable(vector)` for writable list child vectors, and `FlatVector::SetNull(vector, row_idx, is_null)` to mark NULL rows.
+   - Bypasses branching during vectorized arithmetic if `validity.CannotHaveNull()` returns true.
 
-3. **`string_t` Inlining**:
+3. **Vector Size Synchronization (`SetChildCardinality` vs `SetCardinalityUnsafe`)**:
+   - In DuckDB `v2.0.0`, every `VectorBuffer` tracks its own element count (`vector.size()`). Vectorized operators such as `VectorOperations::IsNull` and `VectorOperations::IsNotNull` iterate `0..input.size()`, not `DataChunk::size()`.
+   - When a table function or physical source operator populates flat vectors directly via `FlatVector::GetDataMutable`, `FlatVector::SetNull`, or `StringVector::AddString`, it **must** call `output.SetChildCardinality(row_count)` (which synchronizes `FlatVector::SetSize(v, row_count)` on every child vector in addition to setting `DataChunk::count`) rather than `SetCardinalityUnsafe(row_count)`.
+
+4. **`string_t` Inlining**:
    - Strings $\le 12$ bytes are completely inlined into the 16-byte `string_t` struct (4-byte length + 12-byte payload).
    - Strings $> 12$ bytes store a 4-byte length, a 4-byte prefix (enabling fast string equality/sorting without heap access), and an 8-byte pointer to the string heap managed by `StringVector::AddString`.
 
@@ -67,10 +71,15 @@ Table functions produce `DataChunk` batches into the query pipeline (e.g., `orac
 
 ```cpp
 TableFunction oracle_scan("oracle_scan", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
-                          OracleScanFunction, OracleScanBind, OracleScanInitGlobal, OracleScanInitLocal);
-oracle_scan.filter_pushdown = true;
+                          OracleQueryFunction, OracleScanBind, OracleInitGlobal);
 oracle_scan.projection_pushdown = true;
+oracle_scan.filter_pushdown = true;
+oracle_scan.filter_prune = true;
 oracle_scan.pushdown_complex_filter = OraclePushdownComplexFilter;
+oracle_scan.to_string = OracleToString;
+oracle_scan.cardinality = OracleCardinality;
+oracle_scan.get_bind_info = OracleGetBindInfo;
+oracle_scan.get_table_entry = OracleGetTableEntry;
 ```
 
 ### Execution Lifecycle
@@ -78,18 +87,14 @@ oracle_scan.pushdown_complex_filter = OraclePushdownComplexFilter;
 1. **`Bind` (`OracleScanBind`)**:
    - Inspects input parameters (connection string, schema name, table name).
    - Resolves credentials via `SecretManager`.
-   - Describes columns via OCI and populates `return_types` and `names`.
+   - Describes columns via OCI or catalog metadata and populates `return_types` and `names`.
    - Returns a heap-allocated `FunctionData` (`OracleBindData`).
 
-2. **`InitGlobal` (`OracleScanInitGlobal`)**:
-   - Initializes shared execution state (`GlobalTableFunctionState`) across all worker threads.
-   - Calculates partitions or establishes the primary cursor.
+2. **`InitGlobal` (`OracleInitGlobal`)**:
+   - Initializes shared execution state (`GlobalTableFunctionState`).
+   - Maps `input.column_ids` and `input.projection_ids` (`filter_prune = true`) via `BuildOutputColumnMapping` so filter-only columns are pruned from the generated `SELECT` projection list and OCI define buffers (`OCIDefineByPos`).
 
-3. **`InitLocal` (`OracleScanInitLocal`)**:
-   - Initializes thread-local execution state (`LocalTableFunctionState`).
-   - Allocates thread-local OCI column buffers and define arrays.
-
-4. **`Function` (`OracleScanFunction`)**:
+3. **`Function` (`OracleQueryFunction`)**:
    - Called repeatedly by DuckDB worker threads.
-   - Populates the target `DataChunk` with up to `STANDARD_VECTOR_SIZE` tuples.
-   - When no more rows exist, sets `chunk.SetCardinality(0)`.
+   - Populates the target `DataChunk` with up to `STANDARD_VECTOR_SIZE` tuples and calls `output.SetChildCardinality(rows_fetched)`.
+   - When no more rows exist, sets `output.SetChildCardinality(0)`.

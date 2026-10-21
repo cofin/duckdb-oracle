@@ -14,38 +14,33 @@ Without pushdown optimization, DuckDB table scans over external databases fetch 
 
 DuckDB Oracle implements both **Projection Pushdown** and **Filter Pushdown** in `src/oracle_pushdown.cpp`.
 
-## 1. Projection Pushdown (`OracleInitGlobal`)
+## 1. Projection Pushdown & Filter Column Pruning (`OracleInitGlobal`)
 
-When a query requests a subset of columns (`SELECT colA, colB FROM ora.table`), DuckDB provides the projection list via `input.column_ids` in `OracleInitGlobal` (`src/oracle_scan.cpp`):
+When a query requests a subset of columns (`SELECT colA FROM ora.table WHERE colB = 10`), DuckDB provides `input.column_ids` and `input.projection_ids` (`filter_prune = true`) in `OracleInitGlobal` (`src/oracle_scan.cpp`):
 
 ```cpp
-// In OracleInitGlobal: build projection list from input.column_ids
-for (auto col_idx : input.column_ids) {
-    if (col_idx == COLUMN_IDENTIFIER_ROW_ID) {
-        projected_sql_columns.push_back("NULL");
-    } else {
-        auto &col_name = bind_data.original_names[col_idx];
-        // Wrap VECTOR columns with VECTOR_SERIALIZE(... RETURNING CLOB)
-        // and SDO_GEOMETRY columns with SDO_UTIL.TO_WKTGEOMETRY(...)
-        projected_sql_columns.push_back(BuildProjectedColumnSQL(col_name, bind_data, col_idx));
-    }
-}
+// In OracleInitGlobal: map projected output columns back to active bind columns
+state->column_mapping = BuildOutputColumnMapping(input.column_ids, input.projection_ids, bind.column_names.size());
 ```
 
+- When `projection_ids` is populated (`filter_prune = true`), `BuildOutputColumnMapping` maps each output vector column (`0..projection_ids.size()-1`) to `input.column_ids[input.projection_ids[i]]`.
+- Columns used exclusively in pushed-down `WHERE` filters are excluded from `state->active_bind_cols`, omitting them from both the generated Oracle `SELECT` list and OCI `OCIDefineByPos` buffer allocations.
 - SQL query construction and `OCIStmtPrepare` are deferred to `OracleInitGlobal` after the optimizer finishes column projection and filter pushdown (`TableFilterSet` and `OraclePushdownComplexFilter`).
-- Unprojected columns are completely omitted from the generated Oracle `SELECT` statement, and OCI only defines buffers (`OCIDefineByPos`) for projected columns.
 
-## 2. Filter Pushdown (`TableFilterSet`)
+## 2. Filter Pushdown (`TableFilterSet` & `TableFilterType`)
 
-DuckDB's optimizer passes filter constraints to the table function via `TableFilterSet`:
+DuckDB `v2.0.0` passes filter constraints to the table function via `TableFilterSet` and `OraclePushdownComplexFilter`:
 
 ```
-TableFilterSet (Map of column_index -> unique_ptr<TableFilter>)
+TableFilterSet (Iterative Entries() -> FilterEntry{idx_t col_idx, TableFilter &filter})
        |
-       +---> ConstantFilter (Equality, Inequality, Comparisons: >, >=, <, <=)
-       +---> InFilter (Set membership: col IN (val1, val2, val3))
-       +---> IsNullFilter / IsNotNullFilter (col IS NULL / col IS NOT NULL)
-       +---> ConjunctionAndFilter / ConjunctionOrFilter
+       +---> CONSTANT_COMPARISON (Equality, Inequality, Comparisons: =, !=, >, >=, <, <=)
+       +---> IN_FILTER (Set membership: col IN (val1, val2, val3))
+       +---> IS_NULL / IS_NOT_NULL (col IS NULL / col IS NOT NULL)
+       +---> CONJUNCTION_AND / CONJUNCTION_OR
+       +---> OPTIONAL_FILTER (unwrapped recursively when child filter is supported)
+       +---> EXPRESSION_FILTER (evaluated via ExpressionToSQL when child expression is supported)
+       +---> DYNAMIC_FILTER / BLOOM_FILTER (safely skipped for local DuckDB execution without disabling pushdown)
 ```
 
 ### Translating to Oracle SQL (`src/oracle_pushdown.cpp`)

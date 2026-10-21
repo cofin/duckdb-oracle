@@ -74,3 +74,9 @@ In DuckDB `v1.5.x`, `DBConfig::AddExtensionOption` inserts default values direct
 
 Oracle treats empty `VARCHAR2` literals (`''`) as `NULL`, so `WHERE col = ''` and `WHERE col <> ''` always evaluate to `UNKNOWN` in Oracle (returning 0 rows), whereas DuckDB evaluates `''` as a non-null zero-length string.
 - **Resolution (`src/oracle_pushdown.cpp`)**: `ConstantToSQL` and `TryExtractLike` / `TryExtractPrefix` / `TryExtractSuffix` / `TryExtractContains` refuse to push down empty string literals (`str_val.empty()`), leaving empty-string predicates for DuckDB's local filter executor.
+
+## 9. DuckDB 2.0 Vector Size Synchronization (`SetChildCardinality` vs `SetCardinalityUnsafe`)
+
+In DuckDB `v2.0.0`, each `VectorBuffer` tracks its own element count (`vector.size()`). Vectorized operators such as `VectorOperations::IsNull` and `VectorOperations::IsNotNull` (`duckdb/src/common/vector_operations/null_operations.cpp`) read `auto count = input.size();` rather than `DataChunk::size()`.
+- **Pitfall**: Calling `output.SetCardinalityUnsafe(rows_fetched)` after mutating flat vectors directly via `FlatVector::GetDataMutable`, `FlatVector::SetNull`, or `StringVector::AddString` updates `DataChunk::count` while leaving `output.data[i].size() == 0`. Downstream unary operators like `SELECT (payload IS NULL)::INTEGER` then iterate `0..0` and leave their output vector uninitialized.
+- **Resolution (`src/oracle_scan.cpp`, `src/storage/oracle_insert.cpp`)**: Always call `output.SetChildCardinality(rows_fetched)` (and `output.SetChildCardinality(0)` on empty/finished chunks) so `FlatVector::SetSize(v, rows_fetched)` is synchronized across all output vectors.

@@ -667,7 +667,7 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 	auto &gstate = data.global_state->Cast<OracleScanState>();
 
 	if (gstate.finished) {
-		output.SetCardinalityUnsafe(0);
+		output.SetChildCardinality(0);
 		return;
 	}
 
@@ -715,7 +715,7 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 
 	if (status == OCI_NO_DATA && rows_fetched == 0) {
 		gstate.finished = true;
-		output.SetCardinalityUnsafe(0);
+		output.SetChildCardinality(0);
 		return;
 	}
 
@@ -749,7 +749,7 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 			SetOracleOutputValue(context, output_vector, row_idx, ptr, actual_len, target_type, conversion_context);
 		}
 	}
-	output.SetCardinalityUnsafe(rows_fetched);
+	output.SetChildCardinality(rows_fetched);
 	if (status == OCI_NO_DATA) {
 		gstate.finished = true;
 	}
