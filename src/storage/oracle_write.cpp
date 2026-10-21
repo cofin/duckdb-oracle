@@ -631,7 +631,7 @@ void OracleWriteGlobalState::BindColumn(Vector &col, idx_t col_idx, idx_t offset
 
 				if (col.GetType().id() == LogicalTypeId::DATE) {
 					date_t duck_date = FlatVector::GetData<date_t>(col)[source_idx];
-					if (!Date::IsFinite(duck_date)) {
+					if (!duck_date.IsFinite()) {
 						throw InvalidInputException("Oracle write value for column '%s' cannot bind non-finite DATE",
 						                            column_name.c_str());
 					}
@@ -642,7 +642,7 @@ void OracleWriteGlobalState::BindColumn(Vector &col, idx_t col_idx, idx_t offset
 				} else if (col.GetType().id() == LogicalTypeId::TIMESTAMP ||
 				           col.GetType().id() == LogicalTypeId::TIMESTAMP_TZ) {
 					timestamp_t duck_ts = FlatVector::GetData<timestamp_t>(col)[source_idx];
-					if (!Timestamp::IsFinite(duck_ts)) {
+					if (!duck_ts.IsFinite()) {
 						throw InvalidInputException(
 						    "Oracle write value for column '%s' cannot bind non-finite TIMESTAMP", column_name.c_str());
 					}

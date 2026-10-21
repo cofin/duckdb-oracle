@@ -271,7 +271,7 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, const string
 }
 
 unique_ptr<FunctionData> OracleScanBind(ClientContext &context, TableFunctionBindInput &input,
-                                        vector<LogicalType> &return_types, vector<string> &names) {
+                                        vector<LogicalType> &return_types, vector<Identifier> &names) {
 	if (input.inputs.size() < 3 || input.inputs[0].IsNull() || input.inputs[1].IsNull() || input.inputs[2].IsNull()) {
 		throw InvalidInputException("oracle_scan connection, schema, and table arguments cannot be NULL");
 	}
@@ -312,7 +312,7 @@ unique_ptr<FunctionData> OracleScanBind(ClientContext &context, TableFunctionBin
 		timestamp_t parsed_ts;
 		if (Timestamp::TryConvertTimestamp(ts_str.c_str(), ts_str.size(), parsed_ts, false) !=
 		        TimestampCastResult::SUCCESS ||
-		    !Timestamp::IsFinite(parsed_ts)) {
+		    !parsed_ts.IsFinite()) {
 			throw InvalidInputException("oracle_scan as_of_timestamp must be a valid finite timestamp: \"%s\"",
 			                            ts_str.c_str());
 		}
@@ -327,8 +327,14 @@ unique_ptr<FunctionData> OracleScanBind(ClientContext &context, TableFunctionBin
 	auto from_sql =
 	    StringUtil::Format("%s.%s%s", quoted_schema.c_str(), quoted_table.c_str(), flashback_clause.c_str());
 	string query = StringUtil::Format("SELECT * FROM %s", from_sql.c_str());
-	auto result = OracleBindInternal(context, connection_string, query, return_types, names, nullptr, nullptr, true,
-	                                 "oracle_scan");
+	vector<string> string_names;
+	auto result = OracleBindInternal(context, connection_string, query, return_types, string_names, nullptr, nullptr,
+	                                 true, "oracle_scan");
+	names.clear();
+	names.reserve(string_names.size());
+	for (auto &col_name : string_names) {
+		names.emplace_back(col_name);
+	}
 	auto &bind = result->Cast<OracleBindData>();
 	bind.direct_from_sql = from_sql;
 	bind.direct_select_list_sql = StringUtil::Join(bind.converted_select_exprs, ", ");
@@ -338,7 +344,7 @@ unique_ptr<FunctionData> OracleScanBind(ClientContext &context, TableFunctionBin
 }
 
 unique_ptr<FunctionData> OracleQueryBind(ClientContext &context, TableFunctionBindInput &input,
-                                         vector<LogicalType> &return_types, vector<string> &names) {
+                                         vector<LogicalType> &return_types, vector<Identifier> &names) {
 	if (input.inputs.size() < 2 || input.inputs[0].IsNull() || input.inputs[1].IsNull()) {
 		throw InvalidInputException("oracle_query connection and query arguments cannot be NULL");
 	}
@@ -353,8 +359,14 @@ unique_ptr<FunctionData> OracleQueryBind(ClientContext &context, TableFunctionBi
 		throw InvalidInputException("oracle_query connection and query arguments cannot be empty");
 	}
 
-	auto result = OracleBindInternal(context, connection_string, query, return_types, names, nullptr, nullptr, true,
-	                                 "oracle_query");
+	vector<string> string_names;
+	auto result = OracleBindInternal(context, connection_string, query, return_types, string_names, nullptr, nullptr,
+	                                 true, "oracle_query");
+	names.clear();
+	names.reserve(string_names.size());
+	for (auto &col_name : string_names) {
+		names.emplace_back(col_name);
+	}
 	auto &bind = result->Cast<OracleBindData>();
 	for (idx_t i = 0; i < bind.converted_select_exprs.size() && i < bind.pushdown_eligible.size(); i++) {
 		if (StringUtil::Contains(StringUtil::Upper(bind.converted_select_exprs[i]), "TO_CHAR")) {

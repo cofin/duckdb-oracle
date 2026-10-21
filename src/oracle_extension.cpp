@@ -8,11 +8,15 @@
 
 namespace duckdb {
 
-void OracleExtension::Load(ExtensionLoader &loader) {
+static void LoadInternal(ExtensionLoader &loader) {
 	RegisterOracleFunctions(loader);
 	auto &db = loader.GetDatabaseInstance();
 	auto &config = DBConfig::GetConfig(db);
 	RegisterOracleExtensionOptions(config);
+}
+
+void OracleExtension::Load(ExtensionLoader &loader) {
+	LoadInternal(loader);
 }
 
 std::string OracleExtension::Name() {
@@ -27,20 +31,12 @@ std::string OracleExtension::Version() const {
 #endif
 }
 
+} // namespace duckdb
+
 extern "C" {
 
-DUCKDB_EXTENSION_API void oracle_init(duckdb::DatabaseInstance &db) {
-	duckdb::DuckDB db_wrapper(db);
-	db_wrapper.LoadStaticExtension<duckdb::OracleExtension>();
+DUCKDB_CPP_EXTENSION_ENTRY(oracle, loader) {
+	duckdb::LoadInternal(loader);
 }
 
-DUCKDB_EXTENSION_API void oracle_duckdb_cpp_init(duckdb::DatabaseInstance &db) {
-	oracle_init(db);
 }
-
-DUCKDB_EXTENSION_API const char *oracle_version() {
-	return duckdb::DuckDB::LibraryVersion();
-}
-
-} // extern "C"
-} // namespace duckdb

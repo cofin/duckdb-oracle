@@ -175,7 +175,7 @@ static void LoadColumns(OracleCatalogState &state, string &schema, string &table
 			not_null_columns.push_back(columns.size());
 		}
 
-		ColumnDefinition col_def(col_name, decision.duckdb_type);
+		ColumnDefinition col_def(Identifier(col_name), decision.duckdb_type);
 		columns.push_back(std::move(col_def));
 
 		metadata.push_back(std::move(meta));
@@ -185,8 +185,8 @@ static void LoadColumns(OracleCatalogState &state, string &schema, string &table
 OracleTableEntry::OracleTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, unique_ptr<CreateTableInfo> info,
                                    shared_ptr<OracleCatalogState> state, const string &schema_name,
                                    const string &table_name, vector<OracleColumnMetadata> metadata)
-    : TableCatalogEntry(catalog, schema, *info), state(std::move(state)), schema_name(schema_name),
-      table_name(table_name), column_metadata(std::move(metadata)) {
+    : TableCatalogEntry(catalog, schema, *info), columns(std::move(info->columns)), state(std::move(state)),
+      schema_name(schema_name), table_name(table_name), column_metadata(std::move(metadata)) {
 }
 
 unique_ptr<OracleTableEntry> OracleTableEntry::Create(Catalog &catalog, SchemaCatalogEntry &schema,
@@ -213,8 +213,8 @@ unique_ptr<OracleTableEntry> OracleTableEntry::Create(Catalog &catalog, SchemaCa
 	}
 
 	auto info = make_uniq<CreateTableInfo>();
-	info->schema = schema.name;
-	info->table = duckdb_entry_name.empty() ? resolved_table : duckdb_entry_name;
+	info->SetSchema(schema.name);
+	info->SetTableName(Identifier(duckdb_entry_name.empty() ? resolved_table : duckdb_entry_name));
 	for (auto &col : cols) {
 		info->columns.AddColumn(col.Copy());
 	}
@@ -231,7 +231,7 @@ TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_p
 	vector<string> names;
 	for (auto &col : columns.Physical()) {
 		return_types.push_back(col.Type());
-		names.push_back(col.Name());
+		names.push_back(col.Name().GetIdentifierName());
 	}
 
 	auto quoted_schema = KeywordHelper::WriteQuoted(schema_name, '"');
@@ -247,7 +247,7 @@ TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_p
 			column_list += ", ";
 		}
 
-		auto quoted_col = KeywordHelper::WriteQuoted(col.Name(), '"');
+		auto quoted_col = KeywordHelper::WriteQuoted(col.Name().GetIdentifierName(), '"');
 		string expr = quoted_col;
 
 		if (col_idx < column_metadata.size()) {
@@ -294,7 +294,7 @@ TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_p
 	tf.filter_pushdown = false;
 	tf.pushdown_complex_filter = OraclePushdownComplexFilter;
 	tf.projection_pushdown = true;
-	tf.name = table_name;
+	tf.name = Identifier(table_name);
 	return tf;
 }
 

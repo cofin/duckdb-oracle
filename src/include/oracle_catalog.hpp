@@ -20,7 +20,7 @@ public:
 	bool IsDuckCatalog() override;
 	optional_idx GetCatalogVersion(ClientContext &context) override;
 	void Initialize(bool load_builtin) override;
-	string GetDefaultSchema() const override;
+	optional<Identifier> GetDefaultSchema() const override;
 
 	shared_ptr<OracleCatalogState> GetState() const {
 		return state;

@@ -74,9 +74,9 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &context, TableFunctionInitInput &input);
 
 unique_ptr<FunctionData> OracleScanBind(ClientContext &context, TableFunctionBindInput &input,
-                                        vector<LogicalType> &return_types, vector<string> &names);
+                                        vector<LogicalType> &return_types, vector<Identifier> &names);
 
 unique_ptr<FunctionData> OracleQueryBind(ClientContext &context, TableFunctionBindInput &input,
-                                         vector<LogicalType> &return_types, vector<string> &names);
+                                         vector<LogicalType> &return_types, vector<Identifier> &names);
 
 } // namespace duckdb

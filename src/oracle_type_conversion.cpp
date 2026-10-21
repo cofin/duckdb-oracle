@@ -181,7 +181,7 @@ static Value ParseVectorJsonToList(const string &json_str, const LogicalType &ta
 
 static void SetStringLikeValue(Vector &output_vector, idx_t row_index, const char *data, ub2 length) {
 	auto value = ReadOracleString(data, length);
-	auto target_data = FlatVector::GetData<string_t>(output_vector);
+	auto target_data = FlatVector::GetDataMutable<string_t>(output_vector);
 	if (output_vector.GetType().id() == LogicalTypeId::BLOB) {
 		target_data[row_index] = StringVector::AddStringOrBlob(output_vector, string_t(value.data(), value.size()));
 	} else {
@@ -198,17 +198,17 @@ void SetOracleOutputValue(ClientContext &context, Vector &output_vector, idx_t r
 		break;
 	case LogicalTypeId::BIGINT: {
 		auto value = TrimmedText(data, length);
-		FlatVector::GetData<int64_t>(output_vector)[row_index] = ParseBigInt(value, conversion_context);
+		FlatVector::GetDataMutable<int64_t>(output_vector)[row_index] = ParseBigInt(value, conversion_context);
 		break;
 	}
 	case LogicalTypeId::FLOAT: {
 		auto value = TrimmedText(data, length);
-		FlatVector::GetData<float>(output_vector)[row_index] = ParseFloat(value, conversion_context);
+		FlatVector::GetDataMutable<float>(output_vector)[row_index] = ParseFloat(value, conversion_context);
 		break;
 	}
 	case LogicalTypeId::DOUBLE: {
 		auto value = TrimmedText(data, length);
-		FlatVector::GetData<double>(output_vector)[row_index] = ParseDouble(value, conversion_context);
+		FlatVector::GetDataMutable<double>(output_vector)[row_index] = ParseDouble(value, conversion_context);
 		break;
 	}
 	case LogicalTypeId::DECIMAL: {
@@ -219,7 +219,7 @@ void SetOracleOutputValue(ClientContext &context, Vector &output_vector, idx_t r
 	case LogicalTypeId::TIMESTAMP:
 	case LogicalTypeId::TIMESTAMP_TZ: {
 		auto value = TrimmedText(data, length);
-		FlatVector::GetData<timestamp_t>(output_vector)[row_index] = ParseTimestamp(value, conversion_context);
+		FlatVector::GetDataMutable<timestamp_t>(output_vector)[row_index] = ParseTimestamp(value, conversion_context);
 		break;
 	}
 	case LogicalTypeId::LIST: {

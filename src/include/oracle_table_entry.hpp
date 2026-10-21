@@ -16,6 +16,9 @@ public:
 	TableFunction GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) override;
 	TableStorageInfo GetStorageInfo(ClientContext &context) override;
 	unique_ptr<BaseStatistics> GetStatistics(ClientContext &context, column_t column_id) override;
+	const ColumnList &GetColumns() const override {
+		return columns;
+	}
 
 	const string &GetSchemaName() const {
 		return schema_name;
@@ -29,6 +32,7 @@ public:
 	                                           const string &duckdb_entry_name = "");
 
 private:
+	ColumnList columns;
 	shared_ptr<OracleCatalogState> state;
 	string schema_name;
 	string table_name;

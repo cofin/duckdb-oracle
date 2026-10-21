@@ -7,4 +7,4 @@ require oracle
 statement error
 COPY (SELECT 1 AS a) TO 'dummy_table' (FORMAT ORACLE);
 ----
-<REGEX>:.*Copy Function with name oracle does not exist.*
+<REGEX>:.*Copy Function with name (oracle|ORACLE) does not exist.*
