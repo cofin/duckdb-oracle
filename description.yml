@@ -1,166 +1,48 @@
 extension:
   name: oracle
-  description: Native Oracle database extension for DuckDB enabling read and write access to Oracle tables via OCI.
-  version: 0.2.3
+  description: High-performance Oracle Database connector using lazy runtime OCI loading with catalog integration, filter/projection pushdown, flashback queries, and vectorized bulk writes
+  version: 0.3.0
   language: C++
   build: cmake
   license: MIT
-  excluded_platforms: "wasm_mvp;wasm_eh;wasm_threads;osx_amd64"
-
+  excluded_platforms: "wasm_mvp;wasm_eh;wasm_threads;windows_amd64_mingw;windows_arm64;linux_amd64_musl;linux_arm64_musl;osx_amd64"
   maintainers:
     - cofin
 
 repo:
   github: cofin/duckdb-oracle
-  ref: main
+  ref: HEAD
+  variegata: cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3
 
 docs:
   hello_world: |
-    -- Store credentials in DuckDB's SecretManager
-    CREATE SECRET oracle_prod (
+    -- Install and load the Oracle extension from Community Extensions
+    INSTALL oracle FROM community;
+    LOAD oracle;
+
+    -- Configure credentials via DuckDB Secrets
+    CREATE SECRET my_oracle (
         TYPE oracle,
-        USER 'app_user',
-        PASSWORD 'secret',
-        HOST 'host',
+        HOST 'localhost',
         PORT 1521,
-        SERVICE 'service'
+        SERVICE 'FREEPDB1',
+        USER 'scott',
+        PASSWORD 'tiger'
     );
 
-    -- Attach Oracle database through the secret
-    ATTACH '' AS ora (TYPE oracle, SECRET oracle_prod);
+    -- Attach the Oracle database as a native DuckDB catalog
+    ATTACH '' AS ora (TYPE oracle, SECRET my_oracle);
 
-    -- Query Oracle table
-    SELECT * FROM ora.HR.EMPLOYEES WHERE employee_id = 101;
-
-    -- Use raw SQL only with trusted query strings
-    SELECT * FROM oracle_query('ora', 'SELECT employee_id FROM HR.EMPLOYEES WHERE ROWNUM <= 5');
-
-    -- Write data to Oracle table
-    INSERT INTO ora.target_table SELECT * FROM my_table;
-
+    -- Query Oracle tables with automatic filter and projection pushdown
+    SELECT empno, ename, sal
+    FROM ora.SCOTT.EMP
+    WHERE deptno = 10;
   extended_description: |
-    This extension provides native Oracle connectivity through Oracle Call Interface (OCI).
+    The `oracle` extension connects DuckDB to Oracle Database (19c, 21c, and 23ai) using Oracle Call Interface (OCI) loaded lazily at runtime (`libclntsh.so` / `libclntsh.dylib` / `oci.dll`).
 
-    Features:
-    - High performance read and write access to Oracle tables via ATTACH syntax
-    - Table and query functions (oracle_scan, oracle_query)
-    - Oracle Wallet support for Autonomous Database
-    - Secret Manager integration for credential management
-    - Filter pushdown optimization
-    - OCI Array Binding for fast writes
-    - Configurable fetch parameters for performance tuning
-
-    Platform Support:
-    Requires Oracle Instant Client runtime. Supports Linux (x86_64, arm64), macOS (arm64),
-    and Windows (x86_64). WebAssembly platforms not supported due to native library requirements.
-
-    Use Cases:
-    - Analytics on Oracle data without ETL
-    - Data lake queries combining Oracle with Parquet/CSV
-    - High-throughput ingestion to Oracle from DuckDB sources
-    - Oracle database migration and testing
-
-  functions:
-    - name: oracle_query
-      parameters:
-        - name: connection_string
-          type: VARCHAR
-        - name: query
-          type: VARCHAR
-      description: Execute trusted arbitrary SQL query against Oracle database returning a result set.
-
-    - name: oracle_scan
-      parameters:
-        - name: connection_string
-          type: VARCHAR
-        - name: schema_name
-          type: VARCHAR
-        - name: table_name
-          type: VARCHAR
-      description: Scan an Oracle table (equivalent to SELECT * FROM schema.table).
-
-    - name: oracle_clear_cache
-      description: Clear cached Oracle metadata and connections.
-
-    - name: oracle_execute
-      parameters:
-        - name: connection_string
-          type: VARCHAR
-        - name: query
-          type: VARCHAR
-      description: Execute trusted arbitrary SQL without expecting a result set.
-
-  settings:
-    - name: oracle_enable_pushdown
-      type: BOOLEAN
-      default: true
-      description: Enable Oracle filter/projection pushdown
-
-    - name: oracle_prefetch_rows
-      type: UBIGINT
-      default: 1024
-      description: OCI prefetch row count
-
-    - name: oracle_prefetch_memory
-      type: UBIGINT
-      default: 0
-      description: OCI prefetch memory (bytes, 0=auto)
-
-    - name: oracle_array_size
-      type: UBIGINT
-      default: 256
-      description: Rows fetched per OCI iteration (used for tuning)
-
-    - name: oracle_connection_cache
-      type: BOOLEAN
-      default: true
-      description: Reuse Oracle connections when possible
-
-    - name: oracle_connection_limit
-      type: UBIGINT
-      default: 8
-      description: Maximum cached Oracle connections
-
-    - name: oracle_debug_show_queries
-      type: BOOLEAN
-      default: false
-      description: Log generated Oracle SQL for debugging
-
-    - name: oracle_lazy_schema_loading
-      type: BOOLEAN
-      default: true
-      description: Load only current schema by default
-
-    - name: oracle_metadata_object_types
-      type: VARCHAR
-      default: "TABLE,VIEW,SYNONYM,MATERIALIZED VIEW"
-      description: Object types to enumerate (TABLE,VIEW,SYNONYM,MATERIALIZED VIEW)
-
-    - name: oracle_metadata_result_limit
-      type: UBIGINT
-      default: 10000
-      description: Maximum rows returned from metadata queries (0=default bounded limit)
-
-    - name: oracle_use_current_schema
-      type: BOOLEAN
-      default: true
-      description: Resolve unqualified table names to current schema first
-
-    - name: oracle_enable_spatial_types
-      type: BOOLEAN
-      default: true
-      description: Map SDO_GEOMETRY to GEOMETRY type (requires spatial extension)
-
-build:
-  before_build: |
-    if [ "$(uname)" = "Linux" ]; then
-      ./scripts/setup_oci_linux.sh
-    elif [ "$(uname)" = "Darwin" ]; then
-      ./scripts/setup_oci_macos.sh
-    elif [ "$OS" = "Windows_NT" ]; then
-      pwsh -ExecutionPolicy Bypass -File ./scripts/setup_oci_windows.ps1
-    fi
-    export ORACLE_HOME=$(find $(pwd)/oracle_sdk -maxdepth 1 -name "instantclient_*" | head -n1)
-
-  cmake_flags: "-DCMAKE_BUILD_TYPE=Release"
-  test_command: "make test"
+    **Key Features:**
+    - **Zero Load-Time Dependency**: `INSTALL oracle FROM community; LOAD oracle;` succeeds without Oracle Instant Client installed; `libclntsh` (19c, 21c, or 23ai) is resolved dynamically when opening a connection.
+    - **Catalog Integration (`ATTACH ... TYPE oracle`)**: Browse schemas, tables, views, materialized views, and synonyms as native DuckDB catalog entries.
+    - **Pushdown & Optimizer Integration**: Pushes complex predicates, projections, flashback clauses (`AS OF SCN` / `AS OF TIMESTAMP`), and `ALL_TABLES.NUM_ROWS` cardinality estimates to Oracle.
+    - **Rich Type Support**: Supports `NUMBER`, `BINARY_FLOAT`, `BINARY_DOUBLE`, `DATE`, `TIMESTAMP`, `TIMESTAMP WITH TIME ZONE`, `INTERVAL`, `CLOB`, `BLOB`, `RAW`, Oracle 21c/23ai `JSON`, Oracle 23ai `VECTOR` (`ARRAY`/`LIST`), and `MDSYS.SDO_GEOMETRY` (`GEOMETRY` WKB + CRS).
+    - **Vectorized Array Writes**: High-throughput `INSERT INTO` and `COPY` via `OCIBindArrayOfStruct`.

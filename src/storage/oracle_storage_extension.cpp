@@ -101,7 +101,7 @@ static unique_ptr<TransactionManager> OracleCreateTransactionManager(optional_pt
 	(void)storage_info;
 	auto state = catalog.Cast<OracleCatalog>().GetState();
 	if (!state) {
-		state = OracleCatalogState::LookupByAlias(db.GetName());
+		state = OracleCatalogState::LookupByAlias(db.GetName().GetIdentifierName());
 	}
 	return make_uniq<OracleTransactionManager>(db, state);
 }

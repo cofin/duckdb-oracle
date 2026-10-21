@@ -2,8 +2,8 @@
 
 #include "duckdb.hpp"
 #include "oracle_catalog_state.hpp"
+#include "oracle_oci_api.hpp"
 #include "oracle_settings.hpp"
-#include <oci.h>
 
 namespace duckdb {
 

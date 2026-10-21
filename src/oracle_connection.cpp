@@ -19,10 +19,6 @@ void OracleConnection::Connect(const std::string &connection_string, const std::
 	conn_handle = OracleConnectionManager::Instance().Acquire(connection_string, wallet_path, settings);
 }
 
-bool OracleConnection::IsConnected() const {
-	return conn_handle != nullptr;
-}
-
 OracleResult OracleConnection::Query(const std::string &query) {
 	if (!conn_handle) {
 		throw IOException("OracleConnection::Query called before Connect");
@@ -57,6 +53,10 @@ OracleResult OracleConnection::QueryWithStringBinds(const std::string &query,
 		                           nullptr, OCI_DEFAULT),
 		              ctx->errhp, "OCIBindByPos metadata string bind " + std::to_string(i + 1));
 	}
+
+	ub4 prefetch_rows = 256;
+	CheckOCIError(OCIAttrSet(stmthp.get(), OCI_HTYPE_STMT, &prefetch_rows, 0, OCI_ATTR_PREFETCH_ROWS, ctx->errhp),
+	              ctx->errhp, "OCIAttrSet OCI_ATTR_PREFETCH_ROWS");
 
 	CheckOCIError(OCIStmtExecute(ctx->svchp, stmthp.get(), ctx->errhp, 0, 0, nullptr, nullptr, OCI_DEFAULT), ctx->errhp,
 	              "OCIStmtExecute fetch");

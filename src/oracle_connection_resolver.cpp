@@ -176,21 +176,6 @@ OracleSettings GetOracleSettings(ClientContext &context, OracleCatalogState *sta
 	return settings;
 }
 
-OracleResolvedConnection ResolveOracleConnectionWithSharedState(ClientContext &context, const string &connection_ref,
-                                                                const shared_ptr<OracleCatalogState> &state_hint,
-                                                                bool reject_bare_identifier, const char *surface) {
-	if (state_hint) {
-		OracleResolvedConnection resolved;
-		resolved.connection_string = state_hint->connection_string;
-		resolved.wallet_path = state_hint->wallet_path;
-		resolved.settings = GetOracleSettings(context, state_hint.get());
-		resolved.catalog_state = state_hint;
-		return resolved;
-	}
-	return ResolveOracleConnection(context, connection_ref, static_cast<OracleCatalogState *>(nullptr),
-	                               reject_bare_identifier, surface);
-}
-
 OracleResolvedConnection ResolveOracleConnection(ClientContext &context, const string &connection_ref,
                                                  OracleCatalogState *state_hint, bool reject_bare_identifier,
                                                  const char *surface) {

@@ -94,7 +94,7 @@ OCI enforces strict parent-child relationships between handles. Freeing a parent
 
 ## Thick Driver Runtime Integration
 
-DuckDB Oracle links dynamically to the Oracle Instant Client SDK:
-- **Core Shared Object**: `libclntsh.so` (Linux), `libclntsh.dylib` (macOS), `oci.dll` (Windows).
+`duckdb-oracle` compiles with in-tree OCI C ABI declarations (`src/include/oracle_oci_api.hpp`) and zero build-time `DT_NEEDED` dependency on `libclntsh`, dynamically resolving all 22 OCI functions via `dlopen`/`dlsym` (Linux/macOS) or `LoadLibraryA`/`GetProcAddress` (Windows) in `src/oracle_oci_api.cpp` when `OracleConnectionManager::GetOrCreateEnv()` is first invoked:
+- **Core Shared Object**: `libclntsh.so` / `libclntsh.so.23.1` / `libclntsh.so.21.1` / `libclntsh.so.19.1` (Linux), `libclntsh.dylib` (macOS), `oci.dll` (Windows), searched via `OCI_LIB_DIR`, `ORACLE_HOME`, system loader paths, and standard install locations.
 - **Asynchronous I/O Requirement (`libaio`)**: On Linux, Instant Client requires `libaio.so.1`. On newer distributions such as Ubuntu 24.04 (Noble), this package is named `libaio1t64`, requiring a symlink to `libaio.so.1`.
-- **Header Files**: `oci.h`, `oratypes.h`, `ocidfn.h`, `ociapr.h` located under `oracle_sdk/instantclient_*/sdk/include`.
+- **In-Tree Declarations**: `src/include/oracle_oci_api.hpp` and `src/oracle_oci_api.cpp` replace external `oci.h` SDK headers so compilation and `LOAD oracle;` require no Oracle Instant Client installed.

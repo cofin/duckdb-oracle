@@ -1,7 +1,7 @@
 #pragma once
 
 #include "duckdb/common/exception.hpp"
-#include <oci.h>
+#include "oracle_oci_api.hpp"
 #include <cstdlib>
 #include <memory>
 #include <string>

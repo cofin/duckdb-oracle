@@ -6,6 +6,7 @@
 #include "oracle_type_conversion.hpp"
 #include "oracle_type_registry.hpp"
 #include "oracle_utils.hpp"
+#include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/limits.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/timestamp.hpp"
@@ -81,6 +82,8 @@ unique_ptr<FunctionData> OracleBindData::Copy() const {
 	copy->original_names = original_names;
 	copy->converted_select_exprs = converted_select_exprs;
 	copy->settings = settings;
+	copy->table_entry = table_entry;
+	copy->estimated_rows = estimated_rows;
 	return copy;
 }
 
@@ -88,6 +91,48 @@ bool OracleBindData::Equals(const FunctionData &other) const {
 	const auto &other_bind_data = other.Cast<OracleBindData>();
 	return query == other_bind_data.query && connection_string == other_bind_data.connection_string &&
 	       wallet_path == other_bind_data.wallet_path;
+}
+
+BindInfo OracleGetBindInfo(TableFunctionGetBindInfoInput &input) {
+	if (input.bind_data) {
+		auto &oracle_bind = input.bind_data->Cast<OracleBindData>();
+		if (oracle_bind.table_entry) {
+			return BindInfo(ScanType::TABLE);
+		}
+	}
+	return BindInfo(ScanType::EXTERNAL);
+}
+
+optional_ptr<TableCatalogEntry> OracleGetTableEntry(optional_ptr<const FunctionData> bind_data) {
+	if (bind_data) {
+		auto &oracle_bind = bind_data->Cast<OracleBindData>();
+		return oracle_bind.table_entry;
+	}
+	return nullptr;
+}
+
+unique_ptr<NodeStatistics> OracleCardinality(ClientContext &, const FunctionData *bind_data) {
+	if (bind_data) {
+		const auto &oracle_bind = bind_data->Cast<OracleBindData>();
+		if (oracle_bind.estimated_rows.IsValid() && oracle_bind.estimated_rows.GetIndex() > 0) {
+			return make_uniq<NodeStatistics>(oracle_bind.estimated_rows.GetIndex());
+		}
+	}
+	return nullptr;
+}
+
+InsertionOrderPreservingMap<string> OracleToString(TableFunctionToStringInput &input) {
+	InsertionOrderPreservingMap<string> result;
+	if (input.bind_data) {
+		const auto &bind = input.bind_data->Cast<OracleBindData>();
+		if (!bind.direct_from_sql.empty()) {
+			result["Table"] = bind.direct_from_sql;
+		}
+		if (!bind.query.empty()) {
+			result["Query"] = bind.query;
+		}
+	}
+	return result;
 }
 
 unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, const string &connection_string,
@@ -247,7 +292,7 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, const string
 	result->converted_select_exprs.reserve(result->column_names.size());
 	bool needs_wrapper = false;
 	for (idx_t i = 0; i < result->column_names.size(); i++) {
-		auto quoted_col = KeywordHelper::WriteQuoted(result->column_names[i], '"');
+		auto quoted_col = KeywordHelper::WriteQuotedAndEscaped(result->column_names[i], '"');
 		auto &decision = type_decisions[i];
 		if (decision.RequiresQueryRewrite(conversion_version)) {
 			needs_wrapper = true;
@@ -271,7 +316,7 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, const string
 }
 
 unique_ptr<FunctionData> OracleScanBind(ClientContext &context, TableFunctionBindInput &input,
-                                        vector<LogicalType> &return_types, vector<string> &names) {
+                                        vector<LogicalType> &return_types, vector<Identifier> &names) {
 	if (input.inputs.size() < 3 || input.inputs[0].IsNull() || input.inputs[1].IsNull() || input.inputs[2].IsNull()) {
 		throw InvalidInputException("oracle_scan connection, schema, and table arguments cannot be NULL");
 	}
@@ -312,7 +357,7 @@ unique_ptr<FunctionData> OracleScanBind(ClientContext &context, TableFunctionBin
 		timestamp_t parsed_ts;
 		if (Timestamp::TryConvertTimestamp(ts_str.c_str(), ts_str.size(), parsed_ts, false) !=
 		        TimestampCastResult::SUCCESS ||
-		    !Timestamp::IsFinite(parsed_ts)) {
+		    !parsed_ts.IsFinite()) {
 			throw InvalidInputException("oracle_scan as_of_timestamp must be a valid finite timestamp: \"%s\"",
 			                            ts_str.c_str());
 		}
@@ -322,13 +367,19 @@ unique_ptr<FunctionData> OracleScanBind(ClientContext &context, TableFunctionBin
 		    StringUtil::Format(" AS OF TIMESTAMP TO_TIMESTAMP('%s', 'YYYY-MM-DD HH24:MI:SS.FF')", escaped_ts.c_str());
 	}
 
-	auto quoted_schema = KeywordHelper::WriteQuoted(schema_name, '"');
-	auto quoted_table = KeywordHelper::WriteQuoted(table_name, '"');
+	auto quoted_schema = KeywordHelper::WriteQuotedAndEscaped(schema_name, '"');
+	auto quoted_table = KeywordHelper::WriteQuotedAndEscaped(table_name, '"');
 	auto from_sql =
 	    StringUtil::Format("%s.%s%s", quoted_schema.c_str(), quoted_table.c_str(), flashback_clause.c_str());
 	string query = StringUtil::Format("SELECT * FROM %s", from_sql.c_str());
-	auto result = OracleBindInternal(context, connection_string, query, return_types, names, nullptr, nullptr, true,
-	                                 "oracle_scan");
+	vector<string> string_names;
+	auto result = OracleBindInternal(context, connection_string, query, return_types, string_names, nullptr, nullptr,
+	                                 true, "oracle_scan");
+	names.clear();
+	names.reserve(string_names.size());
+	for (auto &col_name : string_names) {
+		names.emplace_back(col_name);
+	}
 	auto &bind = result->Cast<OracleBindData>();
 	bind.direct_from_sql = from_sql;
 	bind.direct_select_list_sql = StringUtil::Join(bind.converted_select_exprs, ", ");
@@ -338,7 +389,7 @@ unique_ptr<FunctionData> OracleScanBind(ClientContext &context, TableFunctionBin
 }
 
 unique_ptr<FunctionData> OracleQueryBind(ClientContext &context, TableFunctionBindInput &input,
-                                         vector<LogicalType> &return_types, vector<string> &names) {
+                                         vector<LogicalType> &return_types, vector<Identifier> &names) {
 	if (input.inputs.size() < 2 || input.inputs[0].IsNull() || input.inputs[1].IsNull()) {
 		throw InvalidInputException("oracle_query connection and query arguments cannot be NULL");
 	}
@@ -353,8 +404,14 @@ unique_ptr<FunctionData> OracleQueryBind(ClientContext &context, TableFunctionBi
 		throw InvalidInputException("oracle_query connection and query arguments cannot be empty");
 	}
 
-	auto result = OracleBindInternal(context, connection_string, query, return_types, names, nullptr, nullptr, true,
-	                                 "oracle_query");
+	vector<string> string_names;
+	auto result = OracleBindInternal(context, connection_string, query, return_types, string_names, nullptr, nullptr,
+	                                 true, "oracle_query");
+	names.clear();
+	names.reserve(string_names.size());
+	for (auto &col_name : string_names) {
+		names.emplace_back(col_name);
+	}
 	auto &bind = result->Cast<OracleBindData>();
 	for (idx_t i = 0; i < bind.converted_select_exprs.size() && i < bind.pushdown_eligible.size(); i++) {
 		if (StringUtil::Contains(StringUtil::Upper(bind.converted_select_exprs[i]), "TO_CHAR")) {
@@ -407,7 +464,7 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &, TableFunc
 			col_select_exprs.clear();
 			col_select_exprs.reserve(bind.original_names.size());
 			for (const auto &name : bind.original_names) {
-				col_select_exprs.push_back(KeywordHelper::WriteQuoted(name, '"'));
+				col_select_exprs.push_back(KeywordHelper::WriteQuotedAndEscaped(name, '"'));
 			}
 		}
 	}
@@ -478,7 +535,7 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &, TableFunc
 			vector<string> select_items;
 			select_items.reserve(state->active_bind_cols.size());
 			for (auto bind_col_idx : state->active_bind_cols) {
-				select_items.push_back(KeywordHelper::WriteQuoted(bind.original_names[bind_col_idx], '"'));
+				select_items.push_back(KeywordHelper::WriteQuotedAndEscaped(bind.original_names[bind_col_idx], '"'));
 			}
 			query_to_run =
 			    "SELECT " + StringUtil::Join(select_items, ", ") + " FROM (\n" + bind.base_query + "\n)" + where_sql;
@@ -545,9 +602,21 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &, TableFunc
 		state->defines.assign(active_count, nullptr);
 		state->indicators.resize(active_count);
 		state->return_lens.resize(active_count);
+		state->active_col_names.resize(active_count);
+		state->active_oracle_types.resize(active_count);
 
 		for (idx_t active_idx = 0; active_idx < active_count; active_idx++) {
 			idx_t bind_col_idx = state->active_bind_cols[active_idx];
+			state->active_col_names[active_idx] = bind_col_idx < bind.column_names.size()
+			                                          ? bind.column_names[bind_col_idx]
+			                                          : ("#" + std::to_string(bind_col_idx));
+			state->active_oracle_types[active_idx] =
+			    bind_col_idx < bind.oracle_type_names.size()
+			        ? bind.oracle_type_names[bind_col_idx]
+			        : (bind_col_idx < bind.oci_types.size()
+			               ? StringUtil::Format("OCI type %u", static_cast<unsigned>(bind.oci_types[bind_col_idx]))
+			               : "unknown OCI type");
+
 			ub4 size = 4000;
 			if (bind_col_idx < bind.oci_sizes.size() && bind.oci_sizes[bind_col_idx] > 0) {
 				if (bind.oci_sizes[bind_col_idx] >= NumericLimits<ub2>::Maximum()) {
@@ -598,13 +667,12 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 	auto &gstate = data.global_state->Cast<OracleScanState>();
 
 	if (gstate.finished) {
-		output.SetCardinality(0);
+		output.SetChildCardinality(0);
 		return;
 	}
 
 	auto ctx = gstate.conn_handle->Get();
 	sword status;
-	idx_t row_count = 0;
 
 	if (!gstate.executed) {
 		const auto &sql_to_execute = gstate.executed_query.empty() ? bind_data.query : gstate.executed_query;
@@ -631,13 +699,12 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 		fprintf(stderr, "[oracle] fetch status=%d rows=%u\n", status, static_cast<uint32_t>(rows_fetched));
 	}
 
-	for (idx_t r = 0; r < rows_fetched; r++) {
-		for (idx_t active_idx = 0; active_idx < gstate.active_bind_cols.size(); active_idx++) {
-			sb2 ind = gstate.indicators[active_idx][r];
+	for (idx_t active_idx = 0; active_idx < gstate.active_bind_cols.size(); active_idx++) {
+		const auto &inds = gstate.indicators[active_idx];
+		for (idx_t r = 0; r < rows_fetched; r++) {
+			sb2 ind = inds[r];
 			if (ind == -2 || ind > 0) {
-				idx_t bind_col_idx = gstate.active_bind_cols[active_idx];
-				auto col_name = bind_col_idx < bind_data.column_names.size() ? bind_data.column_names[bind_col_idx]
-				                                                             : ("#" + std::to_string(bind_col_idx));
+				const auto &col_name = gstate.active_col_names[active_idx];
 				throw IOException("Oracle value for column \"%s\" exceeds the bounded fetch buffer", col_name.c_str());
 			}
 		}
@@ -648,46 +715,41 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 
 	if (status == OCI_NO_DATA && rows_fetched == 0) {
 		gstate.finished = true;
-		output.SetCardinality(0);
+		output.SetChildCardinality(0);
 		return;
 	}
 
-	for (row_count = 0; row_count < rows_fetched; row_count++) {
-		for (idx_t col_idx = 0; col_idx < output.ColumnCount(); col_idx++) {
-			if (col_idx >= gstate.output_to_active_idx.size()) {
+	const auto &output_types = output.GetTypes();
+	for (idx_t col_idx = 0; col_idx < output.ColumnCount(); col_idx++) {
+		if (col_idx >= gstate.output_to_active_idx.size()) {
+			continue;
+		}
+		idx_t active_idx = gstate.output_to_active_idx[col_idx];
+		if (active_idx == DConstants::INVALID_INDEX || active_idx >= gstate.indicators.size()) {
+			continue;
+		}
+
+		auto &output_vector = output.data[col_idx];
+		const auto &target_type = output_types[col_idx];
+		const auto &inds = gstate.indicators[active_idx];
+		const auto &lens = gstate.return_lens[active_idx];
+		const char *col_buf = gstate.buffers[active_idx].data();
+		ub4 element_size = static_cast<ub4>(gstate.buffers[active_idx].size() / gstate.fetch_size);
+		const auto &column_name = gstate.active_col_names[active_idx];
+		const auto &oracle_type = gstate.active_oracle_types[active_idx];
+
+		for (idx_t row_idx = 0; row_idx < rows_fetched; row_idx++) {
+			if (inds[row_idx] == -1) {
+				FlatVector::SetNull(output_vector, row_idx, true);
 				continue;
 			}
-			idx_t active_idx = gstate.output_to_active_idx[col_idx];
-			if (active_idx == DConstants::INVALID_INDEX || active_idx >= gstate.indicators.size()) {
-				continue;
-			}
-			idx_t bind_col_idx =
-			    active_idx < gstate.active_bind_cols.size() ? gstate.active_bind_cols[active_idx] : active_idx;
-
-			if (gstate.indicators[active_idx][row_count] == -1) {
-				FlatVector::SetNull(output.data[col_idx], row_count, true);
-				continue;
-			}
-
-			ub4 element_size = gstate.buffers[active_idx].size() / gstate.fetch_size;
-			char *ptr = gstate.buffers[active_idx].data() + (row_count * element_size);
-			ub2 actual_len = gstate.return_lens[active_idx][row_count];
-
-			auto column_name = bind_col_idx < bind_data.column_names.size() ? bind_data.column_names[bind_col_idx]
-			                                                                : ("#" + std::to_string(bind_col_idx));
-			auto oracle_type =
-			    bind_col_idx < bind_data.oracle_type_names.size()
-			        ? bind_data.oracle_type_names[bind_col_idx]
-			        : (bind_col_idx < bind_data.oci_types.size()
-			               ? StringUtil::Format("OCI type %u", static_cast<unsigned>(bind_data.oci_types[bind_col_idx]))
-			               : "unknown OCI type");
-			OracleConversionContext conversion_context {column_name, oracle_type, output.GetTypes()[col_idx],
-			                                            row_count};
-			SetOracleOutputValue(context, output.data[col_idx], row_count, ptr, actual_len, output.GetTypes()[col_idx],
-			                     conversion_context);
+			const char *ptr = col_buf + (row_idx * element_size);
+			ub2 actual_len = lens[row_idx];
+			OracleConversionContext conversion_context {column_name, oracle_type, target_type, row_idx};
+			SetOracleOutputValue(context, output_vector, row_idx, ptr, actual_len, target_type, conversion_context);
 		}
 	}
-	output.SetCardinality(row_count);
+	output.SetChildCardinality(rows_fetched);
 	if (status == OCI_NO_DATA) {
 		gstate.finished = true;
 	}

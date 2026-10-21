@@ -14,6 +14,8 @@ duckdb_extension_load(oracle
     TEST_DIR ${CMAKE_CURRENT_LIST_DIR}/test/unit_tests
     EXTENSION_VERSION ${ORACLE_EXTENSION_VERSION}
 )
+duckdb_extension_statically_link(oracle)
 
 # Any extra extensions that should be built
 duckdb_extension_load(json)
+duckdb_extension_statically_link(json)

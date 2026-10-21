@@ -11,7 +11,6 @@
 namespace duckdb {
 
 struct OracleWriteBindData {
-	string table_name;
 	string connection_string;
 	string wallet_path;
 	OracleSettings settings;
@@ -60,8 +59,9 @@ public:
 	OCIHandlePtr<OCIStmt> stmthp;
 
 private:
-	void BindColumn(Vector &col, idx_t col_idx, idx_t offset, idx_t count, const string &column_name,
-	                const string &oracle_type, ub2 bind_type, const vector<string> &converted_strings);
+	void BindColumn(Vector &col, const UnifiedVectorFormat &format, idx_t col_idx, idx_t offset, idx_t count,
+	                const string &column_name, const string &oracle_type, ub2 bind_type,
+	                const vector<string> &col_strings, bool use_direct_string_slice);
 	void ExecuteBatch(idx_t count);
 
 	std::mutex sink_lock;
@@ -70,6 +70,8 @@ private:
 	bool aborted = false;
 
 	std::vector<OracleWriteColumnBuffer> column_buffers;
+	vector<UnifiedVectorFormat> unified_formats;
+	vector<vector<string>> converted_strings;
 
 	idx_t max_batch_size = STANDARD_VECTOR_SIZE;
 };

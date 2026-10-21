@@ -31,20 +31,10 @@ PhysicalOracleInsert::PhysicalOracleInsert(PhysicalPlan &physical_plan, vector<L
       column_types(std::move(column_types_p)) {
 }
 
-PhysicalOracleInsert::PhysicalOracleInsert(PhysicalPlan &physical_plan, vector<LogicalType> types, string table_name_p,
-                                           string connection_string_p, string wallet_path_p, OracleSettings settings_p,
-                                           vector<string> column_names_p, vector<LogicalType> column_types_p,
-                                           idx_t estimated_cardinality)
-    : PhysicalOracleInsert(physical_plan, std::move(types), string(), std::move(table_name_p),
-                           std::move(connection_string_p), std::move(wallet_path_p), std::move(settings_p),
-                           std::move(column_names_p), std::move(column_types_p), estimated_cardinality) {
-}
-
 unique_ptr<GlobalSinkState> PhysicalOracleInsert::GetGlobalSinkState(ClientContext &context) const {
 	auto bind_data = make_uniq<OracleWriteBindData>();
 	bind_data->schema_name = schema_name;
 	bind_data->object_name = table_name;
-	bind_data->table_name = schema_name.empty() ? table_name : (schema_name + "." + table_name);
 	bind_data->connection_string = connection_string;
 	bind_data->wallet_path = wallet_path;
 	bind_data->settings = settings;
@@ -95,8 +85,9 @@ SourceResultType PhysicalOracleInsert::GetDataInternal(ExecutionContext &context
 	(void)context;
 	(void)input;
 	auto &gstate = sink_state->Cast<OracleInsertGlobalState>();
-	chunk.SetCardinality(1);
-	chunk.SetValue(0, 0, Value::BIGINT(NumericCast<int64_t>(gstate.insert_count.load(std::memory_order_relaxed))));
+	FlatVector::GetDataMutable<int64_t>(chunk.data[0])[0] =
+	    NumericCast<int64_t>(gstate.insert_count.load(std::memory_order_relaxed));
+	chunk.SetChildCardinality(1);
 	return SourceResultType::FINISHED;
 }
 

@@ -12,7 +12,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
-#include <oci.h>
+#include "oracle_oci_api.hpp"
 #include <cstdio>
 
 namespace duckdb {
@@ -22,15 +22,15 @@ static void OracleExecuteFunction(DataChunk &args, ExpressionState &state, Vecto
 
 	UnifiedVectorFormat conn_format;
 	UnifiedVectorFormat sql_format;
-	args.data[0].ToUnifiedFormat(args.size(), conn_format);
-	args.data[1].ToUnifiedFormat(args.size(), sql_format);
+	args.data[0].ToUnifiedFormat(conn_format);
+	args.data[1].ToUnifiedFormat(sql_format);
 
 	auto conn_data = UnifiedVectorFormat::GetData<string_t>(conn_format);
 	auto sql_data = UnifiedVectorFormat::GetData<string_t>(sql_format);
 
 	result.SetVectorType(VectorType::FLAT_VECTOR);
-	auto result_data = FlatVector::GetData<string_t>(result);
-	auto &result_validity = FlatVector::Validity(result);
+	auto result_data = FlatVector::GetDataMutable<string_t>(result);
+	auto &result_validity = FlatVector::ValidityMutable(result);
 
 	for (idx_t row_idx = 0; row_idx < args.size(); row_idx++) {
 		auto conn_idx = conn_format.sel->get_index(row_idx);
@@ -206,8 +206,13 @@ void RegisterOracleFunctions(ExtensionLoader &loader) {
 	oracle_scan_func.filter_pushdown = false;
 	oracle_scan_func.pushdown_complex_filter = OraclePushdownComplexFilter;
 	oracle_scan_func.projection_pushdown = true;
-	oracle_scan_func.named_parameters["as_of_scn"] = LogicalType::UBIGINT;
-	oracle_scan_func.named_parameters["as_of_timestamp"] = LogicalType::VARCHAR;
+	oracle_scan_func.get_bind_info = OracleGetBindInfo;
+	oracle_scan_func.get_table_entry = OracleGetTableEntry;
+	oracle_scan_func.cardinality = OracleCardinality;
+	oracle_scan_func.to_string = OracleToString;
+	oracle_scan_func.GetSignature().WithTypedKwargs("options", [](TypedKwargs &options) {
+		options.Add("as_of_scn", LogicalType::UBIGINT).Add("as_of_timestamp", LogicalType::VARCHAR);
+	});
 	loader.RegisterFunction(oracle_scan_func);
 
 	auto oracle_query_func = TableFunction("oracle_query", {LogicalType::VARCHAR, LogicalType::VARCHAR},
@@ -215,36 +220,42 @@ void RegisterOracleFunctions(ExtensionLoader &loader) {
 	oracle_query_func.filter_pushdown = false;
 	oracle_query_func.pushdown_complex_filter = OraclePushdownComplexFilter;
 	oracle_query_func.projection_pushdown = true;
+	oracle_query_func.get_bind_info = OracleGetBindInfo;
+	oracle_query_func.get_table_entry = OracleGetTableEntry;
+	oracle_query_func.cardinality = OracleCardinality;
+	oracle_query_func.to_string = OracleToString;
 	loader.RegisterFunction(oracle_query_func);
 
 	auto clear_cache_func = ScalarFunction("oracle_clear_cache", {}, LogicalType::VARCHAR, OracleClearCache);
-	clear_cache_func.stability = FunctionStability::VOLATILE;
+	clear_cache_func.SetVolatile();
 	loader.RegisterFunction(clear_cache_func);
 
 	auto debug_reset_func =
 	    ScalarFunction("oracle_debug_reset_stats", {}, LogicalType::VARCHAR, OracleDebugResetStatsFunction);
-	debug_reset_func.stability = FunctionStability::VOLATILE;
+	debug_reset_func.SetVolatile();
 	loader.RegisterFunction(debug_reset_func);
 
 	auto debug_counter_func = ScalarFunction("oracle_debug_counter", {LogicalType::VARCHAR}, LogicalType::UBIGINT,
 	                                         OracleDebugCounterFunction);
-	debug_counter_func.stability = FunctionStability::VOLATILE;
+	debug_counter_func.SetVolatile();
 	loader.RegisterFunction(debug_counter_func);
 
 	auto debug_last_query_func =
 	    ScalarFunction("oracle_debug_last_query", {}, LogicalType::VARCHAR, OracleDebugLastQueryFunction);
-	debug_last_query_func.stability = FunctionStability::VOLATILE;
+	debug_last_query_func.SetVolatile();
 	loader.RegisterFunction(debug_last_query_func);
 
 	auto debug_partition_metadata_func = ScalarFunction(
 	    "oracle_debug_partition_metadata", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
 	    LogicalType::VARCHAR, OracleDebugPartitionMetadataFunction);
-	debug_partition_metadata_func.stability = FunctionStability::VOLATILE;
+	debug_partition_metadata_func.SetVolatile();
+	debug_partition_metadata_func.SetFallible();
 	loader.RegisterFunction(debug_partition_metadata_func);
 
 	auto oracle_execute_func = ScalarFunction("oracle_execute", {LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                                          LogicalType::VARCHAR, OracleExecuteFunction);
-	oracle_execute_func.stability = FunctionStability::VOLATILE;
+	oracle_execute_func.SetVolatile();
+	oracle_execute_func.SetFallible();
 	loader.RegisterFunction(oracle_execute_func);
 }
 

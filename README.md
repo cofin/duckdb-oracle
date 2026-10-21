@@ -8,15 +8,20 @@ This extension allows DuckDB to directly read from and write to Oracle databases
 
 **1. Install & Load**
 
-> **Note**: This extension is currently **unsigned** and links dynamically against the Oracle Instant Client (OCI) runtime library (`oci.dll` on Windows, `libclntsh.so` on Linux, `libclntsh.dylib` on macOS). Because it depends on Oracle's proprietary runtime libraries, it is distributed via this repository rather than the DuckDB Community Extensions repository (`FROM community`). You must install **Oracle Instant Client Basic** (`23ai` or `19c`/`21c`), ensure its directory is on your library search path (`PATH` on Windows, `LD_LIBRARY_PATH` or `ldconfig` on Linux, `DYLD_LIBRARY_PATH` on macOS), and start DuckDB with `-unsigned`.
+> **Note**: `duckdb-oracle` resolves the Oracle Instant Client runtime library (`libclntsh.so` on Linux, `libclntsh.dylib` on macOS, `oci.dll` on Windows) **lazily at connection time** (`ATTACH`, `oracle_scan`, `oracle_query`, `oracle_execute`). Installing and loading the extension (`LOAD oracle;`) requires **no** Oracle client libraries installed, and the extension is compatible with **Oracle Instant Client Basic 19c, 21c, or 23ai** (set `OCI_LIB_DIR`, `ORACLE_HOME`, or add the Instant Client directory to `LD_LIBRARY_PATH` / `DYLD_LIBRARY_PATH` / `PATH` before opening a connection).
 >
-> **Supported DuckDB version**: v1.5.6 — see [Compatibility Matrix](docs/COMPATIBILITY.md) for details.
+> **Supported DuckDB version**: v2.0.0 — see [Compatibility Matrix](docs/COMPATIBILITY.md) for details.
 
-```bash
-./duckdb -unsigned
+**Option A: DuckDB Community Extensions (Signed)**
+
+```sql
+INSTALL oracle FROM community;
+LOAD oracle;
 ```
 
-**Option A: Remote Custom Extension Repository**
+**Option B: Remote Custom Extension Repository (Unsigned)**
+
+Start DuckDB with `duckdb -unsigned`:
 
 ```sql
 -- Configure custom repository (GitHub Pages or raw gh-pages fallback)
@@ -28,7 +33,7 @@ INSTALL oracle;
 LOAD oracle;
 ```
 
-**Option B: Offline / Local Installation (GitHub Releases)**
+**Option C: Offline / Local Installation (GitHub Releases)**
 
 DuckDB derives both the installed extension name and the C++ initialization entrypoint (`oracle_duckdb_cpp_init`) from the filename stem before the first `.`. When installing from a local file downloaded from [GitHub Releases](https://github.com/cofin/duckdb-oracle/releases), extract `oracle.duckdb_extension` from the platform archive (`oracle-windows_amd64.zip`, `oracle-linux_amd64.tar.gz`, `oracle-linux_arm64.tar.gz`, or `oracle-osx_arm64.tar.gz`)—or rename `oracle-<platform>.duckdb_extension` to `oracle.duckdb_extension`—before running `INSTALL`:
 
@@ -143,17 +148,16 @@ ATTACH '' AS ora (TYPE oracle, SECRET adb_prod);
 
 ## Development
 
-**Requirements**: CMake 3.10+, C++17, Oracle Instant Client (Basic + SDK).
+**Requirements**: CMake 3.15+, C++17 compiler. No Oracle Instant Client SDK is required to compile the extension or run unit tests; Oracle Instant Client Basic (19c, 21c, or 23ai) is only needed at runtime when running live database integration tests.
 
 ```bash
-# Set ORACLE_HOME to your Instant Client directory
-export ORACLE_HOME=/opt/oracle/instantclient_23_26
+# Build (no Oracle SDK required)
+make release
 
-# Build
-make
-
-# Run Tests (Unit + Integration)
+# Run Unit Tests (no Oracle DB or Instant Client required)
 make test-unit
+
+# Run Integration Tests (installs Linux Instant Client Basic & launches Oracle container)
 make integration
 ```
 

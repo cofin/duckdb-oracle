@@ -33,7 +33,7 @@ public:
 	                  string oracle_schema_p = "")
 	    : SchemaCatalogEntry(catalog, info), state(std::move(state_p)), oracle_schema(std::move(oracle_schema_p)) {
 		if (oracle_schema.empty()) {
-			oracle_schema = info.schema;
+			oracle_schema = info.SchemaName().GetIdentifierName();
 		}
 	}
 
@@ -103,7 +103,7 @@ public:
 			auto score = StringUtil::SimilarityRating(candidate, target_name);
 			if (score > result.score) {
 				result.score = score;
-				result.name = candidate;
+				result.name = Identifier(candidate);
 			}
 		};
 		try {
@@ -115,7 +115,7 @@ public:
 		}
 		lock_guard<std::mutex> guard(table_lock);
 		for (auto &entry : tables) {
-			consider_candidate(entry.second->name);
+			consider_candidate(entry.second->name.GetIdentifierName());
 		}
 		return result;
 	}
@@ -249,7 +249,7 @@ private:
 			return nullptr;
 		}
 		auto *ptr = created.get();
-		tables[created->name] = std::move(created);
+		tables[created->name.GetIdentifierName()] = std::move(created);
 		return ptr;
 	}
 
@@ -287,14 +287,14 @@ void OracleCatalog::Initialize(bool load_builtin) {
 	state->DetectOracleVersion();
 }
 
-string OracleCatalog::GetDefaultSchema() const {
+optional<Identifier> OracleCatalog::GetDefaultSchema() const {
 	if (state && !state->settings.use_current_schema) {
 		auto current = state->GetCurrentSchema();
 		if (!current.empty()) {
-			return current;
+			return Identifier(current);
 		}
 	}
-	return DEFAULT_SCHEMA;
+	return Identifier(DEFAULT_SCHEMA);
 }
 
 void OracleCatalog::SyncCacheGenerationLocked() {
@@ -324,12 +324,12 @@ optional_ptr<SchemaCatalogEntry> OracleCatalog::GetOrCreateSchemaLocked(const st
 		}
 		if (!current.empty()) {
 			CreateSchemaInfo info;
-			info.schema = DEFAULT_SCHEMA;
+			info.SetSchema(Identifier(DEFAULT_SCHEMA));
 			info.internal = false;
 			info.on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
 			auto schema_entry = make_uniq<OracleSchemaEntry>(*this, info, state, current);
 			auto *ptr = schema_entry.get();
-			schemas[info.schema] = std::move(schema_entry);
+			schemas[DEFAULT_SCHEMA] = std::move(schema_entry);
 			return ptr;
 		}
 	}
@@ -348,12 +348,12 @@ optional_ptr<SchemaCatalogEntry> OracleCatalog::GetOrCreateSchemaLocked(const st
 	}
 
 	CreateSchemaInfo info;
-	info.schema = schema_name;
+	info.SetSchema(Identifier(schema_name));
 	info.internal = false;
 	info.on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
 	auto schema_entry = make_uniq<OracleSchemaEntry>(*this, info, state, schema_name);
 	auto *ptr = schema_entry.get();
-	schemas[info.schema] = std::move(schema_entry);
+	schemas[schema_name] = std::move(schema_entry);
 	return ptr;
 }
 
@@ -460,7 +460,7 @@ PhysicalOperator &OracleCatalog::PlanInsert(ClientContext &context, PhysicalPlan
 	vector<string> col_names;
 	vector<LogicalType> col_types;
 	for (auto &col : op.table.GetColumns().Physical()) {
-		col_names.push_back(col.Name());
+		col_names.push_back(col.Name().GetIdentifierName());
 		col_types.push_back(col.Type());
 	}
 

@@ -11,10 +11,6 @@ public:
 	                     string connection_string, string wallet_path, OracleSettings settings,
 	                     vector<string> column_names, vector<LogicalType> column_types, idx_t estimated_cardinality);
 
-	PhysicalOracleInsert(PhysicalPlan &physical_plan, vector<LogicalType> types, string table_name,
-	                     string connection_string, string wallet_path, OracleSettings settings,
-	                     vector<string> column_names, vector<LogicalType> column_types, idx_t estimated_cardinality);
-
 	// Sink interface
 	unique_ptr<GlobalSinkState> GetGlobalSinkState(ClientContext &context) const override;
 	unique_ptr<LocalSinkState> GetLocalSinkState(ExecutionContext &context) const override;

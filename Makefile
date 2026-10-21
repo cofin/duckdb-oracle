@@ -18,19 +18,13 @@ ORACLE_IMAGE ?= gvenzl/oracle-free:23-slim
 
 .PHONY: configure_ci configure_oci tidy-check integration help clean-all ensure-libaio lint bump-version bump-prerelease bump-duckdb test-unit
 
-# Detect OS for Oracle Instant Client setup
+# Detect OS for Oracle Instant Client runtime setup (integration tests only)
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Linux)
     OCI_SETUP_SCRIPT := ./scripts/setup_oci_linux.sh
 endif
-ifeq ($(UNAME_S),Darwin)
-    OCI_SETUP_SCRIPT := ./scripts/setup_oci_macos.sh
-endif
-ifeq ($(OS),Windows_NT)
-    OCI_SETUP_SCRIPT := powershell -ExecutionPolicy Bypass -File ./scripts/setup_oci_windows.ps1
-endif
 
-# Helper function to ensure libaio is available (needed for Oracle Instant Client)
+# Helper function to ensure libaio is available (needed for Oracle Instant Client runtime in integration tests)
 define ensure_libaio
 	@SUDO=""; \
 	if [ "$$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then \
@@ -59,44 +53,26 @@ define ensure_libaio
 	fi
 endef
 
-# Extend ci-tools' no-op configure_ci with Oracle Instant Client setup as a
-# PREREQUISITE rather than a recipe override, so make does not warn about
-# "overriding recipe for target 'configure_ci'".
-configure_ci: configure_oci
 configure_oci:
-	@echo "Running Oracle Instant Client setup..."
+	@echo "Running Oracle Instant Client runtime setup..."
 	$(OCI_SETUP_SCRIPT)
 ifeq ($(UNAME_S),Linux)
 	$(call ensure_libaio)
 endif
-	@echo "configure_ci complete"
+	@echo "configure_oci complete"
 
-# Run only unit tests (integration tests require an Oracle container) and ensure
-# libaio first. Scope ci-tools' own test_release_internal recipe to unit tests via
-# TESTS_BASE_DIRECTORY (a recipe variable, expanded at run time) and add libaio as
-# a prerequisite — no recipe override, so make does not warn.
+# Run only unit tests (integration tests require an Oracle container).
+# Unit tests and builds require zero external OCI SDK or runtime libraries.
 TESTS_BASE_DIRECTORY = test/unit_tests/
 test-unit: test
-test_release_internal: ensure-libaio
-test_debug_internal: ensure-libaio
-test_reldebug_internal: ensure-libaio
 ensure-libaio:
 ifeq ($(UNAME_S),Linux)
 	$(call ensure_libaio)
 endif
 
-# ci-tools' own tidy-check recipe is identical to what we need; instead of
-# overriding it (which warned), install the SDK via the configure_oci
-# prerequisite and export ORACLE_HOME/LD_LIBRARY_PATH (the two vars env.sh sets)
-# scoped to this target so the cmake/clang-tidy steps see the OCI headers.
-tidy-check: export ORACLE_HOME = $(shell . $(PROJ_DIR)oracle_sdk/env.sh 2>/dev/null; echo "$$ORACLE_HOME")
-tidy-check: export LD_LIBRARY_PATH = $(shell . $(PROJ_DIR)oracle_sdk/env.sh 2>/dev/null; echo "$$LD_LIBRARY_PATH")
-tidy-check: configure_oci
-
-
-# Build (release) then run integration tests against containerized Oracle.
+# Build (release), install Instant Client runtime, then run integration tests against containerized Oracle.
 # Runs both unit tests (test/unit_tests/) and integration tests (test/integration_tests/)
-integration: release
+integration: configure_oci release
 	SKIP_BUILD=1 ORACLE_IMAGE=$(ORACLE_IMAGE) ./scripts/test_integration.sh
 
 lint: format-check tidy-check
@@ -139,4 +115,4 @@ help:
 	@printf "  clean-all        Remove all build directories to allow switching generators (e.g., Ninja)\n"
 
 clean-all:
-	rm -rf build/release build/debug build/relassert build/reldebug build/ninja-release build/extension_configuration
+	rm -rf build/release build/debug build/relassert build/reldebug build/ninja-release build/extension_configuration build/tidy

@@ -79,8 +79,6 @@ public:
 	// On-demand table loading
 	bool GetObjectName(const string &schema, const string &object, const string &object_type, string &out_owner,
 	                   string &out_name);
-	string GetObjectName(const string &schema, const string &object_name, const string &object_types);
-	string GetObjectName(const string &schema, const string &object_name);
 	string GetRealSchemaName(const string &name);
 
 	const string connection_string;

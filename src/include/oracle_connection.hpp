@@ -20,7 +20,6 @@ public:
 	~OracleConnection();
 
 	void Connect(const std::string &connection_string, const std::string &wallet_path, const OracleSettings &settings);
-	bool IsConnected() const;
 
 	//! Execute a query and return all rows as strings (used for metadata discovery).
 	OracleResult Query(const std::string &query);

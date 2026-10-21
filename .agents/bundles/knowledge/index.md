@@ -5,6 +5,9 @@
 
 ## Topic Index
 
+### Workflow
+- [Project Workflow](workflow.md) — Canonical repository commands, direct-read continuity, state operations, and verification strategies.
+
 ### Architecture
 - [Oracle OCI Subsystem Architecture](architecture/oracle-oci-subsystem.md) — Runtime topology, handle ownership hierarchy, connection caching, and Instant Client integration.
 - [DuckDB Extension Architecture & Subsystems](architecture/duckdb-extension-architecture.md) — Extension lifecycle, catalog integration, storage extension hooks, and secret management.

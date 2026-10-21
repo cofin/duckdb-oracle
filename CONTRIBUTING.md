@@ -6,11 +6,11 @@ Thank you for your interest in contributing to the DuckDB Oracle Extension! We w
 
 ### Prerequisites
 
-- **CMake**: 3.10 or newer
+- **CMake**: 3.15 or newer
 - **C++ Compiler**: C++17 compatible (GCC, Clang, MSVC)
 - **Python**: 3.11 or newer
-- **Oracle Instant Client**: Basic and SDK packages
-- **DuckDB**: The repository includes DuckDB as a submodule
+- **DuckDB**: The repository includes DuckDB (`v2.0.0`) as a submodule
+- **Oracle Instant Client Basic** *(optional, for live integration tests only)*: Building the extension and running unit tests require **zero** external Oracle SDK headers or libraries (`libclntsh` is loaded lazily via `dlopen`/`LoadLibraryA` when opening a live Oracle connection).
 
 ### Setup Steps
 
@@ -20,24 +20,14 @@ Thank you for your interest in contributing to the DuckDB Oracle Extension! We w
     cd duckdb-oracle
     ```
 
-2.  **Install Oracle Instant Client**:
-    -   **Linux**: Run `./scripts/setup_oci_linux.sh`
-    -   **macOS (ARM64)**: Run `./scripts/setup_oci_macos.sh`
-    -   **Windows**: Run `powershell ./scripts/setup_oci_windows.ps1`
-
-    The scripts will install the client to `./oracle_sdk` and print the environment variables you need to export.
-
-3.  **Export Environment Variables**:
-    ```bash
-    export ORACLE_HOME=$(pwd)/oracle_sdk/instantclient_23_26 # Adjust version as needed
-    export LD_LIBRARY_PATH=$ORACLE_HOME:$LD_LIBRARY_PATH    # Linux
-    export DYLD_LIBRARY_PATH=$ORACLE_HOME:$DYLD_LIBRARY_PATH # macOS
-    ```
-
-4.  **Build the Extension**:
+2.  **Build the Extension** (no Oracle Instant Client needed):
     ```bash
     make release
     ```
+
+3.  *(Optional)* **Install Oracle Instant Client Basic for Live Integration Tests**:
+    -   **Linux**: Run `./scripts/setup_oci_linux.sh` (or `make configure_oci`), which downloads Oracle Instant Client Basic to `./oracle_sdk`.
+    -   **macOS / Windows**: Download Oracle Instant Client Basic (19c, 21c, or 23ai) and set `OCI_LIB_DIR` or `ORACLE_HOME` (or add to `DYLD_LIBRARY_PATH` / `PATH`).
 
 ## Running Tests
 

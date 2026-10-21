@@ -99,19 +99,15 @@ jobs:
           - os: ubuntu-24.04
             arch: x86_64
             platform: linux
-            setup_script: scripts/setup_oci_linux.sh
           - os: ubuntu-24.04-arm
             arch: aarch64
             platform: linux
-            setup_script: scripts/setup_oci_linux.sh
           - os: macos-14
             arch: arm64
             platform: macos
-            setup_script: scripts/setup_oci_macos.sh
           - os: windows-latest
             arch: x86_64
             platform: windows
-            setup_script: scripts/setup_oci_windows.ps1
 
     steps:
       - name: Checkout
@@ -125,7 +121,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libaio1t64 unzip ninja-build || sudo apt-get install -y libaio1 unzip ninja-build
+          sudo apt-get install -y ninja-build
 
       - name: Install Dependencies (macOS)
         if: runner.os == 'macOS'
@@ -136,18 +132,6 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           choco install ninja -y
-
-      - name: Install Oracle Instant Client
-        shell: bash
-        env:
-          RUNNER_OS_NAME: ${{ runner.os }}
-          SETUP_SCRIPT: ${{ matrix.setup_script }}
-        run: |
-          if [ "$RUNNER_OS_NAME" == "Windows" ]; then
-            pwsh -ExecutionPolicy Bypass -File "$SETUP_SCRIPT"
-          else
-            "./$SETUP_SCRIPT"
-          fi
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -187,7 +171,7 @@ jobs:
           VCPKG_OVERLAY_PORTS: ${{ github.workspace }}/extension-ci-tools/vcpkg_ports
           VCPKG_OVERLAY_TRIPLETS: ${{ github.workspace }}/extension-ci-tools/toolchains
         with:
-          vcpkgGitCommitId: 84bab45d415d22042bd0b9081aea57f362da3f35
+          vcpkgGitCommitId: cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3
           vcpkgGitURL: https://github.com/microsoft/vcpkg.git
           vcpkgDirectory: ${{ env.VCPKG_WINDOWS_ROOT }}
 
@@ -230,7 +214,7 @@ jobs:
           RUNNER_OS_NAME: ${{ runner.os }}
         run: |
           # Verify extension installs and loads cleanly via local INSTALL + LOAD
-          EXT_STATUS=$(./build/release/duckdb -unsigned -csv -noheader -c "INSTALL 'build/release/extension/oracle/oracle.duckdb_extension'; LOAD oracle; SELECT installed, loaded FROM duckdb_extensions() WHERE extension_name = 'oracle';" | tr -d '\r')
+          EXT_STATUS=$(./build/release/duckdb -unsigned -light-mode -csv -noheader -c "INSTALL 'build/release/extension/oracle/oracle.duckdb_extension'; LOAD oracle; SELECT installed, loaded FROM duckdb_extensions() WHERE extension_name = 'oracle';" | tr -d '\r')
           echo "Extension status: $EXT_STATUS"
           if [ "$EXT_STATUS" != "true,true" ]; then
             echo "::error::Failed to install/load oracle extension (status: $EXT_STATUS)"
