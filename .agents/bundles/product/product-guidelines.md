@@ -1,6 +1,9 @@
 ---
 type: Guide
 title: Product Guidelines
+description: Architectural, compatibility, performance, and security invariants for the DuckDB Oracle extension.
+tags: [duckdb, oracle, oci, guidelines, architecture]
+status: stable
 ---
 
 # Product Guidelines
