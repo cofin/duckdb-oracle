@@ -6,6 +6,7 @@
 #include "oracle_type_conversion.hpp"
 #include "oracle_type_registry.hpp"
 #include "oracle_utils.hpp"
+#include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/limits.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/timestamp.hpp"
@@ -81,6 +82,8 @@ unique_ptr<FunctionData> OracleBindData::Copy() const {
 	copy->original_names = original_names;
 	copy->converted_select_exprs = converted_select_exprs;
 	copy->settings = settings;
+	copy->table_entry = table_entry;
+	copy->estimated_rows = estimated_rows;
 	return copy;
 }
 
@@ -88,6 +91,48 @@ bool OracleBindData::Equals(const FunctionData &other) const {
 	const auto &other_bind_data = other.Cast<OracleBindData>();
 	return query == other_bind_data.query && connection_string == other_bind_data.connection_string &&
 	       wallet_path == other_bind_data.wallet_path;
+}
+
+BindInfo OracleGetBindInfo(TableFunctionGetBindInfoInput &input) {
+	if (input.bind_data) {
+		auto &oracle_bind = input.bind_data->Cast<OracleBindData>();
+		if (oracle_bind.table_entry) {
+			return BindInfo(ScanType::TABLE);
+		}
+	}
+	return BindInfo(ScanType::EXTERNAL);
+}
+
+optional_ptr<TableCatalogEntry> OracleGetTableEntry(optional_ptr<const FunctionData> bind_data) {
+	if (bind_data) {
+		auto &oracle_bind = bind_data->Cast<OracleBindData>();
+		return oracle_bind.table_entry;
+	}
+	return nullptr;
+}
+
+unique_ptr<NodeStatistics> OracleCardinality(ClientContext &, const FunctionData *bind_data) {
+	if (bind_data) {
+		const auto &oracle_bind = bind_data->Cast<OracleBindData>();
+		if (oracle_bind.estimated_rows.IsValid() && oracle_bind.estimated_rows.GetIndex() > 0) {
+			return make_uniq<NodeStatistics>(oracle_bind.estimated_rows.GetIndex());
+		}
+	}
+	return nullptr;
+}
+
+InsertionOrderPreservingMap<string> OracleToString(TableFunctionToStringInput &input) {
+	InsertionOrderPreservingMap<string> result;
+	if (input.bind_data) {
+		const auto &bind = input.bind_data->Cast<OracleBindData>();
+		if (!bind.direct_from_sql.empty()) {
+			result["Table"] = bind.direct_from_sql;
+		}
+		if (!bind.query.empty()) {
+			result["Query"] = bind.query;
+		}
+	}
+	return result;
 }
 
 unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, const string &connection_string,
@@ -557,9 +602,21 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &, TableFunc
 		state->defines.assign(active_count, nullptr);
 		state->indicators.resize(active_count);
 		state->return_lens.resize(active_count);
+		state->active_col_names.resize(active_count);
+		state->active_oracle_types.resize(active_count);
 
 		for (idx_t active_idx = 0; active_idx < active_count; active_idx++) {
 			idx_t bind_col_idx = state->active_bind_cols[active_idx];
+			state->active_col_names[active_idx] = bind_col_idx < bind.column_names.size()
+			                                          ? bind.column_names[bind_col_idx]
+			                                          : ("#" + std::to_string(bind_col_idx));
+			state->active_oracle_types[active_idx] =
+			    bind_col_idx < bind.oracle_type_names.size()
+			        ? bind.oracle_type_names[bind_col_idx]
+			        : (bind_col_idx < bind.oci_types.size()
+			               ? StringUtil::Format("OCI type %u", static_cast<unsigned>(bind.oci_types[bind_col_idx]))
+			               : "unknown OCI type");
+
 			ub4 size = 4000;
 			if (bind_col_idx < bind.oci_sizes.size() && bind.oci_sizes[bind_col_idx] > 0) {
 				if (bind.oci_sizes[bind_col_idx] >= NumericLimits<ub2>::Maximum()) {
@@ -616,7 +673,6 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 
 	auto ctx = gstate.conn_handle->Get();
 	sword status;
-	idx_t row_count = 0;
 
 	if (!gstate.executed) {
 		const auto &sql_to_execute = gstate.executed_query.empty() ? bind_data.query : gstate.executed_query;
@@ -643,13 +699,12 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 		fprintf(stderr, "[oracle] fetch status=%d rows=%u\n", status, static_cast<uint32_t>(rows_fetched));
 	}
 
-	for (idx_t r = 0; r < rows_fetched; r++) {
-		for (idx_t active_idx = 0; active_idx < gstate.active_bind_cols.size(); active_idx++) {
-			sb2 ind = gstate.indicators[active_idx][r];
+	for (idx_t active_idx = 0; active_idx < gstate.active_bind_cols.size(); active_idx++) {
+		const auto &inds = gstate.indicators[active_idx];
+		for (idx_t r = 0; r < rows_fetched; r++) {
+			sb2 ind = inds[r];
 			if (ind == -2 || ind > 0) {
-				idx_t bind_col_idx = gstate.active_bind_cols[active_idx];
-				auto col_name = bind_col_idx < bind_data.column_names.size() ? bind_data.column_names[bind_col_idx]
-				                                                             : ("#" + std::to_string(bind_col_idx));
+				const auto &col_name = gstate.active_col_names[active_idx];
 				throw IOException("Oracle value for column \"%s\" exceeds the bounded fetch buffer", col_name.c_str());
 			}
 		}
@@ -664,42 +719,37 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 		return;
 	}
 
-	for (row_count = 0; row_count < rows_fetched; row_count++) {
-		for (idx_t col_idx = 0; col_idx < output.ColumnCount(); col_idx++) {
-			if (col_idx >= gstate.output_to_active_idx.size()) {
+	const auto &output_types = output.GetTypes();
+	for (idx_t col_idx = 0; col_idx < output.ColumnCount(); col_idx++) {
+		if (col_idx >= gstate.output_to_active_idx.size()) {
+			continue;
+		}
+		idx_t active_idx = gstate.output_to_active_idx[col_idx];
+		if (active_idx == DConstants::INVALID_INDEX || active_idx >= gstate.indicators.size()) {
+			continue;
+		}
+
+		auto &output_vector = output.data[col_idx];
+		const auto &target_type = output_types[col_idx];
+		const auto &inds = gstate.indicators[active_idx];
+		const auto &lens = gstate.return_lens[active_idx];
+		const char *col_buf = gstate.buffers[active_idx].data();
+		ub4 element_size = static_cast<ub4>(gstate.buffers[active_idx].size() / gstate.fetch_size);
+		const auto &column_name = gstate.active_col_names[active_idx];
+		const auto &oracle_type = gstate.active_oracle_types[active_idx];
+
+		for (idx_t row_idx = 0; row_idx < rows_fetched; row_idx++) {
+			if (inds[row_idx] == -1) {
+				FlatVector::SetNull(output_vector, row_idx, true);
 				continue;
 			}
-			idx_t active_idx = gstate.output_to_active_idx[col_idx];
-			if (active_idx == DConstants::INVALID_INDEX || active_idx >= gstate.indicators.size()) {
-				continue;
-			}
-			idx_t bind_col_idx =
-			    active_idx < gstate.active_bind_cols.size() ? gstate.active_bind_cols[active_idx] : active_idx;
-
-			if (gstate.indicators[active_idx][row_count] == -1) {
-				FlatVector::SetNull(output.data[col_idx], row_count, true);
-				continue;
-			}
-
-			ub4 element_size = gstate.buffers[active_idx].size() / gstate.fetch_size;
-			char *ptr = gstate.buffers[active_idx].data() + (row_count * element_size);
-			ub2 actual_len = gstate.return_lens[active_idx][row_count];
-
-			auto column_name = bind_col_idx < bind_data.column_names.size() ? bind_data.column_names[bind_col_idx]
-			                                                                : ("#" + std::to_string(bind_col_idx));
-			auto oracle_type =
-			    bind_col_idx < bind_data.oracle_type_names.size()
-			        ? bind_data.oracle_type_names[bind_col_idx]
-			        : (bind_col_idx < bind_data.oci_types.size()
-			               ? StringUtil::Format("OCI type %u", static_cast<unsigned>(bind_data.oci_types[bind_col_idx]))
-			               : "unknown OCI type");
-			OracleConversionContext conversion_context {column_name, oracle_type, output.GetTypes()[col_idx],
-			                                            row_count};
-			SetOracleOutputValue(context, output.data[col_idx], row_count, ptr, actual_len, output.GetTypes()[col_idx],
-			                     conversion_context);
+			const char *ptr = col_buf + (row_idx * element_size);
+			ub2 actual_len = lens[row_idx];
+			OracleConversionContext conversion_context {column_name, oracle_type, target_type, row_idx};
+			SetOracleOutputValue(context, output_vector, row_idx, ptr, actual_len, target_type, conversion_context);
 		}
 	}
-	output.SetCardinality(row_count);
+	output.SetCardinality(rows_fetched);
 	if (status == OCI_NO_DATA) {
 		gstate.finished = true;
 	}

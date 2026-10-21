@@ -28,7 +28,6 @@ void OracleDebugRecordWriteExecute(idx_t rows);
 void OracleDebugRecordWriteBufferBytes(idx_t bytes);
 void OracleDebugRecordQuery(const string &query);
 void OracleDebugRecordSettings(const OracleSettings &settings);
-OracleDebugStatsSnapshot OracleDebugGetStats();
 idx_t OracleDebugGetCounter(const string &name);
 string OracleDebugGetLastQuery();
 

@@ -495,24 +495,6 @@ bool OracleCatalogState::GetObjectName(const string &schema, const string &objec
 	return false;
 }
 
-string OracleCatalogState::GetObjectName(const string &schema, const string &object_name, const string &object_types) {
-	string out_owner;
-	string out_name;
-	if (GetObjectName(schema, object_name, object_types, out_owner, out_name)) {
-		return out_name;
-	}
-	return "";
-}
-
-string OracleCatalogState::GetObjectName(const string &schema, const string &object_name) {
-	string out_owner;
-	string out_name;
-	if (GetObjectName(schema, object_name, "TABLE,VIEW,MATERIALIZED VIEW", out_owner, out_name)) {
-		return out_name;
-	}
-	return "";
-}
-
 string OracleCatalogState::GetRealSchemaName(const string &name) {
 	auto query = "SELECT username FROM all_users "
 	             "WHERE (username = :1 OR username = UPPER(:2)) "

@@ -206,6 +206,10 @@ void RegisterOracleFunctions(ExtensionLoader &loader) {
 	oracle_scan_func.filter_pushdown = false;
 	oracle_scan_func.pushdown_complex_filter = OraclePushdownComplexFilter;
 	oracle_scan_func.projection_pushdown = true;
+	oracle_scan_func.get_bind_info = OracleGetBindInfo;
+	oracle_scan_func.get_table_entry = OracleGetTableEntry;
+	oracle_scan_func.cardinality = OracleCardinality;
+	oracle_scan_func.to_string = OracleToString;
 	oracle_scan_func.GetSignature().WithTypedKwargs("options", [](TypedKwargs &options) {
 		options.Add("as_of_scn", LogicalType::UBIGINT).Add("as_of_timestamp", LogicalType::VARCHAR);
 	});
@@ -216,6 +220,10 @@ void RegisterOracleFunctions(ExtensionLoader &loader) {
 	oracle_query_func.filter_pushdown = false;
 	oracle_query_func.pushdown_complex_filter = OraclePushdownComplexFilter;
 	oracle_query_func.projection_pushdown = true;
+	oracle_query_func.get_bind_info = OracleGetBindInfo;
+	oracle_query_func.get_table_entry = OracleGetTableEntry;
+	oracle_query_func.cardinality = OracleCardinality;
+	oracle_query_func.to_string = OracleToString;
 	loader.RegisterFunction(oracle_query_func);
 
 	auto clear_cache_func = ScalarFunction("oracle_clear_cache", {}, LogicalType::VARCHAR, OracleClearCache);

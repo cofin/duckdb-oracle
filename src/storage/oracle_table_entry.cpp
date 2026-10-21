@@ -70,15 +70,17 @@ static unordered_map<string, string> LoadVectorColumnTypes(OracleCatalogState &s
 }
 
 static void LoadColumns(OracleCatalogState &state, string &schema, string &table, vector<ColumnDefinition> &columns,
-                        vector<OracleColumnMetadata> &metadata, vector<idx_t> &not_null_columns) {
-	auto query = "SELECT owner, table_name, column_name, data_type, data_length, data_precision, data_scale, nullable, "
-	             "data_type_owner, char_used, char_length "
-	             "FROM all_tab_columns "
-	             "WHERE (owner = :1 OR owner = UPPER(:2)) "
-	             "AND (table_name = :3 OR table_name = UPPER(:4)) "
-	             "ORDER BY CASE WHEN owner = :5 THEN 0 WHEN owner = UPPER(:6) THEN 1 ELSE 2 END, "
-	             "CASE WHEN table_name = :7 THEN 0 WHEN table_name = UPPER(:8) THEN 1 ELSE 2 END, "
-	             "owner, table_name, column_id";
+                        vector<OracleColumnMetadata> &metadata, vector<idx_t> &not_null_columns,
+                        optional_idx &out_estimated_rows) {
+	auto query = "SELECT c.owner, c.table_name, c.column_name, c.data_type, c.data_length, c.data_precision, "
+	             "c.data_scale, c.nullable, c.data_type_owner, c.char_used, c.char_length, t.num_rows "
+	             "FROM all_tab_columns c "
+	             "LEFT JOIN all_tables t ON t.owner = c.owner AND t.table_name = c.table_name "
+	             "WHERE (c.owner = :1 OR c.owner = UPPER(:2)) "
+	             "AND (c.table_name = :3 OR c.table_name = UPPER(:4)) "
+	             "ORDER BY CASE WHEN c.owner = :5 THEN 0 WHEN c.owner = UPPER(:6) THEN 1 ELSE 2 END, "
+	             "CASE WHEN c.table_name = :7 THEN 0 WHEN c.table_name = UPPER(:8) THEN 1 ELSE 2 END, "
+	             "c.owner, c.table_name, c.column_id";
 	auto result =
 	    state.ExecuteMetadataQueryWithStringBinds(query, {schema, schema, table, table, schema, schema, table, table});
 	if (result.rows.empty()) {
@@ -89,6 +91,12 @@ static void LoadColumns(OracleCatalogState &state, string &schema, string &table
 	const string best_table = result.rows[0][1];
 	schema = best_owner;
 	table = best_table;
+	if (result.rows[0].size() >= 12) {
+		idx_t parsed_rows = 0;
+		if (TryParseOracleMetadataIndex(result.rows[0][11], parsed_rows) && parsed_rows > 0) {
+			out_estimated_rows = parsed_rows;
+		}
+	}
 
 	bool has_spatial = false;
 	bool has_vector = false;
@@ -184,9 +192,11 @@ static void LoadColumns(OracleCatalogState &state, string &schema, string &table
 
 OracleTableEntry::OracleTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, unique_ptr<CreateTableInfo> info,
                                    shared_ptr<OracleCatalogState> state, const string &schema_name,
-                                   const string &table_name, vector<OracleColumnMetadata> metadata)
+                                   const string &table_name, vector<OracleColumnMetadata> metadata,
+                                   optional_idx estimated_rows_p)
     : TableCatalogEntry(catalog, schema, *info), columns(std::move(info->columns)), state(std::move(state)),
-      schema_name(schema_name), table_name(table_name), column_metadata(std::move(metadata)) {
+      schema_name(schema_name), table_name(table_name), column_metadata(std::move(metadata)),
+      estimated_rows(estimated_rows_p) {
 }
 
 unique_ptr<OracleTableEntry> OracleTableEntry::Create(Catalog &catalog, SchemaCatalogEntry &schema,
@@ -198,14 +208,15 @@ unique_ptr<OracleTableEntry> OracleTableEntry::Create(Catalog &catalog, SchemaCa
 	vector<ColumnDefinition> cols;
 	vector<OracleColumnMetadata> metadata;
 	vector<idx_t> not_null_columns;
-	LoadColumns(*state, resolved_schema, resolved_table, cols, metadata, not_null_columns);
+	optional_idx estimated_rows;
+	LoadColumns(*state, resolved_schema, resolved_table, cols, metadata, not_null_columns, estimated_rows);
 	if (cols.empty()) {
 		bool found = false;
 		auto syn = state->ResolveSynonym(schema_name, table_name, found);
 		if (found) {
 			resolved_schema = syn.first;
 			resolved_table = syn.second;
-			LoadColumns(*state, resolved_schema, resolved_table, cols, metadata, not_null_columns);
+			LoadColumns(*state, resolved_schema, resolved_table, cols, metadata, not_null_columns, estimated_rows);
 		}
 	}
 	if (cols.empty()) {
@@ -223,7 +234,7 @@ unique_ptr<OracleTableEntry> OracleTableEntry::Create(Catalog &catalog, SchemaCa
 	}
 	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
 	return make_uniq<OracleTableEntry>(catalog, schema, std::move(info), std::move(state), resolved_schema,
-	                                   resolved_table, std::move(metadata));
+	                                   resolved_table, std::move(metadata), estimated_rows);
 }
 
 TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) {
@@ -272,6 +283,8 @@ TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_p
 	    OracleBindInternal(context, state->connection_string, query, return_types, names, bind.release(), state.get());
 	auto &oracle_bind = bind_data->Cast<OracleBindData>();
 	oracle_bind.converted_select_exprs = std::move(select_exprs);
+	oracle_bind.table_entry = *this;
+	oracle_bind.estimated_rows = estimated_rows;
 
 	for (idx_t i = 0; i < column_metadata.size() && i < return_types.size(); i++) {
 		return_types[i] = column_metadata[i].decision.duckdb_type;
@@ -294,12 +307,19 @@ TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_p
 	tf.filter_pushdown = false;
 	tf.pushdown_complex_filter = OraclePushdownComplexFilter;
 	tf.projection_pushdown = true;
+	tf.get_bind_info = OracleGetBindInfo;
+	tf.get_table_entry = OracleGetTableEntry;
+	tf.cardinality = OracleCardinality;
+	tf.to_string = OracleToString;
 	tf.name = Identifier(table_name);
 	return tf;
 }
 
 TableStorageInfo OracleTableEntry::GetStorageInfo(ClientContext &) {
 	TableStorageInfo info;
+	if (estimated_rows.IsValid()) {
+		info.cardinality = estimated_rows.GetIndex();
+	}
 	return info;
 }
 

@@ -65,11 +65,6 @@ void OracleDebugRecordSettings(const OracleSettings &settings) {
 	stats.effective_metadata_result_limit = OracleEffectiveMetadataResultLimit(settings);
 }
 
-OracleDebugStatsSnapshot OracleDebugGetStats() {
-	lock_guard<std::mutex> guard(StatsLock());
-	return MutableStats();
-}
-
 idx_t OracleDebugGetCounter(const string &name) {
 	auto key = StringUtil::Lower(name);
 	lock_guard<std::mutex> guard(StatsLock());
@@ -111,7 +106,8 @@ idx_t OracleDebugGetCounter(const string &name) {
 }
 
 string OracleDebugGetLastQuery() {
-	return OracleDebugGetStats().last_query;
+	lock_guard<std::mutex> guard(StatsLock());
+	return MutableStats().last_query;
 }
 
 } // namespace duckdb

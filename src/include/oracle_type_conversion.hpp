@@ -8,9 +8,9 @@ namespace duckdb {
 
 //! Context included in read conversion errors so malformed Oracle values are actionable.
 struct OracleConversionContext {
-	string column_name;
-	string oracle_type;
-	LogicalType duckdb_type;
+	const string &column_name;
+	const string &oracle_type;
+	const LogicalType &duckdb_type;
 	idx_t row_index;
 };
 
