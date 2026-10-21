@@ -99,19 +99,15 @@ jobs:
           - os: ubuntu-24.04
             arch: x86_64
             platform: linux
-            setup_script: scripts/setup_oci_linux.sh
           - os: ubuntu-24.04-arm
             arch: aarch64
             platform: linux
-            setup_script: scripts/setup_oci_linux.sh
           - os: macos-14
             arch: arm64
             platform: macos
-            setup_script: scripts/setup_oci_macos.sh
           - os: windows-latest
             arch: x86_64
             platform: windows
-            setup_script: scripts/setup_oci_windows.ps1
 
     steps:
       - name: Checkout
@@ -125,7 +121,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libaio1t64 unzip ninja-build || sudo apt-get install -y libaio1 unzip ninja-build
+          sudo apt-get install -y ninja-build
 
       - name: Install Dependencies (macOS)
         if: runner.os == 'macOS'
@@ -136,18 +132,6 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           choco install ninja -y
-
-      - name: Install Oracle Instant Client
-        shell: bash
-        env:
-          RUNNER_OS_NAME: ${{ runner.os }}
-          SETUP_SCRIPT: ${{ matrix.setup_script }}
-        run: |
-          if [ "$RUNNER_OS_NAME" == "Windows" ]; then
-            pwsh -ExecutionPolicy Bypass -File "$SETUP_SCRIPT"
-          else
-            "./$SETUP_SCRIPT"
-          fi
 
       - name: Setup Python
         uses: actions/setup-python@v5

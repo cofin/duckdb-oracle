@@ -3,8 +3,8 @@
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/types.hpp"
 #include "duckdb/common/exception.hpp"
+#include "oracle_oci_api.hpp"
 #include "oracle_settings.hpp"
-#include <oci.h>
 #include <memory>
 #include <string>
 #include <vector>
@@ -93,6 +93,7 @@ private:
 	OracleConnectionManager();
 	~OracleConnectionManager();
 
+	std::shared_ptr<OCIEnv> GetOrCreateEnv();
 	std::shared_ptr<OracleContext> CreateConnection(const std::string &connection_string,
 	                                                const std::string &wallet_path, const OracleSettings &settings);
 };

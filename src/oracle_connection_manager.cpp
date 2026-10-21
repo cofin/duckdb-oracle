@@ -165,21 +165,27 @@ OracleConnectionManager &OracleConnectionManager::Instance() {
 	return instance;
 }
 
-OracleConnectionManager::OracleConnectionManager() {
-	// OCI_THREADED | OCI_OBJECT allows concurrent usage across threads and object/spatial descriptors
-	OCIEnv *raw_env = nullptr;
-	CheckOCIError(OCIEnvCreate(&raw_env, OCI_THREADED | OCI_OBJECT, nullptr, nullptr, nullptr, nullptr, 0, nullptr),
-	              nullptr, "Failed to create OCI environment");
-	env = std::shared_ptr<OCIEnv>(raw_env, [](OCIEnv *p) {
-		if (p) {
-			OCIHandleFree(p, OCI_HTYPE_ENV);
-		}
-	});
-}
+OracleConnectionManager::OracleConnectionManager() = default;
 
 OracleConnectionManager::~OracleConnectionManager() {
 	Clear();
 	env.reset();
+}
+
+std::shared_ptr<OCIEnv> OracleConnectionManager::GetOrCreateEnv() {
+	std::lock_guard<std::mutex> lock(manager_mutex);
+	if (!env) {
+		EnsureOCILoaded();
+		OCIEnv *raw_env = nullptr;
+		CheckOCIError(OCIEnvCreate(&raw_env, OCI_THREADED | OCI_OBJECT, nullptr, nullptr, nullptr, nullptr, 0, nullptr),
+		              nullptr, "Failed to create OCI environment");
+		env = std::shared_ptr<OCIEnv>(raw_env, [](OCIEnv *p) {
+			if (p) {
+				OCIHandleFree(p, OCI_HTYPE_ENV);
+			}
+		});
+	}
+	return env;
 }
 
 void OracleConnectionManager::Clear() {
@@ -348,12 +354,13 @@ std::shared_ptr<OracleConnectionHandle> OracleConnectionManager::Acquire(const s
 std::shared_ptr<OracleContext> OracleConnectionManager::CreateConnection(const std::string &connection_string,
                                                                          const std::string &wallet_path,
                                                                          const OracleSettings &settings) {
-	auto ctx = std::make_shared<OracleContext>();
-	ctx->env_owner = env;
-	ctx->envhp = env.get();
-
 	std::string user, password, db;
 	ParseOracleConnectionString(connection_string, user, password, db);
+
+	auto env_ptr = GetOrCreateEnv();
+	auto ctx = std::make_shared<OracleContext>();
+	ctx->env_owner = env_ptr;
+	ctx->envhp = env_ptr.get();
 
 	CheckOCIError(OCIHandleAlloc(ctx->envhp, reinterpret_cast<dvoid **>(&ctx->errhp), OCI_HTYPE_ERROR, 0, nullptr),
 	              nullptr, "Failed to allocate OCI error handle");
