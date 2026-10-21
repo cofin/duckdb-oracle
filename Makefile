@@ -115,4 +115,4 @@ help:
 	@printf "  clean-all        Remove all build directories to allow switching generators (e.g., Ninja)\n"
 
 clean-all:
-	rm -rf build/release build/debug build/relassert build/reldebug build/ninja-release build/extension_configuration
+	rm -rf build/release build/debug build/relassert build/reldebug build/ninja-release build/extension_configuration build/tidy

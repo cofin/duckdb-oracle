@@ -1,7 +1,9 @@
 cmake_minimum_required(VERSION 3.15)
 cmake_policy(SET CMP0079 NEW)
 
-set(CMAKE_CXX_STANDARD "17" CACHE STRING "C++ standard to enforce" FORCE)
+set(CMAKE_CXX_STANDARD
+    "17"
+    CACHE STRING "C++ standard to enforce" FORCE)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Set extension name here
@@ -36,15 +38,14 @@ set(EXTENSION_SOURCES
     src/storage/oracle_transaction.cpp
     src/storage/oracle_transaction_manager.cpp
     src/storage/oracle_write.cpp
-    src/storage/oracle_insert.cpp
-)
+    src/storage/oracle_insert.cpp)
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
 if(CMAKE_DL_LIBS)
-    target_link_libraries(${EXTENSION_NAME} ${CMAKE_DL_LIBS})
-    target_link_libraries(${LOADABLE_EXTENSION_NAME} ${CMAKE_DL_LIBS})
+  target_link_libraries(${EXTENSION_NAME} ${CMAKE_DL_LIBS})
+  target_link_libraries(${LOADABLE_EXTENSION_NAME} ${CMAKE_DL_LIBS})
 endif()
 
 install(

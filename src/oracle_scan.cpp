@@ -292,7 +292,7 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, const string
 	result->converted_select_exprs.reserve(result->column_names.size());
 	bool needs_wrapper = false;
 	for (idx_t i = 0; i < result->column_names.size(); i++) {
-		auto quoted_col = KeywordHelper::WriteQuoted(result->column_names[i], '"');
+		auto quoted_col = KeywordHelper::WriteQuotedAndEscaped(result->column_names[i], '"');
 		auto &decision = type_decisions[i];
 		if (decision.RequiresQueryRewrite(conversion_version)) {
 			needs_wrapper = true;
@@ -367,8 +367,8 @@ unique_ptr<FunctionData> OracleScanBind(ClientContext &context, TableFunctionBin
 		    StringUtil::Format(" AS OF TIMESTAMP TO_TIMESTAMP('%s', 'YYYY-MM-DD HH24:MI:SS.FF')", escaped_ts.c_str());
 	}
 
-	auto quoted_schema = KeywordHelper::WriteQuoted(schema_name, '"');
-	auto quoted_table = KeywordHelper::WriteQuoted(table_name, '"');
+	auto quoted_schema = KeywordHelper::WriteQuotedAndEscaped(schema_name, '"');
+	auto quoted_table = KeywordHelper::WriteQuotedAndEscaped(table_name, '"');
 	auto from_sql =
 	    StringUtil::Format("%s.%s%s", quoted_schema.c_str(), quoted_table.c_str(), flashback_clause.c_str());
 	string query = StringUtil::Format("SELECT * FROM %s", from_sql.c_str());
@@ -464,7 +464,7 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &, TableFunc
 			col_select_exprs.clear();
 			col_select_exprs.reserve(bind.original_names.size());
 			for (const auto &name : bind.original_names) {
-				col_select_exprs.push_back(KeywordHelper::WriteQuoted(name, '"'));
+				col_select_exprs.push_back(KeywordHelper::WriteQuotedAndEscaped(name, '"'));
 			}
 		}
 	}
@@ -535,7 +535,7 @@ unique_ptr<GlobalTableFunctionState> OracleInitGlobal(ClientContext &, TableFunc
 			vector<string> select_items;
 			select_items.reserve(state->active_bind_cols.size());
 			for (auto bind_col_idx : state->active_bind_cols) {
-				select_items.push_back(KeywordHelper::WriteQuoted(bind.original_names[bind_col_idx], '"'));
+				select_items.push_back(KeywordHelper::WriteQuotedAndEscaped(bind.original_names[bind_col_idx], '"'));
 			}
 			query_to_run =
 			    "SELECT " + StringUtil::Join(select_items, ", ") + " FROM (\n" + bind.base_query + "\n)" + where_sql;
@@ -667,7 +667,7 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 	auto &gstate = data.global_state->Cast<OracleScanState>();
 
 	if (gstate.finished) {
-		output.SetCardinality(0);
+		output.SetCardinalityUnsafe(0);
 		return;
 	}
 
@@ -715,7 +715,7 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 
 	if (status == OCI_NO_DATA && rows_fetched == 0) {
 		gstate.finished = true;
-		output.SetCardinality(0);
+		output.SetCardinalityUnsafe(0);
 		return;
 	}
 
@@ -749,7 +749,7 @@ void OracleQueryFunction(ClientContext &context, TableFunctionInput &data, DataC
 			SetOracleOutputValue(context, output_vector, row_idx, ptr, actual_len, target_type, conversion_context);
 		}
 	}
-	output.SetCardinality(rows_fetched);
+	output.SetCardinalityUnsafe(rows_fetched);
 	if (status == OCI_NO_DATA) {
 		gstate.finished = true;
 	}

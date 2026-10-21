@@ -214,7 +214,7 @@ jobs:
           RUNNER_OS_NAME: ${{ runner.os }}
         run: |
           # Verify extension installs and loads cleanly via local INSTALL + LOAD
-          EXT_STATUS=$(./build/release/duckdb -unsigned -csv -noheader -c "INSTALL 'build/release/extension/oracle/oracle.duckdb_extension'; LOAD oracle; SELECT installed, loaded FROM duckdb_extensions() WHERE extension_name = 'oracle';" | tr -d '\r')
+          EXT_STATUS=$(./build/release/duckdb -unsigned -light-mode -csv -noheader -c "INSTALL 'build/release/extension/oracle/oracle.duckdb_extension'; LOAD oracle; SELECT installed, loaded FROM duckdb_extensions() WHERE extension_name = 'oracle';" | tr -d '\r')
           echo "Extension status: $EXT_STATUS"
           if [ "$EXT_STATUS" != "true,true" ]; then
             echo "::error::Failed to install/load oracle extension (status: $EXT_STATUS)"

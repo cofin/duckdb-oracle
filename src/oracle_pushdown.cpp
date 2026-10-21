@@ -21,7 +21,7 @@
 namespace duckdb {
 
 static string ColumnRefSQL(const string &col_name) {
-	return KeywordHelper::WriteQuoted(col_name, '"');
+	return KeywordHelper::WriteQuotedAndEscaped(col_name, '"');
 }
 
 static string OracleQuoteStringLiteral(const string &value) {
@@ -235,8 +235,8 @@ static bool TryExtractComparison(Expression &expr, const vector<string> &names, 
 	const auto &left = BoundComparisonExpression::Left(cmp);
 	const auto &right = BoundComparisonExpression::Right(cmp);
 	if (getenv("ORACLE_DEBUG")) {
-		fprintf(stderr, "[oracle] TryExtractComparison: left_type=%d, right_type=%d\n",
-		        (int)left.GetExpressionType(), (int)right.GetExpressionType());
+		fprintf(stderr, "[oracle] TryExtractComparison: left_type=%d, right_type=%d\n", (int)left.GetExpressionType(),
+		        (int)right.GetExpressionType());
 	}
 	const Expression *const_expr = nullptr;
 	ExpressionType op_type = expr_type;

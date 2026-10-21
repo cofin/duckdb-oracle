@@ -245,8 +245,8 @@ TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_p
 		names.push_back(col.Name().GetIdentifierName());
 	}
 
-	auto quoted_schema = KeywordHelper::WriteQuoted(schema_name, '"');
-	auto quoted_table = KeywordHelper::WriteQuoted(table_name, '"');
+	auto quoted_schema = KeywordHelper::WriteQuotedAndEscaped(schema_name, '"');
+	auto quoted_table = KeywordHelper::WriteQuotedAndEscaped(table_name, '"');
 
 	const auto version_info = state->GetVersionInfo();
 
@@ -258,7 +258,7 @@ TableFunction OracleTableEntry::GetScanFunction(ClientContext &context, unique_p
 			column_list += ", ";
 		}
 
-		auto quoted_col = KeywordHelper::WriteQuoted(col.Name().GetIdentifierName(), '"');
+		auto quoted_col = KeywordHelper::WriteQuotedAndEscaped(col.Name().GetIdentifierName(), '"');
 		string expr = quoted_col;
 
 		if (col_idx < column_metadata.size()) {

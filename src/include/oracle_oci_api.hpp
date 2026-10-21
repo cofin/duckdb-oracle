@@ -5,19 +5,19 @@
 
 namespace duckdb {
 
-typedef unsigned char ub1;
-typedef unsigned short ub2;
-typedef unsigned int ub4;
-typedef uint64_t ub8;
-typedef signed char sb1;
-typedef signed short sb2;
-typedef signed int sb4;
-typedef int64_t sb8;
-typedef int sword;
-typedef unsigned int uword;
-typedef void dvoid;
-typedef unsigned char OraText;
-typedef unsigned char text;
+using ub1 = uint8_t;
+using ub2 = uint16_t;
+using ub4 = uint32_t;
+using ub8 = uint64_t;
+using sb1 = int8_t;
+using sb2 = int16_t;
+using sb4 = int32_t;
+using sb8 = int64_t;
+using sword = int32_t;
+using uword = uint32_t;
+using dvoid = void;
+using OraText = uint8_t;
+using text = uint8_t;
 
 struct OCIEnv;
 struct OCIError;

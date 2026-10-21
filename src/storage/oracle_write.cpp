@@ -374,15 +374,15 @@ void PrepareOracleWriteBindData(OracleWriteBindData &data) {
 static string BuildOracleWriteInsertSQL(const OracleWriteBindData &data) {
 	string sql = "INSERT INTO ";
 	if (!data.schema_name.empty()) {
-		sql += KeywordHelper::WriteQuoted(data.schema_name, '"') + ".";
+		sql += KeywordHelper::WriteQuotedAndEscaped(data.schema_name, '"') + ".";
 	}
-	sql += KeywordHelper::WriteQuoted(data.object_name, '"') + " (";
+	sql += KeywordHelper::WriteQuotedAndEscaped(data.object_name, '"') + " (";
 
 	for (idx_t i = 0; i < data.column_names.size(); i++) {
 		if (i > 0) {
 			sql += ", ";
 		}
-		sql += KeywordHelper::WriteQuoted(data.column_names[i], '"');
+		sql += KeywordHelper::WriteQuotedAndEscaped(data.column_names[i], '"');
 	}
 	sql += ") VALUES (";
 	for (idx_t i = 0; i < data.column_names.size(); i++) {
@@ -478,8 +478,8 @@ void OracleWriteGlobalState::Sink(DataChunk &chunk, const vector<string> &column
 		if (bind_type != SQLT_INT && bind_type != SQLT_BDOUBLE && bind_type != SQLT_ODT) {
 			auto column_name = col_idx < column_names.size() ? column_names[col_idx] : "";
 			auto oracle_type = col_idx < oracle_types.size() ? oracle_types[col_idx] : "";
-			bool direct_slice =
-			    (col_type == LogicalTypeId::VARCHAR || col_type == LogicalTypeId::BLOB) && !IsOracleVectorType(oracle_type);
+			bool direct_slice = (col_type == LogicalTypeId::VARCHAR || col_type == LogicalTypeId::BLOB) &&
+			                    !IsOracleVectorType(oracle_type);
 			use_direct_string_slice[col_idx] = direct_slice;
 
 			size_t max_len = 0;

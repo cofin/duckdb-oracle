@@ -38,5 +38,4 @@ extern "C" {
 DUCKDB_CPP_EXTENSION_ENTRY(oracle, loader) {
 	duckdb::LoadInternal(loader);
 }
-
 }

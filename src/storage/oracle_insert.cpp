@@ -85,8 +85,9 @@ SourceResultType PhysicalOracleInsert::GetDataInternal(ExecutionContext &context
 	(void)context;
 	(void)input;
 	auto &gstate = sink_state->Cast<OracleInsertGlobalState>();
-	chunk.SetCardinality(1);
-	chunk.SetValue(0, 0, Value::BIGINT(NumericCast<int64_t>(gstate.insert_count.load(std::memory_order_relaxed))));
+	FlatVector::GetDataMutable<int64_t>(chunk.data[0])[0] =
+	    NumericCast<int64_t>(gstate.insert_count.load(std::memory_order_relaxed));
+	chunk.SetCardinalityUnsafe(1);
 	return SourceResultType::FINISHED;
 }
 
