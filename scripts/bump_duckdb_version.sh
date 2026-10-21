@@ -90,53 +90,62 @@ else
   err "duckdb submodule not initialized (run: git submodule update --init)"
 fi
 
-# --- 2. extension-ci-tools submodule (tag, fallback to vX.Y branch) ----------
-note "extension-ci-tools submodule -> ${TAG} (fallback ${MINOR})"
-run git -C extension-ci-tools fetch --tags --quiet
+# --- 2. extension-ci-tools submodule (tag, fallback to vX.Y or vX.Y-* branch) -
+note "extension-ci-tools submodule -> ${TAG} (fallback ${MINOR} / ${MINOR}-*)"
+CI_TOOLS_REF="$TAG"
+run git -C extension-ci-tools fetch --tags --prune origin --quiet
 if [ "$DRY_RUN" -eq 1 ]; then
-  echo "    \$ (checkout ${TAG} tag if it exists, else origin/${TAG}, else origin/${MINOR})"
+  echo "    \$ (checkout ${TAG} tag if it exists, else origin/${TAG}, else origin/${MINOR}, else origin/${MINOR}-*)"
 elif git -C extension-ci-tools rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
   git -C extension-ci-tools checkout --quiet "$TAG"
 elif git -C extension-ci-tools rev-parse -q --verify "origin/${TAG}" >/dev/null; then
   git -C extension-ci-tools checkout --quiet -B "$TAG" "origin/${TAG}"
+elif git -C extension-ci-tools rev-parse -q --verify "origin/${MINOR}" >/dev/null; then
+  CI_TOOLS_REF="$MINOR"
+  git -C extension-ci-tools checkout --quiet -B "$MINOR" "origin/${MINOR}"
 else
-  git -C extension-ci-tools fetch --quiet origin "$MINOR" 2>/dev/null || true
-  if git -C extension-ci-tools rev-parse -q --verify "origin/${MINOR}" >/dev/null; then
-    git -C extension-ci-tools checkout --quiet -B "$MINOR" "origin/${MINOR}"
+  CODENAME_BRANCH=$(git -C extension-ci-tools branch -r --list "origin/${MINOR}-*" | sed 's|^[[:space:]]*origin/||' | head -n 1)
+  if [ -n "$CODENAME_BRANCH" ]; then
+    CI_TOOLS_REF="$CODENAME_BRANCH"
+    git -C extension-ci-tools checkout --quiet -B "$CI_TOOLS_REF" "origin/${CI_TOOLS_REF}"
   else
-    echo "WARN: extension-ci-tools has no ${TAG} tag or ${MINOR} branch; left unchanged" >&2
+    err "extension-ci-tools has no ${TAG} tag, ${MINOR} branch, or ${MINOR}-* branch"
   fi
 fi
 
 # --- 3. pipeline version refs (precise; only ci-tools @v and *_version:) -----
-note "$PIPELINE (6 version refs ${CUR} -> ${TAG})"
+note "$PIPELINE (version refs ${CUR} -> ${TAG} / ${CI_TOOLS_REF})"
 if [ "$DRY_RUN" -eq 0 ]; then
   python3 -c '
 import pathlib, re, sys
 path = pathlib.Path(sys.argv[1])
 tag = sys.argv[2]
+ci_ref = sys.argv[3]
 text = path.read_text(encoding="utf-8")
-text = re.sub(r"(extension-ci-tools/\.github/workflows/[^@\s]+)@v[0-9.]+", rf"\g<1>@{tag}", text)
+text = re.sub(r"(extension-ci-tools/\.github/workflows/[^@\s]+)@v[0-9a-zA-Z._-]+", rf"\g<1>@{ci_ref}", text)
 text = re.sub(r"(duckdb_version:\s*)v[0-9.]+", rf"\g<1>{tag}", text)
-text = re.sub(r"(ci_tools_version:\s*)v[0-9.]+", rf"\g<1>{tag}", text)
+text = re.sub(r"(ci_tools_version:\s*)v[0-9a-zA-Z._-]+", rf"\g<1>{ci_ref}", text)
 path.write_text(text, encoding="utf-8")
-' "$PIPELINE" "$TAG"
+' "$PIPELINE" "$TAG" "$CI_TOOLS_REF"
 
-  if [ -f "extension-ci-tools/.github/workflows/_extension_distribution.yml" ] && [ -f ".github/workflows/release-unsigned.yml" ]; then
+  if [ -f "extension-ci-tools/.github/workflows/_extension_distribution.yml" ]; then
     python3 -c '
 import pathlib, re
 dist = pathlib.Path("extension-ci-tools/.github/workflows/_extension_distribution.yml").read_text(encoding="utf-8")
 m = re.search(r"vcpkg_commit:\s*(?:.*\n){1,4}?\s*default:\s*\"([0-9a-f]{40})\"", dist)
 if m:
     commit = m.group(1)
-    rel_path = pathlib.Path(".github/workflows/release-unsigned.yml")
-    rel_text = rel_path.read_text(encoding="utf-8")
-    rel_text = re.sub(r"(vcpkgGitCommitId:\s*)[0-9a-f]{40}", rf"\g<1>{commit}", rel_text)
-    rel_path.write_text(rel_text, encoding="utf-8")
+    for wf in (".github/workflows/main-distribution-pipeline.yml", ".github/workflows/release-unsigned.yml"):
+        wf_path = pathlib.Path(wf)
+        if wf_path.exists():
+            wf_text = wf_path.read_text(encoding="utf-8")
+            wf_text = re.sub(r"(vcpkg_commit:\s*)[0-9a-f]{40}", rf"\g<1>{commit}", wf_text)
+            wf_text = re.sub(r"(vcpkgGitCommitId:\s*)[0-9a-f]{40}", rf"\g<1>{commit}", wf_text)
+            wf_path.write_text(wf_text, encoding="utf-8")
 '
   fi
 fi
-echo "    (updated @v refs, duckdb_version, ci_tools_version, and vcpkgGitCommitId)"
+echo "    (updated @v refs, duckdb_version, ci_tools_version, and vcpkg commit)"
 
 # --- 4. README supported-version banner --------------------------------------
 note "$README (supported DuckDB version ${CUR} -> ${TAG})"

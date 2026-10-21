@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.15)
 cmake_policy(SET CMP0079 NEW)
 
+set(CMAKE_CXX_STANDARD "17" CACHE STRING "C++ standard to enforce")
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 # Set extension name here
 set(TARGET_NAME oracle)
 
