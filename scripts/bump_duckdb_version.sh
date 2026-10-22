@@ -135,13 +135,12 @@ dist = pathlib.Path("extension-ci-tools/.github/workflows/_extension_distributio
 m = re.search(r"vcpkg_commit:\s*(?:.*\n){1,4}?\s*default:\s*\"([0-9a-f]{40})\"", dist)
 if m:
     commit = m.group(1)
-    for wf in (".github/workflows/main-distribution-pipeline.yml", ".github/workflows/release-unsigned.yml", "description.yml"):
+    for wf in (".github/workflows/main-distribution-pipeline.yml", ".github/workflows/release-unsigned.yml"):
         wf_path = pathlib.Path(wf)
         if wf_path.exists():
             wf_text = wf_path.read_text(encoding="utf-8")
             wf_text = re.sub(r"(vcpkg_commit:\s*)[0-9a-f]{40}", rf"\g<1>{commit}", wf_text)
             wf_text = re.sub(r"(vcpkgGitCommitId:\s*)[0-9a-f]{40}", rf"\g<1>{commit}", wf_text)
-            wf_text = re.sub(r"(variegata:\s*)[0-9a-f]{40}", rf"\g<1>{commit}", wf_text)
             wf_path.write_text(wf_text, encoding="utf-8")
 '
   fi

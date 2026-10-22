@@ -11,7 +11,7 @@ status: stable
 <!-- truth: start -->
 - Architecture: Manage all OCI handles (`OCIEnv`, `OCISvcCtx`, `OCIError`, `OCIStmt`, `OCIBind`) via RAII patterns and smart pointers (`std::shared_ptr<OCIEnv>`); convert OCI errors to DuckDB `IOException`.
 - Compatibility: Lockstep pin to target DuckDB release (currently `v2.0.0` LTS, extension `v0.3.0`) across submodules, `extension-ci-tools` (`v2.0-cyanoptera`), and `description.yml`.
-- Performance: Maximize throughput using OCI Array Fetch and `UnifiedVectorFormat` Array Bind batching, DuckDB 2.0 `TableFunction` optimizer callbacks (`get_bind_info`, `get_table_entry`, `cardinality`, `to_string`, `filter_prune`), zero-copy `OracleSlice` numeric parsing, configurable prefetch rows/memory (`oracle_prefetch_rows = 256`), statement caching (`oracle_stmt_cache_size`), and connection caching.
+- Performance: Maximize throughput using OCI Array Fetch and `UnifiedVectorFormat` Array Bind batching, DuckDB 2.0 `TableFunction` optimizer callbacks (`get_bind_info`, `get_table_entry`, `cardinality`, `to_string`, `filter_prune`), zero-copy `OracleSlice` numeric parsing, configurable prefetch rows/memory (`oracle_prefetch_rows = 1024`, `oracle_array_size = 256`), statement caching (`oracle_stmt_cache_size`), and connection caching.
 - Security: Prefer DuckDB SecretManager (`TYPE oracle`) and SEPS wallet authentication (`/@alias`) for credentials; treat raw SQL executed in `oracle_query`/`oracle_execute` as trusted input.
 - Platforms: Linux (`x86_64`, `aarch64`), macOS (`arm64`), and Windows (`x86_64`) with zero build-time or `LOAD`-time Oracle SDK dependency and lazy runtime `dlopen`/`LoadLibraryA` resolution of Oracle Instant Client (19c, 21c, 23ai) on first connection; WASM excluded.
 <!-- truth: end -->

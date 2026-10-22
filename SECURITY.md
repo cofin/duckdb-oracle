@@ -2,23 +2,17 @@
 
 ## Supported Versions
 
-We support the latest stable release of the extension.
+Security updates are provided for the latest release of the extension.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| Latest  | :white_check_mark: |
-| < Latest| :x:                |
+| Version | Supported |
+| ------- | --------- |
+| Latest (`0.3.x`) | ✅ |
+| `< 0.3.0` | ❌ |
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in this project, please do **not** open a public issue.
+Please do **not** open a public GitHub issue for security vulnerabilities. Report vulnerabilities privately through [GitHub Security Advisories](https://github.com/cofin/duckdb-oracle/security/advisories/new).
 
-Instead, please report it privately via GitHub Security Advisories at <https://github.com/cofin/duckdb-oracle/security/advisories/new>.
+## Oracle Client Libraries
 
-We will assess the issue and respond within 48 hours.
-
-## Oracle Instant Client Security
-
-This extension depends on the Oracle Instant Client libraries. Security updates for these libraries are managed by Oracle. We strive to build and test against the latest available Instant Client versions to ensure upstream security patches are included.
-
-Users are responsible for ensuring their runtime environment uses a secure version of the Oracle Instant Client libraries.
+At connection time, this extension loads the user's installed Oracle Instant Client library. Security patches for Oracle Instant Client are provided by Oracle; keep your local Instant Client installation updated.

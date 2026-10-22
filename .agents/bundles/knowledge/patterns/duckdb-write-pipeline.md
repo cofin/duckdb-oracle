@@ -1,6 +1,6 @@
 ---
 type: Pattern
-title: DuckDB Write Pipeline: Sink, Combine & Finalize
+title: "DuckDB Write Pipeline: Sink, Combine & Finalize"
 description: Implementation of DuckDB's PhysicalOperator Sink pattern for high-speed writes into Oracle tables via PhysicalOracleInsert.
 scope: pattern
 domain: duckdb
