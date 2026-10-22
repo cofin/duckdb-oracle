@@ -2,6 +2,11 @@
 
 All notable changes to the DuckDB Oracle extension are documented in this file.
 
+## [0.3.1] - 2026-10-22
+
+### Changed
+- **Documentation & Community Extension Descriptor**: Simplified and refined `README.md`, `description.yml`, and reference documentation under `docs/`, and fixed `scripts/bump_duckdb_version.sh` compatibility table appending.
+
 ## [0.3.0] - 2026-10-21
 
 ### Added

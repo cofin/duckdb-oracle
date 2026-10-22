@@ -1,7 +1,7 @@
 extension:
   name: oracle
   description: Connect DuckDB directly to Oracle databases for reading and writing tables, with catalog integration, pushdown, spatial geometry, and vector support
-  version: 0.3.0
+  version: 0.3.1
   language: C++
   build: cmake
   license: MIT
