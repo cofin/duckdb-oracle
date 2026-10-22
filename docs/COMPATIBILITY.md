@@ -34,4 +34,4 @@ Local instances, on-premises deployments, cloud databases, and Oracle Autonomous
 | v1.5.4         | v0.2.1            | ✅ Compatible | 2026-06-23 | DuckDB v1.5.4 upgrade |
 | v1.5.5         | v0.2.2            | ✅ Compatible | 2026-07-22 | DuckDB v1.5.5 upgrade |
 | v1.5.6         | v0.2.3            | ✅ Compatible | 2026-10-11 | DuckDB v1.5.6 upgrade |
-| v2.0.0         | v0.3.0            | ✅ Compatible | 2026-10-21 | DuckDB v2.0.0 upgrade, on-demand client loading, optimizer callbacks |
+| v2.0.0         | v0.3.1            | ✅ Compatible | 2026-10-22 | DuckDB v2.0.0 upgrade, on-demand client loading, optimizer callbacks |
