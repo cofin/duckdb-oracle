@@ -67,7 +67,7 @@ When fetching `TIMESTAMP WITH TIME ZONE` or `TIMESTAMP WITH LOCAL TIME ZONE` col
 
 ## 7. Per-`ATTACH` Options vs `DBConfig::AddExtensionOption`
 
-In DuckDB `v1.5.x`, `DBConfig::AddExtensionOption` inserts default values directly into `db_config.user_settings`, causing `ClientContext::TryGetCurrentSetting` to return a `SettingScope::GLOBAL` match even when the user never ran `SET oracle_*`.
+In DuckDB (`v1.5.x` and `v2.0.0`), `DBConfig::AddExtensionOption` inserts default values directly into `db_config.user_settings`, causing `ClientContext::TryGetCurrentSetting` to return a `SettingScope::GLOBAL` match even when the user never ran `SET oracle_*`.
 - **Resolution (`src/oracle_settings.cpp`, `src/oracle_connection_resolver.cpp`)**: `ApplyAttachOptions` records every explicitly provided `ATTACH` option's global setting key in `OracleSettings::attach_overridden_keys`, and `GetOracleSettings` preserves `state->settings` for any key in `attach_overridden_keys` unless `lookup.GetScope() == SettingScope::LOCAL`.
 
 ## 8. Oracle Empty String (`''`) NULL Semantics in Filter Pushdown

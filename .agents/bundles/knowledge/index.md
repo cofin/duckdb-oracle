@@ -14,7 +14,7 @@
 
 ### Domains
 - [Oracle OCI Domain Concepts & Execution Lifecycle](domains/oracle-oci.md) — OCI statement execution lifecycle, parameter binding, indicator variables, SQLT external data types, and error handling.
-- [DuckDB Vectorized Engine & Type System](domains/duckdb-extension.md) — Vectorized execution engine, DataChunk and Vector internals, ValidityMask, LogicalType system, and TableFunction lifecycle.
+- [DuckDB 2.0 Vectorized Engine, Type System & Extension APIs](domains/duckdb-extension.md) — DuckDB v2.0.0 vectorized execution primitives, VectorBuffer size synchronization, const/mutable Vector access, Identifier/Expression APIs, and TableFunction optimizer hooks.
 
 ### Patterns
 - [OCI RAII Handle & Descriptor Management](patterns/oci-raii-handles.md) — Smart pointer deleters and RAII wrappers for OCI handles and descriptors preventing resource leaks in C++.
