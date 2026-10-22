@@ -1,46 +1,19 @@
-# Setup Guide
+# Repository Setup
 
-## Automated Workflow Updates
+## Automated Update Token
 
-To enable the `duckdb-update-check.yml` workflow to automatically create branches and PRs for DuckDB version updates, you must configure a Personal Access Token (PAT).
+The `duckdb-update-check.yml` and `auto-tag.yml` workflows use a repository secret named `WORKFLOW_UPDATE_TOKEN` so they can update workflow files and push tags that trigger downstream release runs.
 
-### 1. Create a PAT
+1. Create a GitHub Personal Access Token (classic) with `repo` and `workflow` scopes.
+2. In the repository, go to **Settings > Secrets and variables > Actions**.
+3. Create a secret named `WORKFLOW_UPDATE_TOKEN` with the token value.
 
-1.  Go to GitHub Settings > Developer settings > Personal access tokens > Tokens (classic).
-2.  Generate new token (classic).
-3.  Name: `DuckDB Update Bot` (or similar).
-4.  Scopes:
-    *   `repo` (Full control of private repositories)
-    *   `workflow` (Update GitHub Action workflows)
-5.  Generate token and copy it.
+## GitHub Pages (Custom Extension Repository)
 
-### 2. Add Secret to Repository
-
-1.  Go to your repository Settings > Secrets and variables > Actions.
-2.  New repository secret.
-3.  Name: `WORKFLOW_UPDATE_TOKEN`
-4.  Value: Paste your PAT.
-5.  Add Secret.
-
-### Why is this needed?
-
-The default `GITHUB_TOKEN` used by Actions does not have permission to modify files within the `.github/workflows/` directory. This security restriction prevents workflows from maliciously altering other workflows. However, for our version update bot to work (which updates `main-distribution-pipeline.yml`), we need these elevated permissions.
-
-## GitHub Pages Configuration (Custom Extension Repository)
-
-The `release-unsigned.yml` workflow publishes compressed DuckDB extension binaries (`v<duckdb_version>/<platform>/oracle.duckdb_extension.gz`) and a `.nojekyll` marker to the `gh-pages` branch.
+The `release-unsigned.yml` workflow publishes compressed binaries (`v<duckdb_version>/<platform>/oracle.duckdb_extension.gz`) and `.nojekyll` to the `gh-pages` branch.
 
 To serve the custom extension repository at `https://cofin.github.io/duckdb-oracle`:
 
-1. Go to repository **Settings > Pages**.
-2. Under **Build and deployment > Source**, select **Deploy from a branch**.
+1. Go to **Settings > Pages**.
+2. Set **Source** to **Deploy from a branch**.
 3. Select branch **`gh-pages`** and folder **`/ (root)`**, then click **Save**.
-
-Users can also install directly from the `gh-pages` branch tree without GitHub Pages enabled by setting:
-
-```sql
-SET custom_extension_repository = 'https://raw.githubusercontent.com/cofin/duckdb-oracle/gh-pages';
-INSTALL oracle;
-LOAD oracle;
-```
-

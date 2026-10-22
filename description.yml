@@ -1,6 +1,6 @@
 extension:
   name: oracle
-  description: High-performance Oracle Database connector using lazy runtime OCI loading with catalog integration, filter/projection pushdown, flashback queries, and vectorized bulk writes
+  description: Connect DuckDB directly to Oracle databases for reading and writing tables, with catalog integration, pushdown, spatial geometry, and vector support
   version: 0.3.0
   language: C++
   build: cmake
@@ -12,15 +12,13 @@ extension:
 repo:
   github: cofin/duckdb-oracle
   ref: HEAD
-  variegata: cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3
 
 docs:
   hello_world: |
-    -- Install and load the Oracle extension from Community Extensions
     INSTALL oracle FROM community;
     LOAD oracle;
 
-    -- Configure credentials via DuckDB Secrets
+    -- Connect with standard credentials
     CREATE SECRET my_oracle (
         TYPE oracle,
         HOST 'localhost',
@@ -29,20 +27,32 @@ docs:
         USER 'scott',
         PASSWORD 'tiger'
     );
-
-    -- Attach the Oracle database as a native DuckDB catalog
     ATTACH '' AS ora (TYPE oracle, SECRET my_oracle);
 
-    -- Query Oracle tables with automatic filter and projection pushdown
-    SELECT empno, ename, sal
-    FROM ora.SCOTT.EMP
-    WHERE deptno = 10;
-  extended_description: |
-    The `oracle` extension connects DuckDB to Oracle Database (19c, 21c, and 23ai) using Oracle Call Interface (OCI) loaded lazily at runtime (`libclntsh.so` / `libclntsh.dylib` / `oci.dll`).
+    -- Or connect with an Oracle Wallet (Autonomous Database or TLS)
+    CREATE SECRET wallet_oracle (
+        TYPE oracle,
+        SERVICE 'myadb_high',
+        USER 'admin',
+        PASSWORD 'secret',
+        WALLET_PATH '/path/to/wallet'
+    );
+    ATTACH '' AS ora_cloud (TYPE oracle, SECRET wallet_oracle);
 
-    **Key Features:**
-    - **Zero Load-Time Dependency**: `INSTALL oracle FROM community; LOAD oracle;` succeeds without Oracle Instant Client installed; `libclntsh` (19c, 21c, or 23ai) is resolved dynamically when opening a connection.
-    - **Catalog Integration (`ATTACH ... TYPE oracle`)**: Browse schemas, tables, views, materialized views, and synonyms as native DuckDB catalog entries.
-    - **Pushdown & Optimizer Integration**: Pushes complex predicates, projections, flashback clauses (`AS OF SCN` / `AS OF TIMESTAMP`), and `ALL_TABLES.NUM_ROWS` cardinality estimates to Oracle.
-    - **Rich Type Support**: Supports `NUMBER`, `BINARY_FLOAT`, `BINARY_DOUBLE`, `DATE`, `TIMESTAMP`, `TIMESTAMP WITH TIME ZONE`, `INTERVAL`, `CLOB`, `BLOB`, `RAW`, Oracle 21c/23ai `JSON`, Oracle 23ai `VECTOR` (`ARRAY`/`LIST`), and `MDSYS.SDO_GEOMETRY` (`GEOMETRY` WKB + CRS).
-    - **Vectorized Array Writes**: High-throughput `INSERT INTO` and `COPY` via `OCIBindArrayOfStruct`.
+    -- Query attached tables with filter and projection pushdown
+    SELECT empno, ename, sal
+    FROM ora.scott.emp
+    WHERE deptno = 10;
+
+    -- Or run direct Oracle SQL
+    SELECT * FROM oracle_query('ora', 'SELECT empno, ename FROM scott.emp WHERE sal > 2000');
+  extended_description: |
+    The `oracle` extension connects DuckDB directly to Oracle databases for reading and writing tables, views, materialized views, and synonyms.
+
+    Installing and loading the extension requires no Oracle libraries on the host. When opening a connection, the extension loads Oracle Instant Client (19c, 21c, or 23ai) on demand from `OCI_LIB_DIR`, `ORACLE_HOME`, or the system library path. It works with local, on-premises, cloud, and Oracle Autonomous Database instances, including connections authenticated with Oracle Wallets.
+
+    Key features:
+    - **Catalog attachment & direct SQL**: Attach an Oracle database via `ATTACH ... (TYPE oracle)` to query tables directly, or run raw SQL with `oracle_query` and `oracle_execute`.
+    - **Optimizer pushdown**: Pushes `WHERE` filters, column projections, table row-count estimates, and flashback queries (`AS OF SCN` and `AS OF TIMESTAMP`) down to Oracle.
+    - **Rich type mapping**: Maps Oracle numeric, temporal, `CLOB`/`BLOB`, `RAW`, `JSON`, 23ai `VECTOR` embeddings (`LIST(FLOAT)`), and `SDO_GEOMETRY` spatial geometries (`GEOMETRY`).
+    - **Batched reads & writes**: Uses array fetching for scans and array binding for `INSERT INTO` writes.

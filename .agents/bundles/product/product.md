@@ -9,7 +9,7 @@ status: stable
 # Product Definition
 
 <!-- truth: start -->
-- `duckdb-oracle` (`v0.3.0`, targeting DuckDB `v2.0.0` LTS) is a native C++17 DuckDB extension providing high-performance direct read and write access to Oracle databases via the Oracle Call Interface (OCI).
+- `duckdb-oracle` (`v0.3.0`, targeting DuckDB `v2.0.0` LTS) is a native C++17 DuckDB extension providing direct read and write access to Oracle databases via the Oracle Call Interface (OCI).
 - Uses in-tree OCI C ABI declarations and lazy runtime dynamic loading (`dlopen`/`LoadLibraryA`) so `INSTALL oracle FROM community; LOAD oracle;` requires zero build-time or load-time Oracle SDK dependencies, while supporting Oracle Instant Client 19c, 21c, and 23ai at connection time.
 - Supports DuckDB SecretManager (`TYPE oracle`) and `ATTACH '' AS ora (TYPE oracle, SECRET ...)` workflow for native catalog integration.
 - Implements DuckDB 2.0 `TableFunction` optimizer callbacks (`get_bind_info`, `get_table_entry`, `cardinality` via single-round-trip `ALL_TABLES.NUM_ROWS`, and `to_string`), OCI Array Fetch and `UnifiedVectorFormat` Array Bind for batch reads/inserts, spatial data mapping (`SDO_GEOMETRY` -> DuckDB `GEOMETRY` with CRS), Oracle 23ai `VECTOR` support (`ARRAY`/`LIST`), Oracle 21c/23ai `JSON`, flashback queries (`AS OF SCN` / `AS OF TIMESTAMP`), schema auto-detection, synonym resolution, and filter/projection pushdown.

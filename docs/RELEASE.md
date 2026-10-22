@@ -1,96 +1,53 @@
-# DuckDB Oracle Extension Release Process
+# Release Process
 
-This document outlines how releases are created and deployed for the DuckDB Oracle extension.
+This document describes how releases are built and published for the DuckDB Oracle extension.
 
 ## Versioning
 
-This project uses two independent version tracks:
+The project tracks two versions:
 
-- **Extension version** (e.g., `v0.2.3`): Defined in `description.yml`. Used for git tags, GitHub Releases, and the runtime version reported by `duckdb_extensions()`.
-- **DuckDB version** (e.g., `v1.5.6`): The DuckDB version the extension is built against. Used for the GitHub Pages directory structure that DuckDB's extension loader expects.
-
-When a user runs `INSTALL oracle`, DuckDB fetches from:
+- **Extension version** (e.g., `v0.3.0`): Defined in `description.yml`. Used for Git tags, GitHub Releases, and the version reported by `duckdb_extensions()`.
+- **DuckDB version** (e.g., `v2.0.0`): The DuckDB version the extension is compiled against. Used in the GitHub Pages layout expected by DuckDB's extension installer:
 
 ```text
 https://cofin.github.io/duckdb-oracle/{duckdb_version}/{platform}/oracle.duckdb_extension.gz
 ```
 
-## Automated Release Flow
+## Automated Release Pipeline
 
-The release pipeline is fully automated:
-
-1. **Version bump** (`description.yml`): When the extension version changes on `main`, the pipeline detects it.
-2. **Auto-tag** (`auto-tag.yml`): On every push to `main`, reads `description.yml` and creates a git tag `v{version}` if it doesn't exist.
-3. **Build & Deploy** (`release-unsigned.yml`): Triggered by the new tag. Builds for all platforms, deploys to GitHub Pages, and creates a GitHub Release.
+1. **Version bump**: Update the version in `description.yml` on a branch and merge via pull request.
+2. **Auto-tag** (`auto-tag.yml`): On push to `main`, reads `description.yml` and creates tag `v{version}` if it does not already exist.
+3. **Build & deploy** (`release-unsigned.yml`): Triggered by the new tag. Builds binaries for all supported platforms, publishes compressed extensions to the `gh-pages` branch, and creates a GitHub Release with platform archives and checksums.
 
 ### Supported Platforms
 
-| Platform | Architecture | DuckDB Platform |
-|----------|--------------|-----------------|
-| Linux    | x86_64       | `linux_amd64`   |
-| Linux    | ARM64        | `linux_arm64`   |
-| macOS    | ARM64        | `osx_arm64`     |
+| Platform | Architecture | DuckDB Target |
+|----------|--------------|---------------|
+| Linux    | x86_64       | `linux_amd64` |
+| Linux    | ARM64        | `linux_arm64` |
+| macOS    | Apple Silicon| `osx_arm64`   |
 | Windows  | x86_64       | `windows_amd64` |
 
-## Creating a Release
+## Cutting a Release
 
-### Automatic (Recommended)
-
-Bump the version with the repository target, commit the synchronized files on a feature branch, and open a PR. Do not edit or push directly to `main`.
+Bump the version on a feature branch and open a pull request targeting `main`:
 
 ```bash
 make bump-version bump=patch
 git add .bumpversion.toml description.yml test/unit_tests/test_extension_metadata.test
-git commit -m "chore(release): bump extension to v0.2.3"
-# Push the feature branch and open a PR targeting main.
+git commit -S -m "chore(release): bump extension to v0.3.1"
 ```
 
-After the PR is merged, `auto-tag.yml` reads `description.yml`, creates `v0.2.3`, and the tag triggers `release-unsigned.yml`. Do not create the tag manually during the normal release flow.
+Once merged to `main`, `auto-tag.yml` tags the commit and triggers `release-unsigned.yml`.
 
-### Manual Workflow Dispatch (Fallback)
+### Manual Trigger (Fallback)
 
-If the automated flow fails, trigger a release manually:
-
-**GitHub CLI:**
+If a tag build needs to be re-run manually:
 
 ```bash
-gh workflow run release-unsigned.yml -f version=v0.2.3
+gh workflow run release-unsigned.yml -f version=v0.3.0
 ```
 
-**GitHub UI:**
+## DuckDB Version Upgrades
 
-1. Go to Actions > Release Extension.
-2. Click "Run workflow".
-3. Enter the version tag (e.g., `v0.2.3`).
-
-## DuckDB Version Updates
-
-The `duckdb-update-check.yml` workflow runs daily at 06:00 UTC to check for new DuckDB releases. When a new version is found, it:
-
-1. Creates a branch `feat/duckdb-v{version}`.
-2. Runs `make bump-duckdb VERSION=v{version}` to align both submodules, six CI references, extension metadata, the README banner, and the compatibility matrix.
-3. Bumps the extension patch version through `bump-my-version`.
-4. Creates a Pull Request for human review; it does not auto-merge.
-
-After the PR merges, the auto-tag and release workflows handle the rest.
-
-### Prerequisites
-
-The update check workflow requires a Personal Access Token (PAT) stored as `WORKFLOW_UPDATE_TOKEN`. See [SETUP.md](SETUP.md) for configuration details.
-
-## Verifying a Release
-
-1. Check the [Releases](https://github.com/cofin/duckdb-oracle/releases) page.
-2. Verify the GitHub Pages deployment has the correct DuckDB version directory.
-3. Test installation:
-
-```sql
--- Start DuckDB with unsigned flag
--- ./duckdb -unsigned
-
-SET custom_extension_repository = 'https://cofin.github.io/duckdb-oracle';
-INSTALL oracle;
-LOAD oracle;
-```
-
-See [COMPATIBILITY.md](COMPATIBILITY.md) for the current compatibility matrix.
+The `duckdb-update-check.yml` workflow checks daily for new stable DuckDB releases. When a new release is detected, it runs `make bump-duckdb VERSION=v{version}` on a `feat/duckdb-v{version}` branch and opens a pull request for review. See [UPDATING.md](UPDATING.md) for manual upgrade commands and [SETUP.md](SETUP.md) for token configuration.

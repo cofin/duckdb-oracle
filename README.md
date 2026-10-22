@@ -1,169 +1,170 @@
 # DuckDB Oracle Extension
 
-This extension allows DuckDB to directly read from and write to Oracle databases. It uses the Oracle Call Interface (OCI) for high-performance data transfer.
+The `oracle` extension connects DuckDB directly to Oracle databases for reading and writing tables. It supports native catalog attachment, filter and projection pushdown, spatial geometry, vector embeddings, and batched array reads and writes.
 
-> **Disclaimer**: This is a community-maintained extension, not an official product of DuckDB or Oracle.
+**Supported DuckDB version**: v2.0.0 — see [Compatibility](docs/COMPATIBILITY.md) for version history.
 
-## Quick Start
+## Installation
 
-**1. Install & Load**
-
-> **Note**: `duckdb-oracle` resolves the Oracle Instant Client runtime library (`libclntsh.so` on Linux, `libclntsh.dylib` on macOS, `oci.dll` on Windows) **lazily at connection time** (`ATTACH`, `oracle_scan`, `oracle_query`, `oracle_execute`). Installing and loading the extension (`LOAD oracle;`) requires **no** Oracle client libraries installed, and the extension is compatible with **Oracle Instant Client Basic 19c, 21c, or 23ai** (set `OCI_LIB_DIR`, `ORACLE_HOME`, or add the Instant Client directory to `LD_LIBRARY_PATH` / `DYLD_LIBRARY_PATH` / `PATH` before opening a connection).
->
-> **Supported DuckDB version**: v2.0.0 — see [Compatibility Matrix](docs/COMPATIBILITY.md) for details.
-
-**Option A: DuckDB Community Extensions (Signed)**
+### Community Extensions
 
 ```sql
 INSTALL oracle FROM community;
 LOAD oracle;
 ```
 
-**Option B: Remote Custom Extension Repository (Unsigned)**
+### Custom Extension Repository
 
-Start DuckDB with `duckdb -unsigned`:
+To install directly from this repository's release channel, start DuckDB with `duckdb -unsigned`:
 
 ```sql
--- Configure custom repository (GitHub Pages or raw gh-pages fallback)
 SET custom_extension_repository = 'https://cofin.github.io/duckdb-oracle';
--- Or: SET custom_extension_repository = 'https://raw.githubusercontent.com/cofin/duckdb-oracle/gh-pages';
-
--- Install and load
 INSTALL oracle;
 LOAD oracle;
 ```
 
-**Option C: Offline / Local Installation (GitHub Releases)**
+### Local Archive
 
-DuckDB derives both the installed extension name and the C++ initialization entrypoint (`oracle_duckdb_cpp_init`) from the filename stem before the first `.`. When installing from a local file downloaded from [GitHub Releases](https://github.com/cofin/duckdb-oracle/releases), extract `oracle.duckdb_extension` from the platform archive (`oracle-windows_amd64.zip`, `oracle-linux_amd64.tar.gz`, `oracle-linux_arm64.tar.gz`, or `oracle-osx_arm64.tar.gz`)—or rename `oracle-<platform>.duckdb_extension` to `oracle.duckdb_extension`—before running `INSTALL`:
+Download the archive for your platform from [GitHub Releases](https://github.com/cofin/duckdb-oracle/releases), extract `oracle.duckdb_extension`, and install it from disk:
 
 ```sql
-INSTALL 'C:/path/to/oracle.duckdb_extension';
+INSTALL '/path/to/oracle.duckdb_extension';
 LOAD oracle;
 ```
 
-**2. Attach**
+### Oracle Client Requirement
+
+Installing and loading the extension requires no Oracle libraries on the host. When opening a database connection, the extension loads Oracle Instant Client Basic (19c, 21c, or 23ai) on demand from `OCI_LIB_DIR`, `ORACLE_HOME`, or the system library path (`LD_LIBRARY_PATH` on Linux, `DYLD_LIBRARY_PATH` on macOS, `PATH` on Windows).
+
+## Connecting
+
+Configure credentials with a DuckDB secret and attach the database as a catalog:
 
 ```sql
 CREATE SECRET my_oracle (
     TYPE oracle,
-    USER 'scott',
-    PASSWORD 'tiger',
     HOST 'localhost',
     PORT 1521,
-    SERVICE 'FREEPDB1'
+    SERVICE 'FREEPDB1',
+    USER 'scott',
+    PASSWORD 'tiger'
 );
+
 ATTACH '' AS ora (TYPE oracle, SECRET my_oracle);
 ```
 
-Direct credential strings remain supported for `oracle_query`, `oracle_scan`, and `oracle_execute`, but prefer secrets and attached aliases for normal use.
+### Oracle Wallet & Autonomous Database
 
-**3. Query (Read)**
+Any connection—including Oracle Autonomous Database and TLS-secured instances—can authenticate with an Oracle Wallet directory containing `tnsnames.ora` and wallet files:
 
 ```sql
--- Direct table access (Schema is auto-detected)
-SELECT * FROM ora.employees LIMIT 5;
+CREATE SECRET wallet_oracle (
+    TYPE oracle,
+    SERVICE 'myadb_high',
+    USER 'admin',
+    PASSWORD 'secret',
+    WALLET_PATH '/path/to/wallet'
+);
 
--- Join with local data
-SELECT e.last_name, d.department_name
-FROM ora.employees e
-JOIN local_departments d ON e.department_id = d.id;
+ATTACH '' AS ora_cloud (TYPE oracle, SECRET wallet_oracle);
+```
 
--- Spatial Data (SDO_GEOMETRY returns as GEOMETRY or WKT)
+External password store wallets (`cwallet.sso`) are also supported without specifying a username or password in the secret.
+
+## Querying & Writing
+
+### Reading Tables, Views, and Synonyms
+
+Attached schemas, tables, views, materialized views, and synonyms can be queried like native DuckDB tables. Filters and column projections are pushed down to Oracle automatically:
+
+```sql
+-- Query the default schema
+SELECT empno, ename, sal
+FROM ora.emp
+WHERE deptno = 10;
+
+-- Join Oracle tables with local files
+SELECT e.ename, d.dname
+FROM ora.scott.emp e
+JOIN 'departments.parquet' d ON e.deptno = d.deptno;
+```
+
+### Direct SQL Queries & Commands
+
+Use `oracle_query` to run custom SQL directly on Oracle, and `oracle_execute` to run DDL or DML statements:
+
+```sql
+SELECT * FROM oracle_query('ora', 'SELECT empno, ename FROM scott.emp WHERE sal > 2000');
+
+SELECT oracle_execute('ora', 'TRUNCATE TABLE scott.staging_emp');
+```
+
+> `oracle_query` and `oracle_execute` run raw SQL on the remote database. Treat the query string as trusted input.
+
+### Flashback Queries
+
+Query historical snapshots by System Change Number (SCN) or timestamp using `oracle_scan`:
+
+```sql
+SELECT * FROM oracle_scan('ora', 'SCOTT', 'EMP', as_of_scn := 12345678);
+SELECT * FROM oracle_scan('ora', 'SCOTT', 'EMP', as_of_timestamp := '2026-01-01 00:00:00');
+```
+
+### Spatial & Vector Data
+
+Oracle `MDSYS.SDO_GEOMETRY` columns map to DuckDB `GEOMETRY`, and Oracle 23ai `VECTOR` columns map to `LIST(FLOAT)`:
+
+```sql
+-- Spatial query using DuckDB spatial functions
 SELECT id, ST_Area(geom) FROM ora.gis_parcels;
+
+-- Vector embeddings from Oracle 23ai
+SELECT id, embedding FROM ora.document_chunks LIMIT 10;
 ```
 
-**4. Write**
+### Writing Data
+
+Insert rows from any DuckDB table, view, or file into an attached Oracle table using batched array binding:
 
 ```sql
--- Insert from DuckDB query
-INSERT INTO ora.target_table SELECT * FROM source_parquet_file;
+INSERT INTO ora.scott.target_table
+SELECT * FROM 'source_data.parquet';
 ```
-
-## Features
-
-- **High Performance**: Uses OCI Array Fetch and Array Bind for batch processing.
-- **Spatial Support**: Maps `SDO_GEOMETRY` to DuckDB `GEOMETRY` (or WKT).
-- **Vector Support**: Maps Oracle 23ai `VECTOR` to `LIST(FLOAT)`.
-- **Smart Schema**: Auto-detects current schema and resolves synonyms.
-- **Pushdown**: Pushes `WHERE` clauses and column projections to Oracle.
 
 ## Configuration
 
-Set these variables to tune performance or behavior:
-
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `oracle_enable_pushdown` | `true` | Push filters/projections to Oracle. |
-| `oracle_prefetch_rows` | `1024` | Rows to prefetch per round-trip; validated between 1 and 1,000,000. |
-| `oracle_prefetch_memory` | `0` | OCI prefetch memory in bytes; `0` lets OCI choose, otherwise max 1 GiB. |
-| `oracle_array_size` | `256` | Batch size for OCI fetch/bind; validated between 1 and DuckDB's vector capacity. |
-| `oracle_enable_spatial_types` | `true` | Map `SDO_GEOMETRY` to `GEOMETRY` type. |
-| `oracle_connection_cache` | `true` | Enable connection pooling. |
-| `oracle_connection_limit` | `8` | Maximum cached Oracle sessions per connection key; validated between 1 and 1024. |
-| `oracle_call_timeout_ms` | `30000` | Per-round-trip OCI call timeout in milliseconds; `0` disables timeout, max 3,600,000 (1 hour). |
-| `oracle_stmt_cache_size` | `20` | Per-session OCI statement cache size; `0` disables caching, max 1024. |
-| `oracle_lazy_schema_loading` | `true` | Lazily load schema and object metadata on demand. |
-| `oracle_use_current_schema` | `true` | Auto-detect `CURRENT_SCHEMA` and resolve unqualified object names. |
-| `oracle_metadata_object_types` | `'TABLE,VIEW,SYNONYM,MATERIALIZED VIEW'` | Comma-separated Oracle object types discovered via `ALL_OBJECTS`. |
-| `oracle_metadata_result_limit` | `10000` | Bounded metadata discovery limit; `0` uses the bounded default. |
-
-### Views, Materialized Views, and Synonyms
-
-Tables, views, materialized views, and synonyms are automatically discovered via `ALL_OBJECTS` (controlled by `oracle_metadata_object_types`) and can be queried directly from an attached catalog via `SELECT * FROM ora.<view_name>` (or `SELECT * FROM ora.<schema>.<view_name>`) as well as through `oracle_query()`.
-
-### Flashback Queries (`as_of_scn` / `as_of_timestamp`)
-
-`oracle_scan` accepts optional `as_of_scn` (`UBIGINT`) or `as_of_timestamp` (`VARCHAR`) named parameters (mutually exclusive) to execute Oracle Flashback queries:
-
-```sql
-SELECT * FROM oracle_scan('ora', 'HR', 'EMPLOYEES', as_of_scn := 12345678);
-SELECT * FROM oracle_scan('ora', 'HR', 'EMPLOYEES', as_of_timestamp := '2026-01-01 00:00:00');
-```
-
-## Authentication
-
-### Secrets (Recommended)
-
-```sql
-CREATE SECRET prod (TYPE oracle, USER 'admin', PASSWORD 'secret', SERVICE 'PROD');
-ATTACH '' AS prod_db (TYPE oracle, SECRET prod);
-```
-
-`oracle_query` and `oracle_execute` run raw Oracle SQL. Treat those SQL strings as trusted input; do not build them by interpolating untrusted user values.
-
-### Oracle Wallet
-
-```sql
--- Point WALLET_PATH to a local directory containing tnsnames.ora and ewallet.p12.
-CREATE SECRET adb_prod (
-    TYPE oracle,
-    USER 'admin',
-    PASSWORD 'secret',
-    SERVICE 'adb_alias',
-    WALLET_PATH '/path/to/wallet'
-);
-ATTACH '' AS ora (TYPE oracle, SECRET adb_prod);
-```
+| `oracle_enable_pushdown` | `true` | Push filters and column projections to Oracle. |
+| `oracle_prefetch_rows` | `1024` | Rows prefetched per network round-trip (`1`–`1000000`). |
+| `oracle_prefetch_memory` | `0` | Prefetch buffer size in bytes (`0` lets the client choose, max `1 GiB`). |
+| `oracle_array_size` | `256` | Batch size for array fetches and writes (`1`–`2048`). |
+| `oracle_enable_spatial_types` | `true` | Map `SDO_GEOMETRY` columns to DuckDB `GEOMETRY` (false returns WKT text). |
+| `oracle_connection_cache` | `true` | Pool and reuse Oracle sessions across queries. |
+| `oracle_connection_limit` | `8` | Maximum pooled sessions per connection target (`1`–`1024`). |
+| `oracle_call_timeout_ms` | `30000` | Per-call network timeout in milliseconds (`0` disables timeout, max `1 hour`). |
+| `oracle_stmt_cache_size` | `20` | Prepared statements cached per session (`0` disables caching, max `1024`). |
+| `oracle_lazy_schema_loading` | `true` | Load schema and table metadata on demand rather than upfront. |
+| `oracle_use_current_schema` | `true` | Resolve unqualified table names against the session's `CURRENT_SCHEMA`. |
+| `oracle_metadata_object_types` | `'TABLE,VIEW,SYNONYM,MATERIALIZED VIEW'` | Comma-separated object types exposed in the catalog. |
+| `oracle_metadata_result_limit` | `10000` | Maximum catalog objects returned per discovery query. |
 
 ## Development
 
-**Requirements**: CMake 3.15+, C++17 compiler. No Oracle Instant Client SDK is required to compile the extension or run unit tests; Oracle Instant Client Basic (19c, 21c, or 23ai) is only needed at runtime when running live database integration tests.
+Building the extension and running unit tests require only CMake (3.15+) and a C++17 compiler—no Oracle client headers or libraries are needed at build time.
 
 ```bash
-# Build (no Oracle SDK required)
+# Build the release binary
 make release
 
-# Run Unit Tests (no Oracle DB or Instant Client required)
+# Run offline unit tests
 make test-unit
 
-# Run Integration Tests (installs Linux Instant Client Basic & launches Oracle container)
+# Run live integration tests (requires Docker or Podman)
 make integration
 ```
 
-## Limitations
+## Notes
 
-- **Transaction Management**: Oracle writes are statement-atomic: a successful DuckDB write statement commits to
-  Oracle, a failed write statement rolls back its Oracle work, and Oracle writes are rejected inside explicit DuckDB
-  transaction blocks until true cross-system transaction integration exists.
-- **Object Discovery**: Tables, views, materialized views, and synonyms are discovered via `ALL_OBJECTS` according to `oracle_metadata_object_types` (default `'TABLE,VIEW,SYNONYM,MATERIALIZED VIEW'`) and can be queried directly as `ora.<object_name>` or via `oracle_query()`.
+- **Transactions**: Write statements (`INSERT INTO`) are atomic per statement—each statement commits on completion or rolls back on failure. Writing to Oracle tables inside an explicit DuckDB `BEGIN ... COMMIT` block is not supported.
+- **Disclaimer**: This is an independent community-maintained extension and is not affiliated with or endorsed by Oracle or DuckDB Labs.
