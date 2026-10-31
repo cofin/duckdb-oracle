@@ -58,11 +58,12 @@ ATTACH 'user/password@host:1521/service' AS wallet_missing_attach (
 ----
 WALLET_PATH does not exist
 
-# Existing ATTACH-level WALLET_PATH is accepted and proceeds to normal OCI connection handling.
+# Existing ATTACH-level WALLET_PATH is accepted and proceeds to OCI loading or connection handling.
+# CI runners without Oracle Instant Client fail at lazy libclntsh loading instead of the connection attempt.
 statement error
 ATTACH 'user/password@host:1521/service' AS wallet_ok_attach (
     TYPE oracle,
     WALLET_PATH '.'
 );
 ----
-Cannot connect to database
+<REGEX>:.*(Cannot connect to database|Oracle Instant Client shared library|ORA-|Failed to attach).*

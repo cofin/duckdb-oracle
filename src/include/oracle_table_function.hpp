@@ -3,7 +3,7 @@
 #include "duckdb.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
-#include <oci.h>
+#include "oracle_oci_api.hpp"
 #include "oracle_settings.hpp"
 #include "oracle_connection_manager.hpp"
 

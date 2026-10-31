@@ -2,7 +2,7 @@
 
 #include "duckdb.hpp"
 #include "duckdb/common/types.hpp"
-#include <oci.h>
+#include "oracle_oci_api.hpp"
 
 namespace duckdb {
 

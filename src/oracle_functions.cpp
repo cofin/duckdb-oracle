@@ -12,7 +12,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
-#include <oci.h>
+#include "oracle_oci_api.hpp"
 #include <cstdio>
 
 namespace duckdb {

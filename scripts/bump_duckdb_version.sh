@@ -121,8 +121,22 @@ text = re.sub(r"(duckdb_version:\s*)v[0-9.]+", rf"\g<1>{tag}", text)
 text = re.sub(r"(ci_tools_version:\s*)v[0-9.]+", rf"\g<1>{tag}", text)
 path.write_text(text, encoding="utf-8")
 ' "$PIPELINE" "$TAG"
+
+  if [ -f "extension-ci-tools/.github/workflows/_extension_distribution.yml" ] && [ -f ".github/workflows/release-unsigned.yml" ]; then
+    python3 -c '
+import pathlib, re
+dist = pathlib.Path("extension-ci-tools/.github/workflows/_extension_distribution.yml").read_text(encoding="utf-8")
+m = re.search(r"vcpkg_commit:\s*(?:.*\n){1,4}?\s*default:\s*\"([0-9a-f]{40})\"", dist)
+if m:
+    commit = m.group(1)
+    rel_path = pathlib.Path(".github/workflows/release-unsigned.yml")
+    rel_text = rel_path.read_text(encoding="utf-8")
+    rel_text = re.sub(r"(vcpkgGitCommitId:\s*)[0-9a-f]{40}", rf"\g<1>{commit}", rel_text)
+    rel_path.write_text(rel_text, encoding="utf-8")
+'
+  fi
 fi
-echo "    (updated @v refs, duckdb_version, ci_tools_version)"
+echo "    (updated @v refs, duckdb_version, ci_tools_version, and vcpkgGitCommitId)"
 
 # --- 4. README supported-version banner --------------------------------------
 note "$README (supported DuckDB version ${CUR} -> ${TAG})"

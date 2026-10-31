@@ -99,19 +99,15 @@ jobs:
           - os: ubuntu-24.04
             arch: x86_64
             platform: linux
-            setup_script: scripts/setup_oci_linux.sh
           - os: ubuntu-24.04-arm
             arch: aarch64
             platform: linux
-            setup_script: scripts/setup_oci_linux.sh
           - os: macos-14
             arch: arm64
             platform: macos
-            setup_script: scripts/setup_oci_macos.sh
-          - os: windows-2022
+          - os: windows-latest
             arch: x86_64
             platform: windows
-            setup_script: scripts/setup_oci_windows.ps1
 
     steps:
       - name: Checkout
@@ -125,7 +121,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libaio1t64 unzip ninja-build || sudo apt-get install -y libaio1 unzip ninja-build
+          sudo apt-get install -y ninja-build
 
       - name: Install Dependencies (macOS)
         if: runner.os == 'macOS'
@@ -135,19 +131,7 @@ jobs:
       - name: Install Dependencies (Windows)
         if: runner.os == 'Windows'
         run: |
-          choco install ninja
-
-      - name: Install Oracle Instant Client
-        shell: bash
-        env:
-          RUNNER_OS_NAME: ${{ runner.os }}
-          SETUP_SCRIPT: ${{ matrix.setup_script }}
-        run: |
-          if [ "$RUNNER_OS_NAME" == "Windows" ]; then
-            pwsh -ExecutionPolicy Bypass -File "$SETUP_SCRIPT"
-          else
-            "./$SETUP_SCRIPT"
-          fi
+          choco install ninja -y
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -168,27 +152,54 @@ jobs:
              fi
           fi
 
+      - name: Setup shorter path for vcpkg (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $basePath = Split-Path -Path (Split-Path -Path $env:GITHUB_WORKSPACE -Parent) -Parent
+          $vcpkgRoot = "$basePath/vcpkg"
+          echo "VCPKG_WINDOWS_ROOT=$vcpkgRoot" >> $env:GITHUB_ENV
+          echo "VCPKG_TOOLCHAIN_PATH=$vcpkgRoot/scripts/buildsystems/vcpkg.cmake" >> $env:GITHUB_ENV
+
       - name: Setup vcpkg (Windows)
         if: runner.os == 'Windows'
         uses: lukka/run-vcpkg@v11.1
+        env:
+          VCPKG_BINARY_SOURCES: clear;http,https://vcpkg-cache.duckdb.org,read
+          VCPKG_TARGET_TRIPLET: x64-windows-static-release
+          VCPKG_HOST_TRIPLET: x64-windows-static-release
+          VCPKG_OVERLAY_PORTS: ${{ github.workspace }}/extension-ci-tools/vcpkg_ports
+          VCPKG_OVERLAY_TRIPLETS: ${{ github.workspace }}/extension-ci-tools/toolchains
         with:
-          vcpkgGitCommitId: ce613c41372b23b1f51333815feb3edd87ef8a8b
+          vcpkgGitCommitId: 84bab45d415d22042bd0b9081aea57f362da3f35
           vcpkgGitURL: https://github.com/microsoft/vcpkg.git
-
-      - name: Setup MSVC Developer Command Prompt (Windows)
-        if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
+          vcpkgDirectory: ${{ env.VCPKG_WINDOWS_ROOT }}
 
       - name: Build Extension (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: cmd
         env:
-          VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}\vcpkg\scripts\buildsystems\vcpkg.cmake
-          VCPKG_TARGET_TRIPLET: x64-windows
+          VCPKG_BINARY_SOURCES: clear;http,https://vcpkg-cache.duckdb.org,read
+          VCPKG_TARGET_TRIPLET: x64-windows-static-release
+          VCPKG_HOST_TRIPLET: x64-windows-static-release
+          VCPKG_OVERLAY_PORTS: ${{ github.workspace }}/extension-ci-tools/vcpkg_ports
+          VCPKG_OVERLAY_TRIPLETS: ${{ github.workspace }}/extension-ci-tools/toolchains
+          BUILD_SHELL: 1
+          DUCKDB_PLATFORM: windows_amd64
+          DUCKDB_PLATFORM_RTOOLS: 0
+          CC: cl
+          CXX: cl
+          GEN: ninja
         run: |
-          if (Test-Path "C:\Program Files\Git\usr\bin\link.exe") {
-            Move-Item -Force "C:\Program Files\Git\usr\bin\link.exe" "C:\Program Files\Git\usr\bin\link-git.exe"
-          }
+          setlocal EnableDelayedExpansion
+          if exist "C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Auxiliary\Build\vcvars64.bat" (
+            call "C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          ) else (
+            call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          )
+          if exist "C:\Program Files\Git\usr\bin\link.exe" (
+            mv "C:\Program Files\Git\usr\bin\link.exe" "C:\Program Files\Git\usr\bin\link-git.exe"
+          )
           make release
 
       - name: Build Extension (Unix)
