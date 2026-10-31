@@ -55,7 +55,7 @@ SKIP_DOWNLOAD=0
 OCI_HOME=""
 
 # 1. Check if ORACLE_HOME is set and valid
-if [ -n "${ORACLE_HOME:-}" ] && [ -f "$ORACLE_HOME/libclntsh.so" ] && [ -f "$ORACLE_HOME/sdk/include/oci.h" ]; then
+if [ -n "${ORACLE_HOME:-}" ] && [ -f "$ORACLE_HOME/libclntsh.so" ]; then
     echo "Using existing system ORACLE_HOME: $ORACLE_HOME"
     OCI_HOME="$ORACLE_HOME"
     SKIP_DOWNLOAD=1
@@ -63,34 +63,32 @@ else
     # 2. Check if we have a valid local install
     # We look for instantclient_* directory inside INSTALL_DIR
     EXISTING_HOME=$(find "$INSTALL_DIR" -maxdepth 1 -name "instantclient_*" | head -n 1)
-    if [ -n "$EXISTING_HOME" ] && [ -f "$EXISTING_HOME/libclntsh.so" ] && [ -f "$EXISTING_HOME/sdk/include/oci.h" ]; then
-         echo "Found valid cached Oracle SDK at: $EXISTING_HOME"
+    if [ -n "$EXISTING_HOME" ] && [ -f "$EXISTING_HOME/libclntsh.so" ]; then
+         echo "Found valid cached Oracle Instant Client at: $EXISTING_HOME"
          OCI_HOME="$EXISTING_HOME"
          SKIP_DOWNLOAD=1
     fi
 fi
 
 if [ "$SKIP_DOWNLOAD" -eq 0 ]; then
-    echo "No valid Oracle SDK found. Downloading..."
+    echo "No valid Oracle Instant Client found. Downloading..."
     
     # Ensure a clean install location to avoid unzip prompts on CI reruns
     # But only clean subdirs, don't remove INSTALL_DIR itself
     rm -rf "$INSTALL_DIR/instantclient_*" "$INSTALL_DIR"/*.zip
 
-    echo "Downloading Oracle Instant Client ${OCI_VER_FULL} for ${OCI_ARCH}..."
+    echo "Downloading Oracle Instant Client Basic ${OCI_VER_FULL} for ${OCI_ARCH}..."
     download_instant_client_zip "basic" "$INSTALL_DIR/basic.zip"
-    download_instant_client_zip "sdk" "$INSTALL_DIR/sdk.zip"
 
     echo "Extracting..."
     unzip -oq "$INSTALL_DIR/basic.zip" -d "$INSTALL_DIR"
-    unzip -oq "$INSTALL_DIR/sdk.zip" -d "$INSTALL_DIR"
 
     # The zip extracts to a folder like 'instantclient_23_26'
     OCI_HOME=$(find "$INSTALL_DIR" -maxdepth 1 -name "instantclient_*" | head -n 1)
     echo "Oracle Home installed at: $OCI_HOME"
     
     # Cleanup zips
-    rm -f "$INSTALL_DIR/basic.zip" "$INSTALL_DIR/sdk.zip"
+    rm -f "$INSTALL_DIR/basic.zip"
 fi
 
 echo "Oracle Home: $OCI_HOME"

@@ -6,83 +6,15 @@ set(TARGET_NAME oracle)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# OCI Library Detection
-if(DEFINED ORACLE_HOME AND NOT "${ORACLE_HOME}" STREQUAL "")
-    message(STATUS "Using CMake ORACLE_HOME: ${ORACLE_HOME}")
-elseif(DEFINED ENV{ORACLE_HOME} AND NOT "$ENV{ORACLE_HOME}" STREQUAL "")
-    set(ORACLE_HOME $ENV{ORACLE_HOME})
-    message(STATUS "Found ORACLE_HOME: ${ORACLE_HOME}")
-else()
-    # Check for local CI install
-    file(GLOB LOCAL_OCI_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/oracle_sdk/instantclient_*")
-    if(LOCAL_OCI_DIRS)
-        list(SORT LOCAL_OCI_DIRS)
-        list(REVERSE LOCAL_OCI_DIRS)
-        list(GET LOCAL_OCI_DIRS 0 ORACLE_HOME)
-        message(STATUS "Found local CI ORACLE_HOME: ${ORACLE_HOME}")
-    else()
-        # Fallback to common system locations (e.g., Linux Instant Client RPM/zip install)
-        file(GLOB SYSTEM_OCI_DIRS "/usr/share/oracle/instantclient_*" "/opt/oracle/instantclient_*")
-        if(SYSTEM_OCI_DIRS)
-            list(SORT SYSTEM_OCI_DIRS)
-            list(REVERSE SYSTEM_OCI_DIRS)
-            list(GET SYSTEM_OCI_DIRS 0 ORACLE_HOME)
-            message(STATUS "ORACLE_HOME not set, found system Instant Client: ${ORACLE_HOME}")
-        else()
-            set(ORACLE_HOME "/usr/share/oracle/instantclient_23_26")
-            message(STATUS "ORACLE_HOME not set, using default: ${ORACLE_HOME}")
-        endif()
-    endif()
-endif()
-
-find_library(OCI_LIBRARY NAMES clntsh oci HINTS ${ORACLE_HOME} ${ORACLE_HOME}/lib ${ORACLE_HOME}/sdk/lib/msvc)
-find_library(OCICORE_LIBRARY NAMES clntshcore HINTS ${ORACLE_HOME} ${ORACLE_HOME}/lib)
-find_library(NNZ_LIBRARY NAMES nnz HINTS ${ORACLE_HOME} ${ORACLE_HOME}/lib)
-find_path(OCI_INCLUDE_DIR NAMES oci.h HINTS ${ORACLE_HOME}/sdk/include ${ORACLE_HOME}/include)
-
-if (NOT OCI_LIBRARY OR NOT OCI_INCLUDE_DIR)
-    message(FATAL_ERROR "OCI library or include headers not found. Please set ORACLE_HOME environment variable.")
-endif()
-
-# Additional Oracle libraries (optional but recommended for full functionality)
-if (OCICORE_LIBRARY)
-    message(STATUS "Found libclntshcore: ${OCICORE_LIBRARY}")
-endif()
-if (NNZ_LIBRARY)
-    message(STATUS "Found libnnz: ${NNZ_LIBRARY}")
-endif()
-
 set(EXTENSION_NAME ${TARGET_NAME}_extension)
 set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
 
 project(${TARGET_NAME})
-
-include(CheckCXXSourceCompiles)
-set(CMAKE_REQUIRED_INCLUDES ${OCI_INCLUDE_DIR})
-check_cxx_source_compiles("
-#include <oci.h>
-#ifndef SQLT_JSON
-#error SQLT_JSON missing
-#endif
-#ifndef SQLT_VEC
-#error SQLT_VEC missing
-#endif
-#ifndef SQLT_BOL
-#error SQLT_BOL missing
-#endif
-int main() {
-    return SQLT_JSON == 0 || SQLT_VEC == 0 || SQLT_BOL == 0;
-}
-" ORACLE_OCI_HAS_NATIVE_JSON_VECTOR_TYPES)
-unset(CMAKE_REQUIRED_INCLUDES)
-if (NOT ORACLE_OCI_HAS_NATIVE_JSON_VECTOR_TYPES)
-    message(FATAL_ERROR "Oracle Instant Client SDK headers must define SQLT_JSON, SQLT_VEC, and SQLT_BOL. Install Oracle Instant Client SDK 23.6 or newer; the setup scripts target the current 23.26 line.")
-endif()
-
 include_directories(src/include)
 
 set(EXTENSION_SOURCES
     src/oracle_extension.cpp
+    src/oracle_oci_api.cpp
     src/oracle_connection.cpp
     src/oracle_connection_resolver.cpp
     src/oracle_connection_manager.cpp
@@ -107,22 +39,10 @@ set(EXTENSION_SOURCES
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
-# Link OCI in both the static library as the loadable extension
-target_link_libraries(${EXTENSION_NAME} ${OCI_LIBRARY})
-target_link_libraries(${LOADABLE_EXTENSION_NAME} ${OCI_LIBRARY})
-
-# Link additional Oracle libraries if found (required for ARM64 and some configurations)
-if (OCICORE_LIBRARY)
-    target_link_libraries(${EXTENSION_NAME} ${OCICORE_LIBRARY})
-    target_link_libraries(${LOADABLE_EXTENSION_NAME} ${OCICORE_LIBRARY})
+if(CMAKE_DL_LIBS)
+    target_link_libraries(${EXTENSION_NAME} ${CMAKE_DL_LIBS})
+    target_link_libraries(${LOADABLE_EXTENSION_NAME} ${CMAKE_DL_LIBS})
 endif()
-if (NNZ_LIBRARY)
-    target_link_libraries(${EXTENSION_NAME} ${NNZ_LIBRARY})
-    target_link_libraries(${LOADABLE_EXTENSION_NAME} ${NNZ_LIBRARY})
-endif()
-
-target_include_directories(${EXTENSION_NAME} PRIVATE ${OCI_INCLUDE_DIR})
-target_include_directories(${LOADABLE_EXTENSION_NAME} PRIVATE ${OCI_INCLUDE_DIR})
 
 install(
   TARGETS ${EXTENSION_NAME}
