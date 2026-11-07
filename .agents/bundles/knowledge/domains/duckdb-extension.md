@@ -4,13 +4,40 @@ title: DuckDB 2.0 Vectorized Engine, Type System & Extension APIs
 description: Core DuckDB v2.0.0 vectorized execution primitives, VectorBuffer size synchronization, const/mutable Vector access, Identifier/Expression APIs, and TableFunction optimizer hooks.
 scope: domain
 domain: duckdb
-tags: [duckdb, vectorized-execution, datachunk, logical-type, table-function]
 status: stable
+tags: [duckdb, vectorized-execution, datachunk, logical-type, table-function]
+generated:
+  by: flow/0.27.0
+  at: 2026-11-07T17:36:00Z
+verified:
+  - by: agent:flow-setup
+    at: 2026-11-07T17:36:00Z
+    commit: 36539f3
+sources:
+  - id: oracle-scan
+    resource: src/oracle_scan.cpp::OracleQueryFunction
+    title: TableFunction scan execution, SetChildCardinality, and optimizer hooks
+  - id: oracle-insert
+    resource: src/storage/oracle_insert.cpp::PhysicalOracleInsert::GetDataInternal
+    title: Physical sink source output cardinality synchronization
+  - id: oracle-write
+    resource: src/storage/oracle_write.cpp::OracleWriteBatch
+    title: UnifiedVectorFormat input vector normalization for bulk writes
+  - id: oracle-pushdown
+    resource: src/oracle_pushdown.cpp::OraclePushdownComplexFilter
+    title: DuckDB 2.0 Expression accessor methods in filter pushdown
 ---
 
 # DuckDB 2.0 Vectorized Engine, Type System & Extension APIs
 
-DuckDB (`v2.0.0`) executes queries using a vectorized Morsel-driven pipeline where operators process batches of up to `STANDARD_VECTOR_SIZE` (`2048`) rows in `DataChunk` objects.
+<!-- truth: start -->
+- Always call `output.SetChildCardinality(row_count)` (never `SetCardinalityUnsafe(row_count)`) after populating flat vectors via `FlatVector::GetDataMutable`, `FlatVector::SetNull`, or `StringVector::AddString`, because DuckDB `v2.0.0` `VectorOperations::IsNull` iterates over each `VectorBuffer`'s `v_size` rather than `DataChunk::size()`[^oracle-scan][^oracle-insert].
+- Use `FlatVector::GetDataMutable<T>`, `FlatVector::ValidityMutable`, `FlatVector::SetNull`, and `ListVector::GetEntryMutable` for writable vector access, and `col_vec.ToUnifiedFormat(count, vdata)` for arbitrary sink input vectors[^oracle-write].
+- Use `duckdb::Identifier` in `table_function_bind_t` (`vector<Identifier> &names`) and `Catalog::GetDefaultSchema()` (`optional<Identifier>`), and use `expr.GetExpressionClass()` / `expr.GetExpressionType()` / `expr.GetReturnType()` / `expr.GetAlias()` on `Expression` nodes[^oracle-pushdown].
+- Wire all DuckDB 2.0 `TableFunction` optimizer callbacks (`projection_pushdown`, `filter_pushdown`, `filter_prune`, `pushdown_complex_filter`, `get_bind_info`, `get_table_entry`, `cardinality`, `to_string`) on `oracle_scan`[^oracle-scan].
+<!-- truth: end -->
+
+DuckDB (`v2.0.0`) executes queries using a vectorized Morsel-driven pipeline where operators process batches of up to `STANDARD_VECTOR_SIZE` (`2048`) rows in `DataChunk` objects[^oracle-scan].
 
 ## DataChunk & VectorBuffer Memory Architecture (`v2.0.0`)
 
@@ -34,7 +61,7 @@ DuckDB (`v2.0.0`) executes queries using a vectorized Morsel-driven pipeline whe
 
 ### Key Vector Primitives & DuckDB 2.0 Contracts
 
-1. **`DataChunk::SetChildCardinality(count)` vs `SetCardinalityUnsafe(count)`**:
+1. **`DataChunk::SetChildCardinality(count)` vs `SetCardinalityUnsafe(count)`**[^oracle-scan][^oracle-insert]:
    - Every `VectorBuffer` in DuckDB `v2.0.0` tracks its own element count (`v_size`, returned by `vector.size()`).
    - Core vectorized operators such as `VectorOperations::IsNull` and `VectorOperations::IsNotNull` (`duckdb/src/common/vector_operations/null_operations.cpp`) iterate over `0..input.size()`, not `DataChunk::size()`.
    - Table functions (`OracleQueryFunction` in `src/oracle_scan.cpp`) and physical source operators (`PhysicalOracleInsert::GetDataInternal` in `src/storage/oracle_insert.cpp`) that populate vectors via `FlatVector::GetDataMutable`, `FlatVector::SetNull`, or `StringVector::AddString` **must** call `output.SetChildCardinality(row_count)` (which calls `FlatVector::SetSize(v, row_count)` on every flat/constant child vector and sets `DataChunk::count`) rather than `SetCardinalityUnsafe(row_count)`.
@@ -47,7 +74,7 @@ DuckDB (`v2.0.0`) executes queries using a vectorized Morsel-driven pipeline whe
      Vector varchar_vec(LogicalType::VARCHAR, VectorDataInitialization::UNINITIALIZED);
      ```
 
-3. **`UnifiedVectorFormat` for Arbitrary Input Vectors**:
+3. **`UnifiedVectorFormat` for Arbitrary Input Vectors**[^oracle-write]:
    - Physical sink operators (`OracleWriteBatch` in `src/storage/oracle_write.cpp`) receive chunks whose columns may be `FLAT_VECTOR`, `CONSTANT_VECTOR`, or `DICTIONARY_VECTOR`.
    - Call `col_vec.ToUnifiedFormat(count, vdata)` once per column and index via `auto idx = vdata.sel->get_index(row_idx)` and `vdata.validity.RowIsValid(idx)` combined with `UnifiedVectorFormat::GetData<T>(vdata)` instead of calling `col_vec.GetValue(row_idx)` per row.
 
@@ -62,7 +89,7 @@ DuckDB (`v2.0.0`) executes queries using a vectorized Morsel-driven pipeline whe
    - `Catalog::GetDefaultSchema()` returns `optional<Identifier>` (`src/include/oracle_catalog.hpp`, `src/storage/oracle_schema_entry.cpp`).
    - `SchemaCatalogEntry::Scan(ClientContext &context, CatalogType type, const std::function<void(CatalogEntry &)> &callback)` requires the `ClientContext &` overload when enumerating entries for `duckdb_tables()` and `duckdb_views()`.
 
-2. **Encapsulated `Expression` & `ParsedExpression` Accessors**:
+2. **Encapsulated `Expression` & `ParsedExpression` Accessors**[^oracle-pushdown]:
    - Direct member fields (`expr.expression_class`, `expr.type`, `expr.return_type`, `expr.alias`) are private in DuckDB `v2.0.0`.
    - Use `expr.GetExpressionClass()`, `expr.GetExpressionType()`, `expr.GetReturnType()`, and `expr.GetAlias()` (`src/oracle_pushdown.cpp`).
 
@@ -103,3 +130,8 @@ oracle_scan.get_table_entry = OracleGetTableEntry;
 | `get_table_entry` | `OracleGetTableEntry` | Exposes `optional_ptr<CatalogEntry>(bind_data.table_entry)` to DuckDB optimizer rules (`LogicalGet::GetTable()`). |
 | `cardinality` | `OracleCardinality` | Returns `NodeStatistics(estimated_row_count)` populated from `ALL_TABLES.NUM_ROWS` during `OracleTableEntry::LoadColumns`. |
 | `to_string` | `OracleToString` | Surfaces `Table` / `Query` and pushed-down `Filters` in `EXPLAIN` plan output. |
+
+[^oracle-scan]: `src/oracle_scan.cpp::OracleQueryFunction` — `TableFunction` scan execution, `SetChildCardinality`, and optimizer hooks.
+[^oracle-insert]: `src/storage/oracle_insert.cpp::PhysicalOracleInsert::GetDataInternal` — Physical sink source output cardinality synchronization.
+[^oracle-write]: `src/storage/oracle_write.cpp::OracleWriteBatch` — `UnifiedVectorFormat` input vector normalization for bulk writes.
+[^oracle-pushdown]: `src/oracle_pushdown.cpp::OraclePushdownComplexFilter` — DuckDB 2.0 `Expression` accessor methods in filter pushdown.

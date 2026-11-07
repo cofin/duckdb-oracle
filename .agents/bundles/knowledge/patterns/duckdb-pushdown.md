@@ -4,19 +4,40 @@ title: DuckDB Filter & Projection Pushdown Optimization
 description: Translating DuckDB TableFilterSet expressions and column projections into Oracle SQL WHERE clauses and projection lists.
 scope: pattern
 domain: duckdb
-tags: [duckdb, pushdown, table-filter-set, query-optimization, sql-generation]
 status: stable
+tags: [duckdb, pushdown, table-filter-set, query-optimization, sql-generation]
+generated:
+  by: flow/0.27.0
+  at: 2026-11-07T17:36:00Z
+verified:
+  - by: agent:flow-setup
+    at: 2026-11-07T17:36:00Z
+    commit: 36539f3
+sources:
+  - id: oracle-scan
+    resource: src/oracle_scan.cpp::BuildOutputColumnMapping
+    title: Projection pushdown and filter column pruning in OracleInitGlobal
+  - id: pushdown-complex
+    resource: src/oracle_pushdown.cpp::OraclePushdownComplexFilter
+    title: Complex filter pushdown extraction and expression removal
+  - id: pushdown-set
+    resource: src/oracle_pushdown.cpp::OraclePushdownFilterSet
+    title: TableFilterSet translation and empty-string NULL guard
 ---
 
 # DuckDB Filter & Projection Pushdown Optimization
 
-Without pushdown optimization, DuckDB table scans over external databases fetch all columns and all rows across the network, executing filters and projections locally. This wastes network bandwidth and database I/O.
+<!-- truth: start -->
+- Defer Oracle `SELECT` query generation and `OCIStmtPrepare` to `OracleInitGlobal` (`src/oracle_scan.cpp`), using `BuildOutputColumnMapping(input.column_ids, input.projection_ids, ...)` (`filter_prune = true`) so filter-only columns are omitted from the `SELECT` list and `OCIDefineByPos` buffers[^oracle-scan].
+- Never push empty string literals (`''`) into Oracle `WHERE` clauses (`ConstantToSQL`, `TryExtractLike`, `TryExtractPrefix`, `TryExtractSuffix`, `TryExtractContains` in `src/oracle_pushdown.cpp`), because Oracle treats `''` as `NULL` (`UNKNOWN` in comparisons) whereas DuckDB treats `''` as a non-null zero-length string[^pushdown-set].
+- Skip `DYNAMIC_FILTER` and `BLOOM_FILTER` entries in `TableFilterSet` (`return true` with empty SQL) so local dynamic join filters do not abort static filter pushdown[^pushdown-set].
+<!-- truth: end -->
 
-DuckDB Oracle implements both **Projection Pushdown** and **Filter Pushdown** in `src/oracle_pushdown.cpp`.
+DuckDB Oracle implements both **Projection Pushdown** and **Filter Pushdown** across `src/oracle_scan.cpp` and `src/oracle_pushdown.cpp` so only referenced columns and matching rows cross the network[^oracle-scan][^pushdown-complex].
 
 ## 1. Projection Pushdown & Filter Column Pruning (`OracleInitGlobal`)
 
-When a query requests a subset of columns (`SELECT colA FROM ora.table WHERE colB = 10`), DuckDB provides `input.column_ids` and `input.projection_ids` (`filter_prune = true`) in `OracleInitGlobal` (`src/oracle_scan.cpp`):
+When a query requests a subset of columns (`SELECT colA FROM ora.table WHERE colB = 10`), DuckDB provides `input.column_ids` and `input.projection_ids` (`filter_prune = true`) in `OracleInitGlobal` (`src/oracle_scan.cpp`)[^oracle-scan]:
 
 ```cpp
 // In OracleInitGlobal: map projected output columns back to active bind columns
@@ -25,11 +46,11 @@ state->column_mapping = BuildOutputColumnMapping(input.column_ids, input.project
 
 - When `projection_ids` is populated (`filter_prune = true`), `BuildOutputColumnMapping` maps each output vector column (`0..projection_ids.size()-1`) to `input.column_ids[input.projection_ids[i]]`.
 - Columns used exclusively in pushed-down `WHERE` filters are excluded from `state->active_bind_cols`, omitting them from both the generated Oracle `SELECT` list and OCI `OCIDefineByPos` buffer allocations.
-- SQL query construction and `OCIStmtPrepare` are deferred to `OracleInitGlobal` after the optimizer finishes column projection and filter pushdown (`TableFilterSet` and `OraclePushdownComplexFilter`).
+- SQL query construction and `OCIStmtPrepare` are deferred to `OracleInitGlobal` after the optimizer finishes column projection and filter pushdown (`TableFilterSet` and `OraclePushdownComplexFilter`)[^oracle-scan].
 
 ## 2. Filter Pushdown (`TableFilterSet` & `TableFilterType`)
 
-DuckDB `v2.0.0` passes filter constraints to the table function via `TableFilterSet` and `OraclePushdownComplexFilter`:
+DuckDB `v2.0.0` passes filter constraints to the table function via `TableFilterSet` and `OraclePushdownComplexFilter`[^pushdown-complex][^pushdown-set]:
 
 ```
 TableFilterSet (Iterative Entries() -> FilterEntry{idx_t col_idx, TableFilter &filter})
@@ -45,7 +66,7 @@ TableFilterSet (Iterative Entries() -> FilterEntry{idx_t col_idx, TableFilter &f
 
 ### Translating to Oracle SQL (`src/oracle_pushdown.cpp`)
 
-`OraclePushdownComplexFilter` and `OraclePushdownFilterSet` translate supported DuckDB filter expressions into Oracle `WHERE` clauses while checking `bind_data.pushdown_eligible[col_idx]`:
+`OraclePushdownComplexFilter` and `OraclePushdownFilterSet` translate supported DuckDB filter expressions into Oracle `WHERE` clauses while checking `bind_data.pushdown_eligible[col_idx]`[^pushdown-complex]:
 
 ```cpp
 void OraclePushdownComplexFilter(ClientContext &, LogicalGet &get,
@@ -84,4 +105,8 @@ void OraclePushdownComplexFilter(ClientContext &, LogicalGet &get,
 
 ### Fallback Invariant
 
-If an expression contains functions not guaranteed to have byte-identical semantics in Oracle (e.g., regex matching, complex collations, custom UDFs), the transformer returns `false`. DuckDB retains the expression in `expressions` and evaluates it in memory on the returned chunk, guaranteeing semantic correctness.
+If an expression contains functions or empty-string literals not guaranteed to have identical semantics in Oracle, the translator returns `false`. DuckDB retains the expression in `expressions` and evaluates it in memory on the returned chunk, guaranteeing semantic correctness[^pushdown-complex].
+
+[^oracle-scan]: `src/oracle_scan.cpp::BuildOutputColumnMapping` — Projection pushdown and filter column pruning in `OracleInitGlobal`.
+[^pushdown-complex]: `src/oracle_pushdown.cpp::OraclePushdownComplexFilter` — Complex filter pushdown extraction and expression removal.
+[^pushdown-set]: `src/oracle_pushdown.cpp::OraclePushdownFilterSet` — `TableFilterSet` translation and empty-string `NULL` guard.
