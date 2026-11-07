@@ -1,62 +1,68 @@
 ---
 type: Standard
 title: Engineering Discipline & Verification Standards
-description: TDD verification strategies, red-green-refactor cycles, signed conventional commits, branch-local archiving, and zero-slop code standards.
+description: Public-seam vertical-slice TDD, hypothesis-driven bug diagnosis, signed conventional commits, and zero-slop code standards.
 scope: standard
 domain: workflow
-tags: [flow, discipline, tdd, conventional-commits, code-standards, verification]
 status: stable
+tags: [flow, discipline, tdd, conventional-commits, code-standards, verification]
+generated:
+  by: flow/0.27.0
+  at: 2026-11-07T17:36:00Z
+verified:
+  - by: agent:flow-setup
+    at: 2026-11-07T17:36:00Z
+    commit: 36539f3
+sources:
+  - id: makefile
+    resource: Makefile
+    title: Build, lint, unit test, and integration test verification gates
+  - id: unit-surface
+    resource: test/unit_tests/test_public_surface.test
+    title: Public-seam extension surface verification test
 ---
 
 # Engineering Discipline & Verification Standards
 
-High-quality software delivery in this repository requires strict adherence to engineering standards across testing, version control, code aesthetics, and spec lifecycle management.
+<!-- truth: start -->
+- Plan and execute **vertical slices**: each task worksheet combines production C++ changes and canonical `test/unit_tests/` or `test/integration_tests/` sqllogictest assertions in a single `@executor` turn and a single atomic signed commit—never split work into horizontal "write all tests" vs "write all code" tasks[^makefile][^unit-surface].
+- Test through confirmed public seams (`ATTACH`, `oracle_scan`, `oracle_query`, `oracle_execute`, `CREATE SECRET`) without mocking the System Under Test or writing tautological assertions[^unit-surface].
+- Every commit must be cryptographically signed (`commit.gpgsign = true`) using Conventional Commits (`<type>(<scope>): <summary>`), staging only task-owned paths. Never create or mutate Git tags, and never push without explicit user instruction.
+- Write direct, present-tense prose and code with zero historical sediment, zero count-prefixed buzzwords, and zero AI puffery.
+<!-- truth: end -->
 
-## 1. TDD Verification Strategies
+## 1. Public-Seam Vertical-Slice TDD & Verification Strategies
 
-Every task worksheet must select and justify exactly one `verification_strategy`:
+Every task worksheet selects and justifies one `verification_strategy`[^makefile]:
 
 | Strategy | When to Select | Required Evidence |
 | :--- | :--- | :--- |
-| `behavior_tdd` | New observable features or behavior | **Red-Green-Refactor**: Focused test fails because implementation is absent; minimal implementation makes it green; refactor preserves green. |
-| `regression_tdd` | Defect and bug fixes | **Reproduction Test**: Isolated test reproduces the failure against baseline code; targeted fix turns it green. |
-| `characterization` | Behavior-preserving refactors or dead code removal | Green baseline test evidence prior to changes; byte-for-byte or behaviorally identical green test output post-refactor. |
-| `static_validation` | Manifests, configurations, tooling, build rules | Native tool/compiler invocation (`clang-tidy`, `clang-format`, CMake syntax check); isolated representative failure proves the gate catches violations. |
-| `documentation_validation`| Markdown docs, OKF chapters, guides | Clean link validation, formatting check, and documentation structure verification. |
-| `integration_acceptance` | Complex multi-system contract composition | End-to-end integration test (`make integration`) plus injected negative tests proving refusal paths. |
+| `behavior_tdd` | New observable features or behavior | **Red-Green-Refactor in One Vertical Slice**: Add focused sqllogictest assertion in canonical `test/unit_tests/` or `test/integration_tests/` file, observe expected failure, implement minimal production C++ change to make it green, and refactor while green. |
+| `regression_tdd` | Defect and bug fixes | **Reproduction Test**: Focused sqllogictest reproduces the defect against baseline code; targeted fix turns it green. |
+| `characterization` | Behavior-preserving refactors or dead code removal | Green `make test-unit` / `make integration` baseline prior to changes; identical green test output post-refactor. |
+| `static_validation` | Manifests, configurations, tooling, build rules | `make lint` (`clang-format`, `clang-tidy`) and `make release`; isolated representative violation proves the gate catches errors. |
+| `documentation_validation` | Markdown docs, OKF chapters, guides | Relative link validation, `description.yml` parity, and structure verification. |
+| `integration_acceptance` | Multi-system Oracle container workflows | End-to-end `make integration` against `gvenzl/oracle-free:23-slim` plus negative error-path assertions. |
 
-### The Two-Task TDD Spec Split
-When planning non-trivial features in `spec.md`, tasks must be split into two discrete tasks:
-1. **"Write Tests" Task**: Adds failing unit or integration tests (e.g. in `test/unit_tests/` or `test/integration_tests/`) and runs them freshly to verify they fail for the intended reason (Red).
-2. **"Implement Feature" Task**: Implements the minimal production code to turn the tests green (Green), followed by refactoring (Refactor).
+### Hypothesis-Driven Bug Diagnosis Loop
 
-## 2. Commit Discipline
+When diagnosing a failing test or runtime bug:
+1. Formulate a falsifiable root-cause hypothesis anchored to `src/<file>.cpp::Symbol`.
+2. Add a tight reproduction or single-variable `[DEBUG-<id>]` trace if needed.
+3. Verify the hypothesis against fresh execution output, remove all `[DEBUG-<id>]` instrumentation before committing, and lock in a permanent regression test in the canonical `.test` file[^unit-surface].
 
-1. **Signed Commits**:
-   - Every commit must be cryptographically signed (`commit.gpgsign = true`).
-2. **Conventional Commits Format**:
-   - Commits follow `<type>(<scope>): <summary>` (e.g., `feat(oracle): add OCI array bind support for INSERT`, `fix(pushdown): quote reserved keywords in column pushdown`).
-   - Summary is written in present-tense imperative mood ("add", not "added" or "adds").
-3. **One Functional Commit Per Task**:
-   - Each task produces exactly one functional commit containing only task-owned paths.
-   - Never stage broadly (`git add .` or `git add -A` in a dirty checkout is prohibited).
-   - Never force-add files ignored by `.gitignore` or `.agents/.gitignore`.
-4. **Local Commits by Default**:
-   - Commits remain strictly local unless the user explicitly requests a push.
-   - Pushing happens incrementally after lint checks pass (`make lint`).
-5. **Git Tag Immutability**:
-   - Agents are strictly forbidden from creating, moving, force-updating, or deleting Git tags. Tags are immutable release marks governed by CI automation.
+## 2. Commit & Branch Discipline
 
-## 3. Branch-Local Spec Archiving
+1. **Signed Conventional Commits**: Every commit is signed (`commit.gpgsign = true`) and formatted as `<type>(<scope>): <summary>` in present-tense imperative mood.
+2. **One Functional Commit Per Task**: Each vertical-slice task produces one atomic commit staging only task-owned paths (`git add <exact-paths>`).
+3. **Local by Default & Tag Immutability**: Commits stay local unless the user explicitly asks to push or open a PR. Never create, move, force-update, or delete Git tags.
+4. **Branch-Local Archiving**: Completed flows are reviewed (`/flow:review`), finished (`/flow:finish`), and archived (`/flow:archive`) into `.agents/bundles/knowledge/**` and `.agents/bundles/log.md` directly on the working branch.
 
-- Specifications are completed and archived directly on the active working branch without waiting for PR merge into `main`.
-- When `/flow:finish` confirms all tasks in `.agents/bundles/specs/<flow_id>/tasks/` are `closed` or `skipped`, the spec status transitions to `completed`.
-- When `/flow:archive` runs, discoveries and architectural patterns from `learnings.md` are consolidated into current-state chapters under `.agents/bundles/knowledge/`, a summary is appended to `.agents/bundles/log.md`, and the completed spec folder is contracted. Git history remains the permanent archive.
-- If scope expands beyond the active spec, finish the current spec and open a follow-up spec via `/flow:plan`.
+## 3. Code & Prose Standards (Zero-Slop Policy)
 
-## 4. Code & Prose Standards (Zero-Slop Policy)
+- **Deep Modules & Clear Seams**: Keep public header interfaces (`src/include/*.hpp`) narrow and hide OCI protocol mechanics inside `.cpp` implementation files.
+- **Proactive Hygiene**: Resolve adjacent compiler warnings, `clang-tidy` diagnostics, `clang-format` deviations, and dead code within task scope[^makefile].
+- **Present-Tense Living Docs**: Keep `README.md`, `docs/**`, and `.agents/bundles/knowledge/**` in present tense describing current verified behavior; record chronological history solely in `.agents/bundles/log.md` and `CHANGELOG.md`.
 
-- **Clarity Over Cleverness**: Code must be direct, self-describing, and maintainable.
-- **Documentation Integrity**: In C++, use Doxygen/Javadoc headers (`//!`) for public APIs and classes. In Python, use Google-style docstrings exclusively and PEP 585/604 modern types. Never use inline `#` comments in Python.
-- **Proactive Hygiene**: When touching a file within task scope, proactively resolve adjacent compiler warnings, clang-format deviations, and dead code.
-- **Prose Tone**: Avoid AI conversational fluff, formulaic transitions ("In summary", "Let's dive in", "It is worth noting"), and negative parallelisms ("Not only X, but also Y"). Write factual, dense, precise prose.
+[^makefile]: `Makefile` — Build, lint, unit test, and integration test verification gates.
+[^unit-surface]: `test/unit_tests/test_public_surface.test` — Public-seam extension surface verification test.

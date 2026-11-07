@@ -1,26 +1,17 @@
 {
   "setup_status": "complete",
   "last_successful_step": "complete",
-  "resume_operation": null,
-  "migration_report": null,
-  "migration_approved_at": null,
-  "project_type": "brownfield",
-  "workflow_revision": "flow-template-v2",
+  "root_directory": ".agents",
+  "bundle_root": ".agents/bundles",
+  "okf_version": "0.2",
   "workflow_preferences": {
     "ignore_policy": "shared",
     "canonical_commands": {
-      "setup": "make configure_ci",
+      "setup": "make configure_oci",
       "test_focused": "make test-unit",
       "test_integration": "make integration",
       "lint": "make lint",
       "build": "make release"
     }
-  },
-  "project_install": {
-    "mode": "skip",
-    "active_host": "antigravity",
-    "canonical_contract_hash": null,
-    "managed_files": []
-  },
-  "timestamp": "2026-10-21T17:15:00Z"
+  }
 }

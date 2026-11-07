@@ -1,148 +1,93 @@
 ---
 type: Guide
 title: Project Workflow
-description: Canonical build, test, lint, and verification commands plus Flow state and continuity rules for duckdb-oracle.
-tags: [flow, workflow, commands, verification, continuity]
+description: Canonical build, lint, typecheck, test, and Flow execution rules for duckdb-oracle.
 status: stable
+tags: [flow, workflow, commands, verification, continuity]
+generated:
+  by: flow/0.27.0
+  at: 2026-11-07T17:36:00Z
+verified:
+  - by: agent:flow-setup
+    at: 2026-11-07T17:36:00Z
+    commit: 36539f3
+sources:
+  - id: makefile
+    resource: Makefile
+    title: Canonical build, lint, unit test, integration test, and version targets
+  - id: test-integration
+    resource: scripts/test_integration.sh
+    title: Containerized Oracle Free 23ai integration test runner
 ---
 
 # Project Workflow
 
 <!-- truth: start -->
-- Task files under `.agents/bundles/specs/<flow_id>/tasks/` are authoritative; `spec.md` is the synchronized checklist and continuity view.
+- Task worksheets (`specs/<flow_id>/tasks/<id>-<slug>.md` or `specs/<flow_id>/chapters/<ch_id>/tasks/<id>-<slug>.md`), chapter specs (`chapters/<ch_id>/spec.md`), and root `spec.md` checklists are the sole authority for task state, `last_reviewed_commit`, and commits.
 - Canonical Commands:
-  - Setup: `make configure_ci`
-  - Focused tests: `make test-unit`
-  - Integration tests: `make integration`
-  - Lint & Hygiene: `make lint`
+  - Setup OCI runtime (integration tests only): `make configure_oci`
+  - Focused unit tests (zero OCI SDK required): `make test-unit`
+  - Single sqllogictest file: `./build/release/test/unittest "test/unit_tests/test_public_surface.test"`
+  - Full integration tests (containerized Oracle): `make integration`
+  - Lint & formatting (`clang-format` + `clang-tidy`): `make lint`
   - Build: `make release` / `make debug`
   - Versioning: `make bump-version bump=patch`
-- Every task declares and justifies one `verification_strategy`; only observable behavior and defect correction require an initial failing test.
-- Consumer operational skills install only under `.agents/skills/`. Product, knowledge, research, and specs remain under `.agents/bundles/`.
-- Commits are signed (`commit.gpgsign = true`) using Conventional Commits (`<type>(<scope>): <summary>`), with one functional commit per task.
-- Flow never creates, moves, force-updates, or deletes Git tags, and never pushes automatically.
+- Every task worksheet declares one `verification_strategy` (`behavior_tdd`, `regression_tdd`, `characterization`, `static_validation`, `documentation_validation`, `integration_acceptance`).
+- Test through confirmed public seams (`ATTACH`, `oracle_scan`, `oracle_query`, `oracle_execute`, `CREATE SECRET`) in canonical `test/unit_tests/` and `test/integration_tests/` files; never mock the System Under Test or write tautological assertions.
+- Project-local domain and review skills live under `.agents/skills/` and paired subagents under `.agents/agents/`.
+- Commits are signed (`commit.gpgsign = true`) using Conventional Commits (`<type>(<scope>): <summary>`), with one atomic functional commit per task. Never create or mutate Git tags, and never push or open PRs without explicit user instruction.
 <!-- truth: end -->
 
-## Canonical commands
+## Canonical Commands
 
-Prefer repository-native aggregate wrappers over ad hoc tool calls.
+Prefer repository-native `Makefile` targets over ad hoc tool invocations[^makefile]:
 
 ```bash
-# Setup OCI SDK & prerequisites
-make configure_ci
+# Install Oracle Instant Client runtime for local integration tests (Linux)
+make configure_oci
 
-# Run unit / smoke tests (no Oracle container needed)
-make test-unit
-
-# Run full integration tests (with containerized Oracle)
-make integration
-
-# Run formatting and tidy checks
-make lint
-
-# Build extension
+# Build release or debug extension (requires zero Oracle SDK installed)
 make release
 make debug
 
-# Clean build artifacts
+# Run fast offline unit / smoke tests (zero Oracle SDK or container required)
+make test-unit
+
+# Run a single sqllogictest file during tight TDD loops
+./build/release/test/unittest "test/unit_tests/test_public_surface.test"
+
+# Run clang-format and clang-tidy verification
+make lint
+
+# Run full containerized Oracle 23ai integration test suite
+make integration
+SKIP_BUILD=1 make integration
+
+# Clean all build directories
 make clean-all
 
-# Bump extension version
+# Bump extension version in description.yml
 make bump-version bump=patch
 ```
 
-Use non-interactive modes in automation. Before claiming a result, run the exact command freshly, read its complete output and exit status, and report limitations.
+## Direct Markdown Continuity & Chaptered Execution Loop
 
-## Direct-read continuity
+1. Resolve `.agents/setup-state.json` (default `.agents/bundles/`), read `index.md`, and inspect active `specs/<flow_id>/spec.md`, `chapters/index.md`, `chapters/<ch_id>/spec.md`, and `tasks/<id>-<slug>.md`.
+2. Run preflight (`dependencies_closed`, `chapter_ready`, `worksheet_complete`, `verification_strategy_declared`, `plan_identity_matches`, `target_symbols_exist`) before claiming the ready `pending` task.
+3. Execute one vertical-slice worksheet per isolated `@executor` subagent turn (`model: inherit`), verify exit code `0` on `make test-unit` and `make lint`[^makefile] (plus `make integration` when touching live OCI paths[^test-integration]), stage only task-owned paths, create one atomic signed commit, and update task frontmatter (`state: completed`, `commit: <sha>`) and `spec.md` (`- [x] [<sha>] ...`).
+4. Stop cleanly after **1 completed chapter** per `/flow:implement` invocation: synchronize `specs/<flow_id>/spec.md`, `chapters/index.md`, `chapters/<ch_id>/spec.md`, `.agents/bundles/knowledge/**`, and `docs/**` in place in present tense, run zero-context chapter review (`/flow:review`), and record `last_reviewed_commit: <head_sha>`.
+5. Run `/flow:learn` at any time to reconcile cross-machine/cross-harness drift, harvest discoveries, resynthesize `.agents/bundles/knowledge/**`, and synchronize `.agents/skills/` and `.agents/agents/`.
 
-1. Resolve `.agents/setup-state.json:root_directory`, defaulting to `.agents/`.
-2. Before selecting a flow or doing normal work, scan `<configured-root>/transactions/*/journal.md` and the retired `<configured-root>/tasks/transactions/*/journal.md`. Jointly arbitrate every nonterminal journal (`prepared`, `task_writes_started`, `recovery_required`, `contended`, or `rollback_in_progress`); recover the selected transaction from its recorded fragments, or stop on unresolved conflict.
-3. Resolve the configured bundle root, then read its index and candidate spec frontmatter under `specs/<flow_id>/`.
-4. Read authoritative task frontmatter in `tasks/*.md`.
-5. Verify plan/state identity, task dependencies, claims, and checklist agreement.
-6. Select an explicit task, the sole in-progress task, or the first ready task.
-7. Read the complete worksheet, direct dependencies, newest discoveries, and relevant knowledge chapters.
-
-Hooks and prior conversation are routing hints, not authority. Task files are the single authority for task state.
-
-## Task and state operations
-
-A task is ready when `state: open`, all `depends_on` tasks are `closed`, its worksheet is complete, and its plan identity matches the spec.
-
-Resolve the canonical state authority through the active Flow installation. In plugin/default-skip mode, load the active packaged `flow-state` skill and its sibling `references/state.md`; do not require or synthesize a project-local skill path. In a standalone project install, load `.agents/skills/flow-state/SKILL.md` and resolve `references/state.md` relative to it. If neither authority is available, stop before mutation. Follow the resolved contract with ordinary file read/write/edit tools. Every existing-flow mutation must carry the exact observed `expected_plan_revision`, `expected_plan_commit`, and `expected_state_revision`. Refuse stale identity or unresolved journals without tracked writes. For an accepted mutation, create the prepared transaction journal before tracked state changes, write in its canonical task-first/spec-last order, reread the journal and semantic read set around each write, and record final validation before marking the journal terminal. Recovery resumes the selected journal's recorded finish-or-rollback direction; it never starts a replacement mutation.
-
-| Operation | Purpose |
-| --- | --- |
-| `claim` | Move one ready task to `in_progress`. |
-| `note` | Append investigation findings to `## Notes & Discoveries`. |
-| `block` / `unblock` | Record or resolve an exact blocker and next step. |
-| `release` | Return an in-progress task to open when the claimant stops. |
-| `close` | Close the sole claimed task with recorded commit SHA. |
-| `reconcile` | Update spec checklist markers from task-file frontmatter via `/flow:sync`. |
-| `complete` | Move an active spec whose tasks are all closed or skipped to `completed` after verification and review. |
-| `archive` | Finish a completed spec: elevate knowledge, log summary, then contract the spec directory. |
-| `recover` | Resume an unresolved transaction journal in its recorded finish-or-rollback direction. |
-
-Use `/flow:sync` to reconcile `spec.md` checklist markers from task files. Task files remain authoritative for state. A worksheet mismatch stops production mutation and routes through refinement.
-
-## Verification strategies
+## Verification Strategies
 
 | Strategy | Select for | Required evidence |
 | --- | --- | --- |
-| `behavior_tdd` | New observable behavior | Focused behavior fails because it is absent; minimal implementation makes it green. |
-| `regression_tdd` | Defect correction | Focused reproduction demonstrates the defect; the narrow fix makes it green. |
-| `characterization` | Behavior-preserving refactor/deletion | Green focused baseline before and unchanged behavior after. |
-| `static_validation` | Manifest, config, generated surface, tooling | Native parser/lint/type/build; isolated representative violation proves a new/replacement gate fails with the expected diagnostic. |
-| `documentation_validation` | Links, examples, docs structure | Docs-native baseline and final link/example/build/structure checks. |
-| `integration_acceptance` | Composition of existing contracts | Green focused baseline; end-to-end scenario plus injected negative states proving refusal paths. |
+| `behavior_tdd` | New observable behavior | Focused `.test` assertion fails because behavior is absent; minimal implementation makes it green. |
+| `regression_tdd` | Defect correction | Focused reproduction in `test/unit_tests/` or `test/integration_tests/` demonstrates the defect; narrow fix makes it green. |
+| `characterization` | Behavior-preserving refactor/deletion | Green `make test-unit` / `make integration` baseline before and unchanged behavior after. |
+| `static_validation` | Manifest, config, CMake, CI workflow | `make lint` (`clang-format`, `clang-tidy`) and `make release`; isolated representative violation proves gate failure. |
+| `documentation_validation` | Links, examples, OKF chapters, docs | Relative link resolution, `description.yml` parity, and structure verification. |
+| `integration_acceptance` | End-to-end Oracle container workflows | Green `make integration` against `gvenzl/oracle-free:23-slim` plus negative error-path assertions[^test-integration]. |
 
-A waiver does not replace the selected strategy. It requires an explicit rationale, approver, and compensating evidence. Never manufacture a failing unit test for documentation, configuration, generated output, prose, or behavior-preserving cleanup. Integration acceptance routes missing implementation through revise instead of absorbing it.
-
-## Execution sequence
-
-1. Preflight the worksheet, live targets, dependencies, strategy, plan identity, state revision, and worktree.
-2. Claim the task through the state contract.
-3. Record discoveries in `## Notes & Discoveries`.
-4. Obtain the strategy's required initial evidence.
-5. Make the minimum worksheet-scoped change.
-6. Obtain focused green evidence, refactor only while green, and run relevant aggregate gates.
-7. Review the diff and stage exact task-owned paths only.
-8. Commit once with a conventional message.
-9. Close the task with the commit, exact commands/results, and checked acceptance criteria; reconcile the spec in the same state transaction.
-
-Use one task per delegated invocation and one functional commit per task. Never stage broadly in a shared or dirty checkout. Commits remain local unless the user separately authorizes publication.
-
-## Low-signal test and gate policy
-
-Reject tests that lock incidental prompt phrases, private implementation shape, duplicate snapshots, or file existence without an operational contract. Prefer native parser, lint, type, and build contracts to source scanners when they express the complete rule. Retain tests for observable behavior, public contracts, proven regressions, error paths, interoperability, and operationally meaningful structure such as signatures, exports, hashing, memory layout, compilation, serialization, and isolation.
-
-When replacing a gate, prove the replacement against an isolated violation before removing the old check. Confirm aggregate discovery includes new and untracked files where relevant.
-
-## Commits and checkpoints
-
-Use `<type>(<scope>): <description>` and stage exact paths. Do not force-add ignored Flow artifacts. A phase checkpoint records affected task ids, the last functional commit, and fresh aggregate evidence; never create an empty checkpoint commit.
-
-Flow may append supplementary Git notes under `refs/notes/flow` only after the canonical Markdown transaction succeeds. Notes are optional, stay local by default, and never become state authority. Git tags are prohibited as evidence or fallback transport.
-
-## Knowledge lifecycle
-
-1. **Capture:** append dated discoveries to the owning task and reusable learnings to the flow's `learnings.md`.
-2. **Synthesize:** integrate reusable current-state guidance into the best matching chapter anywhere under `.agents/bundles/knowledge/**/*.md`; preserve project-shaped nesting such as `data-model/`, `app-design/`, `standards/`, or `domains/`.
-3. **Log:** history belongs in `.agents/bundles/log.md`, not in current-state knowledge prose.
-4. **Contract:** after verified completion and archive review, delete the archived spec directory; Git history is the archive.
-
-Operational project skills live only at `.agents/skills/`. Never create `.agents/bundles/skills/`.
-
-## Quality gates
-
-Before close or checkpoint, require:
-
-- worksheet acceptance criteria satisfied with fresh evidence;
-- selected verification strategy followed, including isolated gate proof when required;
-- focused and relevant aggregate commands green;
-- repository-defined lint, type, build, docs, coverage, security, and performance gates run when applicable;
-- no accidental public API, typing, performance, import-boundary, or behavior change;
-- no unrelated paths staged and `git diff --check` clean;
-- discoveries and verification limitations recorded.
-
-Coverage follows repository and worksheet requirements. Compare affected lines/branches when deleting behavioral tests; there is no universal percentage or one-test-file-per-module mandate.
+[^makefile]: `Makefile` — Canonical build, lint, unit test, integration test, and version targets.
+[^test-integration]: `scripts/test_integration.sh` — Containerized Oracle Free 23ai integration test runner.

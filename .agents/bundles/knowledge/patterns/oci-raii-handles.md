@@ -4,17 +4,41 @@ title: OCI RAII Handle & Descriptor Management
 description: Smart pointer deleters and RAII wrappers for OCI handles and descriptors preventing resource leaks in C++.
 scope: pattern
 domain: oracle
-tags: [oracle, oci, raii, memory-management, smart-pointers]
 status: stable
+tags: [oracle, oci, raii, memory-management, smart-pointers]
+generated:
+  by: flow/0.27.0
+  at: 2026-11-07T17:36:00Z
+verified:
+  - by: agent:flow-setup
+    at: 2026-11-07T17:36:00Z
+    commit: 36539f3
+sources:
+  - id: oci-utils
+    resource: src/include/oracle_utils.hpp::OCIHandleFreeDeleter
+    title: RAII OCI handle and descriptor deleters and statement allocation helpers
+  - id: conn-ctx
+    resource: src/oracle_connection.cpp::OracleContext::~OracleContext
+    title: Ordered OCI handle teardown with co-owned std::shared_ptr<OCIEnv>
+  - id: oracle-scan
+    resource: src/oracle_scan.cpp::OracleInitGlobal
+    title: Statement lifetime across bind, global init, and scan pipeline phases
 ---
 
 # OCI RAII Handle & Descriptor Management
 
-In native C OCI development, every handle allocated via `OCIHandleAlloc` and every descriptor allocated via `OCIDescriptorAlloc` must be explicitly freed with `OCIHandleFree` and `OCIDescriptorFree`. Failing to free them leaks memory and file descriptors within the Oracle client process. Manual cleanup in C++ is fragile when exceptions (`duckdb::IOException`, `std::runtime_error`) are thrown.
+<!-- truth: start -->
+- Allocate all OCI statements via `AllocateOCIStatement` or `AllocateSharedOCIStatement` (`src/include/oracle_utils.hpp`) using `OCIHandlePtr<OCIStmt>` (`std::unique_ptr<T, OCIHandleFreeDeleter>`)[^oci-utils].
+- Store `std::shared_ptr<OCIEnv> env_owner` as the first member of `OracleContext` so child handles (`authp`, `svchp`, `srvhp`, `errhp`) are freed before `OCIEnv` during destruction[^conn-ctx].
+- Anti-Pattern: Calling raw `OCIHandleAlloc` / `OCIDescriptorAlloc` without wrapping the handle in `OCIHandlePtr` / `OCIDescriptorPtr`.
+  - Reason: Any intermediate `CheckOCIError` throwing `duckdb::IOException` leaks the handle and server cursor state in the Oracle client process[^oci-utils].
+<!-- truth: end -->
+
+In native C OCI development, every handle allocated via `OCIHandleAlloc` and every descriptor allocated via `OCIDescriptorAlloc` must be explicitly freed with `OCIHandleFree` and `OCIDescriptorFree`[^oci-utils]. Manual cleanup in C++ is fragile when exceptions (`duckdb::IOException`, `std::runtime_error`) are thrown.
 
 ## RAII Deleters (`src/include/oracle_utils.hpp`)
 
-DuckDB Oracle implements custom deleters paired with `std::unique_ptr` and `std::shared_ptr`:
+DuckDB Oracle implements custom deleters paired with `std::unique_ptr` and `std::shared_ptr`[^oci-utils]:
 
 ```cpp
 namespace duckdb {
@@ -56,7 +80,7 @@ using OCIDescriptorPtr = std::unique_ptr<T, OCIDescriptorFreeDeleter>;
 
 ## Statement Allocation Helpers
 
-Statement handles are allocated dynamically per query execution or bind phase. To prevent boilerplate error checking and manual cleanup on failure, allocation helpers encapsulate creation:
+Statement handles are allocated dynamically per query execution or bind phase. Allocation helpers encapsulate creation and RAII ownership[^oci-utils]:
 
 ```cpp
 inline OCIHandlePtr<OCIStmt> AllocateOCIStatement(OCIEnv *envhp, OCIError *errhp, const std::string &msg) {
@@ -77,9 +101,13 @@ inline std::shared_ptr<OCIStmt> AllocateSharedOCIStatement(OCIEnv *envhp, OCIErr
 
 ## Statement & Environment Lifetime Across Pipeline Phases
 
-DuckDB splits table function execution into distinct stages:
+DuckDB splits table function execution into distinct stages[^oracle-scan]:
 1. **Bind Phase (`OracleBindInternal`)**: Connects to Oracle, inspects metadata (or runs `OCIStmtExecute` with `OCI_DESCRIBE_ONLY` for arbitrary `oracle_query` SQL) to populate output column names and types.
-2. **Global Init Phase (`OracleInitGlobal`)**: Reconstructs the final Oracle SQL statement incorporating projected `column_ids` and pushed-down `TableFilterSet` / complex filter predicates, prepares the cursor via `OCIStmtPrepare`, configures `OCI_ATTR_PREFETCH_ROWS` and `OCI_ATTR_CALL_TIMEOUT` (`oracle_call_timeout_ms`), and defines output buffers (`OCIDefineByPos`) only for projected columns.
+2. **Global Init Phase (`OracleInitGlobal`)**: Reconstructs the final Oracle SQL statement incorporating projected `column_ids` and pushed-down `TableFilterSet` / complex filter predicates, prepares the cursor via `OCIStmtPrepare`, configures `OCI_ATTR_PREFETCH_ROWS` and `OCI_ATTR_CALL_TIMEOUT` (`oracle_call_timeout_ms`), and defines output buffers (`OCIDefineByPos`) only for projected columns[^oracle-scan].
 3. **Scan Phase (`OracleQueryFunction`)**: Executes and fetches row batches from the prepared cursor in `OracleScanState` and converts OCI buffers into DuckDB vectors.
 
-Every `OracleContext` co-owns a `std::shared_ptr<OCIEnv>`, and prepared statements release cleanly via `OCIHandleFree` (`OCI_HTYPE_STMT`) before the connection and environment handles are destroyed.
+Every `OracleContext` co-owns a `std::shared_ptr<OCIEnv>`, and prepared statements release cleanly via `OCIHandleFree` (`OCI_HTYPE_STMT`) before the connection and environment handles are destroyed[^conn-ctx].
+
+[^oci-utils]: `src/include/oracle_utils.hpp::OCIHandleFreeDeleter` — RAII OCI handle and descriptor deleters and statement allocation helpers.
+[^conn-ctx]: `src/oracle_connection.cpp::OracleContext::~OracleContext` — Ordered OCI handle teardown with co-owned `std::shared_ptr<OCIEnv>`.
+[^oracle-scan]: `src/oracle_scan.cpp::OracleInitGlobal` — Statement lifetime across bind, global init, and scan pipeline phases.

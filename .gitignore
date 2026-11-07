@@ -19,7 +19,6 @@ vcpkg
 .gemini
 .claude
 AGENT.md
-AGENTS.md
 CLAUDE.md
 GEMINI.md
 oracle_sdk/

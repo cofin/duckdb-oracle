@@ -4,19 +4,46 @@ title: DuckDB Test Harness Architecture & Suites
 description: DuckDB testing framework, sqllogictest syntax, C++ unit test runner, and containerized Oracle integration tests.
 scope: testing
 domain: duckdb
-tags: [duckdb, testing, sqllogictest, integration-tests, test-harness]
 status: stable
+tags: [duckdb, testing, sqllogictest, integration-tests, test-harness]
+generated:
+  by: flow/0.27.0
+  at: 2026-11-07T17:36:00Z
+verified:
+  - by: agent:flow-setup
+    at: 2026-11-07T17:36:00Z
+    commit: 36539f3
+sources:
+  - id: makefile
+    resource: Makefile
+    title: test-unit and integration Makefile targets
+  - id: test-script
+    resource: scripts/test_integration.sh
+    title: Containerized Oracle Free 23ai integration test runner script
+  - id: unit-surface
+    resource: test/unit_tests/test_public_surface.test
+    title: Offline unit test verifying registered functions, settings, and secret types
+  - id: init-sql
+    resource: test/integration_tests/init_sql/01_setup.sql
+    title: Containerized Oracle FREEPDB1 test user and fixture initialization
 ---
 
 # DuckDB Test Harness Architecture & Suites
 
-The `duckdb-oracle` repository maintains a two-tiered testing harness:
-1. **Fast Unit / Smoke Tests (`make test-unit`)**: Runs in seconds with zero external Oracle Instant Client or database container dependencies.
-2. **Containerized Integration Tests (`make integration`)**: Installs Oracle Instant Client Basic via `scripts/setup_oci_linux.sh` and spawns an Oracle Free 23ai container (`gvenzl/oracle-free:23-slim`) to validate full query execution, writes, transactions, spatial types, and pushdown against a live Oracle engine.
+<!-- truth: start -->
+- `make test-unit` executes all 17 `.test` files under `test/unit_tests/` via `./build/release/test/unittest` and must pass on clean hosts without Oracle Instant Client or an Oracle container installed[^makefile][^unit-surface].
+- `make integration` installs Oracle Instant Client Basic on Linux (`make configure_oci`), launches `gvenzl/oracle-free:23-slim` via `scripts/test_integration.sh`, seeds `test/integration_tests/init_sql/01_setup.sql`, and executes all 22 `.test` files under `test/integration_tests/`[^makefile][^test-script][^init-sql].
+- Add new tests into the canonical `test/unit_tests/` or `test/integration_tests/` `.test` file matching the subsystem—never create standalone `test_*remediation*.test` or `test_*audit*.test` files.
+- Unit tests that trigger a connection attempt must match both offline missing-library errors (`Oracle Instant Client shared library`) and live connection errors (`Cannot connect to database`) via `<REGEX>:` so they pass both on clean CI runners and developer workstations with Instant Client installed.
+<!-- truth: end -->
+
+The `duckdb-oracle` repository maintains a two-tiered testing harness[^makefile]:
+1. **Fast Unit / Smoke Tests (`make test-unit`)**: Runs in seconds with zero external Oracle Instant Client or database container dependencies[^unit-surface].
+2. **Containerized Integration Tests (`make integration`)**: Installs Oracle Instant Client Basic via `scripts/setup_oci_linux.sh` and spawns an Oracle Free 23ai container (`gvenzl/oracle-free:23-slim`) to validate full query execution, writes, transactions, spatial types, and pushdown against a live Oracle engine[^test-script][^init-sql].
 
 ## 1. Test Harness Structure
 
-```
+```text
 test/
 ├── README.md                                  # Test suite and manual verification guide
 ├── unit_tests/                                # Fast offline unit tests (executed by make test-unit)
@@ -69,19 +96,21 @@ test/
 
 ## 2. DuckDB sqllogictest Syntax (`.test` Files)
 
-DuckDB tests are written in the SQLite sqllogictest dialect with DuckDB-specific extensions:
+DuckDB tests are written in the SQLite sqllogictest dialect with DuckDB-specific extensions[^unit-surface]:
 
 ```sql
-# Name and load extension
+# require oracle extension
+require oracle
+
 # statement ok: expects success without output
 statement ok
-LOAD 'build/release/extension/oracle/oracle.duckdb_extension';
+SET oracle_prefetch_rows = 512;
 
-# statement error: expects failure matching regex
+# statement error: expects failure matching substring or <REGEX>:
 statement error
 ATTACH 'bad_conn' AS ora (TYPE oracle);
 ----
-IO Error: Failed to connect to Oracle
+IO Error
 
 # query <expected_type_string> [sort_order]
 # I = Integer, T = Text, R = Floating point / Real, B = Boolean
@@ -89,36 +118,27 @@ query IT
 SELECT employee_id, first_name FROM ora.employees WHERE employee_id = 100;
 ----
 100	Steven
-
-# Validate NULL handling
-query I
-SELECT commission_pct FROM ora.employees WHERE employee_id = 100;
-----
-NULL
 ```
 
 ## 3. Integration Test Automation (`scripts/test_integration.sh`)
 
-Integration testing is orchestrated by `scripts/test_integration.sh`:
+Integration testing is orchestrated by `scripts/test_integration.sh`[^test-script]:
 
-- **Container Management**: Checks for Docker / Podman (`${RUNTIME:-docker}`). Cleans up stale containers (`duckdb-oracle-test-db`).
+- **Container Management**: Checks for Docker / Podman (`${RUNTIME:-docker}`) and cleans up stale containers (`duckdb-oracle-test-db`).
 - **Healthcheck & Startup**: Polls the container until Oracle signals database readiness (`FREEPDB1` open for read/write).
-- **Initialization**: Automatically mounts and runs scripts in `test/integration_tests/init_sql/`.
-- **Execution**: Runs `test/unittest` against `test/integration_tests/*.test` with environment variables:
-  ```bash
-  ORACLE_USER=duckdb_test \
-  ORACLE_PASSWORD=duckdb_test \
-  ORACLE_SERVICE=FREEPDB1 \
-  ORACLE_HOST=localhost \
-  ORACLE_PORT=1521 \
-  ./build/release/test/unittest "test/integration_tests/*.test"
-  ```
-- **Cleanup**: Stops and removes the test container unless `--keep-container` or `--no-cleanup` is passed.
+- **Initialization**: Mounts and runs scripts in `test/integration_tests/init_sql/`[^init-sql].
+- **Execution**: Runs `./build/release/test/unittest` against `test/integration_tests/` with `ORACLE_USER`, `ORACLE_PASSWORD`, `ORACLE_SERVICE`, `ORACLE_HOST`, and `ORACLE_PORT`.
 
 ## 4. Canonical Test Commands
 
 | Command | Environment Required | Scope |
 | :--- | :--- | :--- |
-| `make test-unit` | None (zero OCI SDK required) | Fast smoke tests; validates extension loading, settings, secrets, and syntax without Instant Client or a database. |
-| `make integration` | Docker / Podman + OCI Basic runtime | Compiles release build, installs Instant Client Basic on Linux, launches containerized Oracle Free 23ai, and runs all 22 integration test files. |
-| `SKIP_BUILD=1 make integration` | Docker / Podman + OCI Basic runtime | Runs integration tests reusing an existing release binary. |
+| `make test-unit` | None (zero OCI SDK required) | Fast smoke tests; validates extension loading, settings, secrets, and syntax without Instant Client or a database[^makefile]. |
+| `./build/release/test/unittest "test/unit_tests/<file>.test"` | None | Focused single-file unit test execution for rapid TDD loops. |
+| `make integration` | Docker / Podman + OCI Basic runtime | Compiles release build, installs Instant Client Basic on Linux, launches containerized Oracle Free 23ai, and runs all 22 integration test files[^makefile][^test-script]. |
+| `SKIP_BUILD=1 make integration` | Docker / Podman + OCI Basic runtime | Runs integration tests reusing an existing release binary[^test-script]. |
+
+[^makefile]: `Makefile` — `test-unit` and `integration` Makefile targets.
+[^test-script]: `scripts/test_integration.sh` — Containerized Oracle Free 23ai integration test runner script.
+[^unit-surface]: `test/unit_tests/test_public_surface.test` — Offline unit test verifying registered functions, settings, and secret types.
+[^init-sql]: `test/integration_tests/init_sql/01_setup.sql` — Containerized Oracle `FREEPDB1` test user and fixture initialization.
