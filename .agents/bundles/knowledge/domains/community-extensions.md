@@ -10,9 +10,9 @@ generated:
   by: flow/0.27.0
   at: 2026-11-07T17:36:00Z
 verified:
-  - by: agent:flow-setup
-    at: 2026-11-07T17:36:00Z
-    commit: 36539f3
+  - by: agent:bb-learn
+    at: 2026-11-15T18:18:00Z
+    commit: 499ea2c
 sources:
   - id: desc-yml
     resource: description.yml
@@ -31,8 +31,8 @@ sources:
 # DuckDB Community Extensions Registry, Multi-Version Distribution & Invariants
 
 <!-- truth: start -->
-- `description.yml` defines the extension metadata (`version: 0.3.1`, `license: MIT`, `excluded_platforms`) consumed by `duckdb/community-extensions`[^desc-yml].
-- In `duckdb/community-extensions`, `repo.ref` points to the exact 40-char commit SHA for DuckDB `2.0.0` LTS (`fa61951bdd3edf18bb6bf8e7169255d5ca6de635`) and `repo.variegata` points to the exact 40-char commit SHA for DuckDB `1.5.6` (`79a0fe896398d0e12533241bf101d66e5650e6b6`, backporting the in-tree OCI C ABI lazy loader on `feat/duckdb-v1.5.6`)[^bump-script].
+- `description.yml` defines extension metadata (`version: 0.3.2` on `main`, `0.2.4` on `feat/duckdb-v1.5.6`; `license: MIT`, `excluded_platforms`) consumed by `duckdb/community-extensions`[^desc-yml].
+- In `duckdb/community-extensions`, `repo.ref` pins the `main` release SHA for DuckDB `2.0.0` LTS and `repo.variegata` pins the `feat/duckdb-v1.5.6` release SHA for DuckDB `1.5.6` (updating published `0.3.1` `fa61951bdd3edf18bb6bf8e7169255d5ca6de635` / `79a0fe896398d0e12533241bf101d66e5650e6b6` only after release PRs merge)[^bump-script].
 - Never write `vcpkg_commit` hashes into `repo.variegata`, and never link `libclntsh` at build time (`CMakeLists.txt` links only `${CMAKE_DL_LIBS}`) because upstream `generate_docs.yml` runs `FORCE INSTALL oracle; LOAD oracle;` on clean runners without Oracle Instant Client installed[^cmake-lists][^oci-api].
 <!-- truth: end -->
 

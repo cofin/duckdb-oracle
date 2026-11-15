@@ -88,10 +88,8 @@ static unique_ptr<Catalog> OracleAttach(optional_ptr<StorageExtensionInfo> stora
 	}
 
 	auto state = make_shared_ptr<OracleCatalogState>(connection_string, wallet_path);
+	state->settings = GetOracleSettings(context, nullptr);
 	state->ApplyOptions(attach_options);
-	auto resolved = ResolveOracleConnection(context, state->connection_string, state.get());
-	state->settings = resolved.settings;
-	state->wallet_path = resolved.wallet_path;
 	OracleCatalogState::Register(state, name);
 	return CreateOracleCatalog(db, state);
 }

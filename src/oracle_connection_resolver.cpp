@@ -173,6 +173,14 @@ OracleSettings GetOracleSettings(ClientContext &context, OracleCatalogState *sta
 			settings.enable_spatial_types = val;
 		}
 	}
+	lookup = context.TryGetCurrentSetting("oracle_number_as", option_value);
+	if (lookup && !option_value.IsNull()) {
+		auto val = ParseOracleNumberAs(option_value.ToString());
+		if (should_apply("oracle_number_as", lookup.GetScope(), settings.number_as != defaults.number_as,
+		                 val != defaults.number_as)) {
+			settings.number_as = val;
+		}
+	}
 	return settings;
 }
 

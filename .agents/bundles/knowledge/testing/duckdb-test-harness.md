@@ -10,9 +10,9 @@ generated:
   by: flow/0.27.0
   at: 2026-11-07T17:36:00Z
 verified:
-  - by: agent:flow-setup
-    at: 2026-11-07T17:36:00Z
-    commit: 36539f3
+  - by: agent:bb-learn
+    at: 2026-11-15T18:18:00Z
+    commit: 499ea2c
 sources:
   - id: makefile
     resource: Makefile
@@ -124,8 +124,9 @@ SELECT employee_id, first_name FROM ora.employees WHERE employee_id = 100;
 
 Integration testing is orchestrated by `scripts/test_integration.sh`[^test-script]:
 
-- **Container Management**: Checks for Docker / Podman (`${RUNTIME:-docker}`) and cleans up stale containers (`duckdb-oracle-test-db`).
+- **Container Management**: Checks for Docker / Podman (`${RUNTIME:-docker}`), cleans up stale containers (`duckdb-oracle-test-db`), and accepts `ORACLE_IMAGE` overrides such as `gvenzl/oracle-free:23-slim-faststart`.
 - **Healthcheck & Startup**: Polls the container until Oracle signals database readiness (`FREEPDB1` open for read/write).
+- **Timezone & Decimal Assertions**: Run with `TZ=America/New_York` when verifying zoned timestamps (`type_conversion.test`), inspect Oracle `NUMBER` writes via `TO_CHAR(..., 'TM9')`, and note DuckDB omits leading zeros in `DECIMAL(p, p)::VARCHAR` (for example `.00012`).
 - **Initialization**: Mounts and runs scripts in `test/integration_tests/init_sql/`[^init-sql].
 - **Execution**: Runs `./build/release/test/unittest` against `test/integration_tests/` with `ORACLE_USER`, `ORACLE_PASSWORD`, `ORACLE_SERVICE`, `ORACLE_HOST`, and `ORACLE_PORT`.
 

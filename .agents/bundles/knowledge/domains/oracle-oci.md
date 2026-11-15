@@ -10,9 +10,9 @@ generated:
   by: flow/0.27.0
   at: 2026-11-07T17:36:00Z
 verified:
-  - by: agent:flow-setup
-    at: 2026-11-07T17:36:00Z
-    commit: 36539f3
+  - by: agent:bb-learn
+    at: 2026-11-15T18:18:00Z
+    commit: 499ea2c
 sources:
   - id: oci-api
     resource: src/include/oracle_oci_api.hpp
@@ -103,18 +103,20 @@ Oracle maps its internal database storage types to client-side external types sp
 
 | Oracle Internal Type | External OCI Type (Fetch / Bind) | C Representation | Target DuckDB `LogicalType` |
 | :--- | :--- | :--- | :--- |
-| `NUMBER(p, 0)` (p <= 4) | `SQLT_STR` (fetch) / `SQLT_INT` (bind) | `char[]` / `int64_t` | `LogicalType::SMALLINT` |
-| `NUMBER(p, 0)` (p <= 9) | `SQLT_STR` (fetch) / `SQLT_INT` (bind) | `char[]` / `int64_t` | `LogicalType::INTEGER` |
-| `NUMBER(p, 0)` (p <= 18)| `SQLT_STR` (fetch) / `SQLT_INT` (bind) | `char[]` / `int64_t` | `LogicalType::BIGINT` |
-| `NUMBER(p, s)` (s > 0)  | `SQLT_STR` | `char[]` | `LogicalType::DECIMAL(p, s)` |
-| `NUMBER` (unconstrained)| `SQLT_STR` (fetch) / `SQLT_BDOUBLE` (bind) | `char[]` / `double` | `LogicalType::DOUBLE` |
-| `FLOAT`, `BINARY_DOUBLE`| `SQLT_STR` (fetch) / `SQLT_BDOUBLE` (bind) | `char[]` / `double` | `LogicalType::DOUBLE` |
+| `NUMBER(p, 0)` / `INTEGER` (`p <= 38`) | `SQLT_STR` (fetch) / `SQLT_CHR` (bind) | `char[]` | `LogicalType::DECIMAL(p, 0)` |
+| `NUMBER(*, s)` (`0 <= s <= 38`) | `SQLT_STR` (fetch) / `SQLT_CHR` (bind) | `char[]` | `LogicalType::DECIMAL(38, s)` |
+| `NUMBER(p, s)` (`s > 0`, `s <= p`) | `SQLT_STR` (fetch) / `SQLT_CHR` (bind) | `char[]` | `LogicalType::DECIMAL(p, s)` |
+| `NUMBER(p, -s)` (`p + s <= 38`) | `SQLT_STR` (fetch) / `SQLT_CHR` (bind) | `char[]` | `LogicalType::DECIMAL(p + s, 0)` |
+| `NUMBER(p, s > p)` (`s <= 38`) | `SQLT_STR` (fetch) / `SQLT_CHR` (bind) | `char[]` | `LogicalType::DECIMAL(s, s)` |
+| `NUMBER` (unconstrained) | `SQLT_STR` (fetch) / `SQLT_CHR` (bind) | `char[]` | `settings.number_as` (default `DOUBLE`) |
+| `FLOAT` (`SQLT_NUM`, `scale == -127`) | `SQLT_STR` (fetch) / `SQLT_CHR` (bind) | `char[]` | `LogicalType::DOUBLE` |
+| `BINARY_DOUBLE` | `SQLT_STR` (fetch) / `SQLT_BDOUBLE` (bind) | `char[]` / `double` | `LogicalType::DOUBLE` |
 | `BINARY_FLOAT` | `SQLT_STR` (fetch) / `SQLT_BDOUBLE` (bind) | `char[]` / `double` | `LogicalType::FLOAT` |
 | `VARCHAR2`, `CHAR`, `CLOB`, `NCLOB` | `SQLT_STR` (up to `65535` bytes) | String buffer + `rlenp` | `LogicalType::VARCHAR` |
 | `RAW`, `LONG RAW`, `BLOB` | `SQLT_BIN` (fetch, up to `65535` bytes) | Raw byte array + `rlenp` | `LogicalType::BLOB` |
 | `DATE` | `SQLT_STR` (fetch) / `SQLT_ODT` (bind) | Formatted string / `OCIDate` struct | `LogicalType::TIMESTAMP` |
 | `TIMESTAMP` | `SQLT_STR` | Formatted string (`NLS_TIMESTAMP_FORMAT`) | `LogicalType::TIMESTAMP` |
-| `TIMESTAMP WITH [LOCAL] TIME ZONE` | `SQLT_STR` | Formatted string (`NLS_TIMESTAMP_TZ_FORMAT`) | `LogicalType::TIMESTAMP_TZ` |
+| `TIMESTAMP WITH [LOCAL] TIME ZONE` | `SQLT_STR` | Formatted string (`NLS_TIMESTAMP_TZ_FORMAT`) | `LogicalType::TIMESTAMP` |
 | `SDO_GEOMETRY` | `SQLT_STR` (`65535` bytes) | WKT via `SDO_UTIL.TO_WKTGEOMETRY` (`CLOB`) | `LogicalType::GEOMETRY` (or `VARCHAR`) |
 | `VECTOR` (Oracle 23ai) | `SQLT_STR` (`65535` bytes) | `VECTOR_SERIALIZE(... RETURNING CLOB)` | `LogicalType::ARRAY` / `LogicalType::LIST` |
 

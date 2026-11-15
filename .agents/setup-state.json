@@ -12,6 +12,10 @@
       "test_integration": "make integration",
       "lint": "make lint",
       "build": "make release"
-    }
-  }
+    },
+    "chapter_gate": "targeted",
+    "sha_tracking": "strict",
+    "stop_gate": "enforce"
+  },
+  "schema_version": "0.2"
 }

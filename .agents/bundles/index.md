@@ -21,3 +21,23 @@ bundle: duckdb-oracle
 
 ## History
 - [Change Log](log.md) — Chronological record of archived flows and bundle milestones.
+
+## Added Links
+
+- [knowledge/architecture/duckdb-extension-architecture.md](knowledge/architecture/duckdb-extension-architecture.md)
+- [knowledge/architecture/oracle-oci-subsystem.md](knowledge/architecture/oracle-oci-subsystem.md)
+- [knowledge/decisions/adr-001-in-tree-oci-c-abi-lazy-loading.md](knowledge/decisions/adr-001-in-tree-oci-c-abi-lazy-loading.md)
+- [knowledge/decisions/adr-002-oracle-number-mapping.md](knowledge/decisions/adr-002-oracle-number-mapping.md)
+- [knowledge/domains/community-extensions.md](knowledge/domains/community-extensions.md)
+- [knowledge/domains/duckdb-extension.md](knowledge/domains/duckdb-extension.md)
+- [knowledge/domains/oracle-oci.md](knowledge/domains/oracle-oci.md)
+- [knowledge/gotchas/oracle-oci.md](knowledge/gotchas/oracle-oci.md)
+- [knowledge/gotchas/type-fidelity-limitations.md](knowledge/gotchas/type-fidelity-limitations.md)
+- [knowledge/patterns/duckdb-pushdown.md](knowledge/patterns/duckdb-pushdown.md)
+- [knowledge/patterns/duckdb-write-pipeline.md](knowledge/patterns/duckdb-write-pipeline.md)
+- [knowledge/patterns/oci-batch-operations.md](knowledge/patterns/oci-batch-operations.md)
+- [knowledge/patterns/oci-raii-handles.md](knowledge/patterns/oci-raii-handles.md)
+- [knowledge/standards/development-discipline.md](knowledge/standards/development-discipline.md)
+- [knowledge/standards/project-management.md](knowledge/standards/project-management.md)
+- [knowledge/testing/duckdb-test-harness.md](knowledge/testing/duckdb-test-harness.md)
+- [research/number-and-type-fidelity_20261115.md](research/number-and-type-fidelity_20261115.md)

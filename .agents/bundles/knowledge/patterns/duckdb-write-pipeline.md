@@ -10,9 +10,9 @@ generated:
   by: flow/0.27.0
   at: 2026-11-07T17:36:00Z
 verified:
-  - by: agent:flow-setup
-    at: 2026-11-07T17:36:00Z
-    commit: 36539f3
+  - by: agent:bb-learn
+    at: 2026-11-15T18:18:00Z
+    commit: 499ea2c
 sources:
   - id: plan-insert
     resource: src/storage/oracle_schema_entry.cpp::OracleCatalog::PlanInsert
@@ -21,15 +21,15 @@ sources:
     resource: src/storage/oracle_insert.cpp::PhysicalOracleInsert
     title: Sink, Combine, Finalize, and GetDataInternal physical operator methods
   - id: oracle-write
-    resource: src/storage/oracle_write.cpp::OracleWriteBatch
-    title: UnifiedVectorFormat transposition, OCIDate binding, and rollback safety
+    resource: src/storage/oracle_write.cpp::OracleWriteGlobalState::Sink
+    title: UnifiedVectorFormat transposition, decimal text float binding, OCIDate binding, and rollback safety
 ---
 
 # DuckDB Write Pipeline: Sink, Combine & Finalize
 
 <!-- truth: start -->
 - Route `INSERT INTO` through `OracleCatalog::PlanInsert` (`src/storage/oracle_schema_entry.cpp`) into `PhysicalOracleInsert` (`src/storage/oracle_insert.cpp`), passing the resolved `oracle_table.GetSchemaName()` and `oracle_table.GetTableName()` so cross-schema and synonym targets resolve accurately[^plan-insert][^phys-insert].
-- Normalize input columns in `OracleWriteBatch` (`src/storage/oracle_write.cpp`) via `col_vec.ToUnifiedFormat(count, vdata)`, bind Oracle `DATE` columns with 7-byte `OCIDate` structs (`SQLT_ODT`), and call `chunk.SetChildCardinality(1)` in `PhysicalOracleInsert::GetDataInternal`[^phys-insert][^oracle-write].
+- Normalize input columns in `OracleWriteGlobalState::Sink` (`src/storage/oracle_write.cpp`) via `col_vec.ToUnifiedFormat(vdata)`, bind `FLOAT`/`DOUBLE` writes to `NUMBER`/`FLOAT` as `SQLT_CHR` shortest decimal text via `duckdb_fmt::format` (`SQLT_BDOUBLE` for `BINARY_FLOAT`/`BINARY_DOUBLE`), bind `DATE` via 7-byte `OCIDate` (`SQLT_ODT`), and call `chunk.SetChildCardinality(1)` in `PhysicalOracleInsert::GetDataInternal`[^phys-insert][^oracle-write].
 - Roll back uncommitted batches via `OCITransRollback` if any `Sink` batch fails prior to `OracleWriteFinalize` (`OCITransCommit`) so partial writes never leak into pooled connections[^oracle-write].
 <!-- truth: end -->
 
@@ -87,10 +87,10 @@ class OracleInsertLocalState : public LocalSinkState {};
 
 ## Vector-to-Buffer Transposition (`UnifiedVectorFormat`)
 
-In `OracleWriteBatch` (`src/storage/oracle_write.cpp`), DuckDB's column vectors are normalized via `UnifiedVectorFormat` (`col_vec.ToUnifiedFormat(count, vdata)`) and transposed into OCI array bind buffers without per-row `Value` allocation[^oracle-write]:
+In `OracleWriteGlobalState::Sink` (`src/storage/oracle_write.cpp`), DuckDB's column vectors are normalized via `UnifiedVectorFormat` (`chunk.data[col_idx].ToUnifiedFormat(unified_formats[col_idx])`) and transposed into OCI array bind buffers without per-row `Value` allocation on hot paths[^oracle-write]:
 
-1. **Numeric Vectors**: Fixed-width integers (`TINYINT`, `SMALLINT`, `INTEGER`, `BIGINT`, `UTINYINT`, `USMALLINT`, `UINTEGER`) and floating-point (`FLOAT`, `DOUBLE`) values read directly from `UnifiedVectorFormat::GetData<T>(vdata)[idx]` into contiguous `int64_t` (`SQLT_INT`) or `double` (`SQLT_BDOUBLE`) arrays.
-2. **Date & Timestamp Vectors**: Oracle `DATE` columns convert `date_t` or `timestamp_t` values directly into 7-byte `OCIDate` structs bound with `SQLT_ODT`, while `TIMESTAMP` and `TIMESTAMP WITH TIME ZONE` columns format canonical strings wrapped in `TO_TIMESTAMP(:b, 'YYYY-MM-DD HH24:MI:SS.FF6')` / `TO_TIMESTAMP_TZ(:b, 'YYYY-MM-DD HH24:MI:SS.FF6 TZH:TZM')`[^oracle-write].
+1. **Numeric Vectors**: Fixed-width integers targeting `BIGINT` (`TINYINT`, `SMALLINT`, `INTEGER`, `BIGINT`, `UTINYINT`, `USMALLINT`, `UINTEGER`) read via `UnifiedVectorFormat::GetData<T>(vdata)[idx]` into `int64_t` (`SQLT_INT`). Floating-point (`FLOAT`, `DOUBLE`) values bind via `SQLT_CHR` shortest round-trip decimal text (`duckdb_fmt::format`, rejecting `NaN`/`Infinity`) when targeting Oracle `NUMBER` or `FLOAT`, and retain binary `double` (`SQLT_BDOUBLE`) binding for `BINARY_FLOAT`/`BINARY_DOUBLE`.
+2. **Date & Timestamp Vectors**: Oracle `DATE` columns convert `date_t` or `timestamp_t` values directly into 7-byte `OCIDate` structs bound with `SQLT_ODT`, while `TIMESTAMP`, `TIMESTAMP WITH TIME ZONE`, and `TIMESTAMP WITH LOCAL TIME ZONE` columns format canonical strings wrapped in `TO_TIMESTAMP(:b, 'YYYY-MM-DD HH24:MI:SS.FF')` under session `TIME_ZONE = '+00:00'`[^oracle-write].
 3. **Zero-Copy String, Spatial & Vector Columns**: `VARCHAR` and `BLOB` vectors read `string_t` slices directly via `s.GetData()` and `s.GetSize()` without intermediate `std::string` allocation, validate against `NumericLimits<ub2>::Maximum()` (`65535` bytes), and copy into contiguous stride buffers.
 4. **Validity Check**: For each row `r` in the batch (`idx = vdata.sel->get_index(offset + r)`):
    ```cpp

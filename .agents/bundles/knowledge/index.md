@@ -31,6 +31,8 @@ Persistent, evidence-backed engineering knowledge for `duckdb-oracle`.
 
 ### Gotchas
 * [Oracle OCI Edge Cases, Compatibility & Pitfalls](gotchas/oracle-oci.md) - Verified edge cases in Oracle Call Interface development, Instant Client quirks, data type precision traps, and timeout behaviors.
+* [Type Fidelity Limitations and Verified Behavior](gotchas/type-fidelity-limitations.md) - Precision boundaries, `VARCHAR` pushdown asymmetry, temporal truncation limits, and verified numeric/timezone round-trip behavior.
 
 ### Decisions (ADRs)
 * [ADR-001: In-Tree OCI C ABI Declarations & Lazy Runtime Dynamic Loading](decisions/adr-001-in-tree-oci-c-abi-lazy-loading.md) - Replacing compile-time `<oci.h>` and `DT_NEEDED` `libclntsh` linkage with in-tree C ABI declarations and on-demand `dlopen`/`LoadLibraryA` loading.
+* [ADR-002: Configurable Unconstrained NUMBER Mapping and Decimal Text Write Binding](decisions/adr-002-oracle-number-mapping.md) - Preserving `'DOUBLE'` default with opt-in `oracle_number_as`, exact bounded `NUMBER` mappings, and `SQLT_CHR` shortest decimal text write binding.

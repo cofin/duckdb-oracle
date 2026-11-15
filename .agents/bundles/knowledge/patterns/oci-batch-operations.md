@@ -10,15 +10,15 @@ generated:
   by: flow/0.27.0
   at: 2026-11-07T17:36:00Z
 verified:
-  - by: agent:flow-setup
-    at: 2026-11-07T17:36:00Z
-    commit: 36539f3
+  - by: agent:bb-learn
+    at: 2026-11-15T18:18:00Z
+    commit: 499ea2c
 sources:
   - id: oracle-scan
     resource: src/oracle_scan.cpp::OracleQueryFunction
     title: Array fetch buffer definition, OCIStmtFetch2 batching, and column-major vector population
   - id: oracle-write
-    resource: src/storage/oracle_write.cpp::OracleWriteBatch
+    resource: src/storage/oracle_write.cpp::OracleWriteGlobalState::Sink
     title: Column-wise contiguous array bind buffers and batch OCIStmtExecute
   - id: type-conv
     resource: src/oracle_type_conversion.cpp::SetOracleOutputValue
@@ -29,7 +29,7 @@ sources:
 
 <!-- truth: start -->
 - Fetch scan rows in blocks (`oracle_array_size`, default `256`, max `STANDARD_VECTOR_SIZE = 2048`) via `OCIStmtFetch2` with `OCI_ATTR_PREFETCH_ROWS` (`oracle_prefetch_rows`, default `1024`), iterate column-major using `OracleSlice`, and call `output.SetChildCardinality(rows_fetched)`[^oracle-scan][^type-conv].
-- Bind write batches in `OracleWriteBatch` (`src/storage/oracle_write.cpp`) using `UnifiedVectorFormat`, contiguous column buffers (`SQLT_INT`, `SQLT_BDOUBLE`, `SQLT_ODT`, `SQLT_STR`, `SQLT_BIN`), parallel `sb2` indicator arrays, and `OCIStmtExecute(..., iters = batch_rows, ..., OCI_DEFAULT)`[^oracle-write].
+- Bind write batches in `OracleWriteGlobalState::Sink` (`src/storage/oracle_write.cpp`) using `UnifiedVectorFormat`, contiguous column buffers (`SQLT_INT`, `SQLT_BDOUBLE` for binary floats, `SQLT_CHR` via `duckdb_fmt::format` for `FLOAT`/`DOUBLE` to `NUMBER`, `SQLT_ODT`, `SQLT_STR`, `SQLT_BIN`), parallel `sb2` indicator arrays, and `OCIStmtExecute(..., iters = batch_rows, ..., OCI_DEFAULT)`[^oracle-write].
 - Anti-Pattern: Row-by-row `OCIStmtFetch2(..., 1, ...)` or per-row `col_vec.GetValue(row_idx)` in write sinks.
   - Reason: Incurs one SQL*Net round-trip or `duckdb::Value` heap allocation per row, degrading throughput by 10x–100x[^oracle-scan][^oracle-write].
 <!-- truth: end -->
@@ -105,5 +105,5 @@ OCIStmtExecute(svchp, stmt, errhp, iters /* current_batch_rows */, 0,
 3. **Execution Iterations (`iters`)**: In `OCIStmtExecute`, pass `iters = current_batch_rows` with `OCI_DEFAULT`. Oracle processes all `N` rows in a single batch round-trip, and `OracleWriteGlobalState` rolls back the active transaction via `OCITransRollback` if any batch execution fails before `Finalize` commits[^oracle-write].
 
 [^oracle-scan]: `src/oracle_scan.cpp::OracleQueryFunction` — Array fetch buffer definition, `OCIStmtFetch2` batching, and column-major vector population.
-[^oracle-write]: `src/storage/oracle_write.cpp::OracleWriteBatch` — Column-wise contiguous array bind buffers and batch `OCIStmtExecute`.
+[^oracle-write]: `src/storage/oracle_write.cpp::OracleWriteGlobalState::Sink` — Column-wise contiguous array bind buffers and batch `OCIStmtExecute`.
 [^type-conv]: `src/oracle_type_conversion.cpp::SetOracleOutputValue` — Zero-copy `OracleSlice` conversion into DuckDB vectors.

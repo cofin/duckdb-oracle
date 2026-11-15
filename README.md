@@ -131,10 +131,38 @@ INSERT INTO ora.scott.target_table
 SELECT * FROM 'source_data.parquet';
 ```
 
+### Type Mapping & Numeric Precision
+
+| Oracle Type | Default DuckDB Type | Notes |
+|-------------|---------------------|-------|
+| `NUMBER` (unconstrained) | `DOUBLE` | Configurable via `oracle_number_as` (`'VARCHAR'`, `'DECIMAL(p,s)'`). |
+| `INTEGER` / `NUMBER(*, s)` | `DECIMAL(38, s)` | `0 <= s <= 38`. |
+| `NUMBER(p, s)` (`s <= p`) | `DECIMAL(p, s)` | Exact when `1 <= p <= 38`. |
+| `NUMBER(p, -s)` | `DECIMAL(p + s, 0)` | Falls back to `oracle_number_as` when `p + s > 38`. |
+| `NUMBER(p, s > p)` | `DECIMAL(s, s)` | Falls back to `oracle_number_as` when `s > 38`. |
+| `FLOAT` / `BINARY_DOUBLE` | `DOUBLE` | `BINARY_FLOAT` maps to `FLOAT`. |
+
+Fixed-precision Oracle numeric columns map to exact DuckDB `DECIMAL` types, while Oracle `FLOAT` and `BINARY_DOUBLE` map to `DOUBLE` (`BINARY_FLOAT` maps to `FLOAT`).
+
+Unconstrained `NUMBER` columns and numeric query expressions without explicit precision default to DuckDB `DOUBLE` (`oracle_number_as = 'DOUBLE'`). To preserve integers larger than $2^{53}$ or high-scale decimals without floating-point rounding, configure `oracle_number_as` at the session level or per `ATTACH`:
+
+```sql
+-- Map unconstrained NUMBER columns to DECIMAL(38,10) for the session
+SET oracle_number_as = 'DECIMAL(38,10)';
+
+-- Or map unconstrained NUMBER columns to exact decimal strings on a catalog
+ATTACH '' AS ora_exact (TYPE oracle, SECRET my_oracle, number_as 'VARCHAR');
+```
+
+> When `oracle_number_as` is `'VARCHAR'`, predicate filter pushdown on affected `NUMBER` columns is disabled automatically so numeric filters never execute using string collation order on Oracle.
+
+When writing DuckDB `FLOAT` or `DOUBLE` values into Oracle `NUMBER` or `FLOAT` columns via `INSERT INTO`, the extension binds shortest round-trip decimal text instead of raw IEEE-754 binary floats. Values such as `13.8` are stored accurately without binary representation artifacts, while `NaN` and `Infinity` are rejected unless targeting `BINARY_FLOAT` or `BINARY_DOUBLE`.
+
 ## Configuration
 
 | Setting | Default | Description |
 |---------|---------|-------------|
+| `oracle_number_as` | `'DOUBLE'` | Target DuckDB type for unconstrained `NUMBER` (`'DOUBLE'`, `'VARCHAR'`, or `'DECIMAL(p,s)'`). |
 | `oracle_enable_pushdown` | `true` | Push filters and column projections to Oracle. |
 | `oracle_prefetch_rows` | `1024` | Rows prefetched per network round-trip (`1`–`1000000`). |
 | `oracle_prefetch_memory` | `0` | Prefetch buffer size in bytes (`0` lets the client choose, max `1 GiB`). |
