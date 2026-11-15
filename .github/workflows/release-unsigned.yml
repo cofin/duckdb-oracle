@@ -102,7 +102,7 @@ jobs:
           - os: ubuntu-24.04-arm
             arch: aarch64
             platform: linux
-          - os: macos-14
+          - os: macos-15
             arch: arm64
             platform: macos
           - os: windows-latest
@@ -471,6 +471,7 @@ jobs:
           body: ${{ steps.release_notes.outputs.notes }}
           draft: false
           prerelease: ${{ needs.validate-version.outputs.is_prerelease }}
+          make_latest: ${{ needs.validate-version.outputs.is_prerelease == 'false' }}
           files: |
             artifacts/release/*.duckdb_extension
             artifacts/release/*.zip
