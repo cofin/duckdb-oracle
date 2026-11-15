@@ -87,9 +87,9 @@ Oracle tables and expressions frequently declare numeric columns without precisi
 
 ## 5. Timezone Handling on TSTZ / LTZ
 
-When fetching `TIMESTAMP WITH TIME ZONE` or `TIMESTAMP WITH LOCAL TIME ZONE` columns as `SQLT_STR`[^type-conv]:
-- `OracleConnectionManager::CreateConnection` configures `NLS_TIMESTAMP_TZ_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM'` and `NLS_NUMERIC_CHARACTERS = '.,'` in `ALTER SESSION SET`.
-- `ParseTimestamp` (`src/oracle_type_conversion.cpp`) calls `Timestamp::TryConvertTimestamp(str_val.c_str(), str_val.size(), result, true)` (`use_offset = true`) so timezone offsets convert into UTC microseconds for DuckDB's `LogicalType::TIMESTAMP_TZ`[^type-conv].
+When fetching or writing `TIMESTAMP WITH TIME ZONE` or `TIMESTAMP WITH LOCAL TIME ZONE` columns as `SQLT_STR`[^type-conv]:
+- `OracleConnectionManager::CreateConnection` configures `TIME_ZONE = '+00:00'`, `NLS_TIMESTAMP_TZ_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FFTZH:TZM'` (no space before `TZH:TZM`, required so DuckDB parses numeric offsets instead of treating them as named zones), and `NLS_NUMERIC_CHARACTERS = '.,'` in `ALTER SESSION SET`.
+- `ParseTimestamp` (`src/oracle_type_conversion.cpp`) calls `Timestamp::TryConvertTimestamp(slice.ptr, slice.len, result, true)` (`use_offset = true`) so UTC and numeric-offset timestamps normalize into UTC microseconds for DuckDB's `LogicalType::TIMESTAMP`, while session `TIME_ZONE = '+00:00'` ensures `TIMESTAMP WITH LOCAL TIME ZONE` and write-back `TO_TIMESTAMP` inserts preserve UTC instants independently of the client OS timezone[^type-conv].
 
 ## 6. Configurable Call Timeout (`oracle_call_timeout_ms`)
 

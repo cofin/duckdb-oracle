@@ -446,6 +446,90 @@ statement ok
 SELECT oracle_execute(oracle_type_conn(), 'DROP TABLE number_fidelity')
 
 statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE tz_roundtrip_src'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE tz_roundtrip_dst'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    CREATE TABLE tz_roundtrip_src (
+        id NUMBER,
+        tstz_col TIMESTAMP(6) WITH TIME ZONE,
+        tsltz_col TIMESTAMP(6) WITH LOCAL TIME ZONE
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    CREATE TABLE tz_roundtrip_dst (
+        id NUMBER,
+        tstz_col TIMESTAMP(6) WITH TIME ZONE,
+        tsltz_col TIMESTAMP(6) WITH LOCAL TIME ZONE
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    INSERT INTO tz_roundtrip_src VALUES (
+        1,
+        TIMESTAMP ''2024-01-01 10:00:00 +05:00'',
+        TIMESTAMP ''2024-01-01 10:00:00 +05:00''
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    INSERT INTO tz_roundtrip_src VALUES (
+        2,
+        TIMESTAMP ''2024-06-15 22:30:00 -04:00'',
+        TIMESTAMP ''2024-06-15 22:30:00 -04:00''
+    )
+')
+
+statement ok
+SELECT oracle_clear_cache();
+
+statement ok
+INSERT INTO ora_types.duckdb_test.tz_roundtrip_dst
+SELECT id, tstz_col, tsltz_col
+FROM ora_types.duckdb_test.tz_roundtrip_src;
+
+query ITT
+SELECT id::INTEGER, tstz_utc, tsltz_utc
+FROM oracle_query(
+    oracle_type_conn(),
+    'SELECT id, TO_CHAR(SYS_EXTRACT_UTC(tstz_col), ''YYYY-MM-DD HH24:MI:SS'') AS tstz_utc, TO_CHAR(SYS_EXTRACT_UTC(tsltz_col), ''YYYY-MM-DD HH24:MI:SS'') AS tsltz_utc FROM tz_roundtrip_dst ORDER BY id'
+);
+----
+1	2024-01-01 05:00:00	2024-01-01 05:00:00
+2	2024-06-16 02:30:00	2024-06-16 02:30:00
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), 'DROP TABLE tz_roundtrip_dst')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), 'DROP TABLE tz_roundtrip_src')
+
+statement ok
 DETACH ora_types;
 
 statement ok

@@ -45,7 +45,7 @@ sources:
 ## Temporal Caveats
 
 - **`TIMESTAMP(7..9)` Microsecond Truncation**: DuckDB `TIMESTAMP` stores microseconds; Oracle fractional seconds past 6 digits truncate on read and bind as 6-digit fractional seconds on write[^type-conv].
-- **`TIMESTAMP WITH [LOCAL] TIME ZONE`**: Pending live Chapter 2 (`ch02:t01`) Oracle 23ai round-trip verification (`SYS_EXTRACT_UTC` comparison).
+- **UTC Session Normalization for `TIMESTAMP WITH [LOCAL] TIME ZONE`**: `OracleConnectionManager::CreateConnection` sets `TIME_ZONE = '+00:00'` and `NLS_TIMESTAMP_TZ_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FFTZH:TZM'` (without a space before `TZH:TZM`) so non-UTC `TIMESTAMP WITH TIME ZONE` offsets convert cleanly into UTC `LogicalType::TIMESTAMP` without ICU and round-trips preserve exact UTC instants (`SYS_EXTRACT_UTC`) even under non-UTC client `TZ`. Because session `TIME_ZONE` is pinned to `'+00:00'`, Oracle SQL expressions using `CURRENT_DATE`, `CURRENT_TIMESTAMP`, or `LOCALTIMESTAMP` execute in UTC (`+00:00`), and source timezone offsets are normalized to UTC rather than retained separately.
 
 [^num-reg]: `src/oracle_type_registry.cpp::NumberLogicalType` — `pushdown_eligible` and 38-digit `DECIMAL` boundaries.
 [^write-sink]: `src/storage/oracle_write.cpp::OracleWriteGlobalState::Sink` — `SQLT_CHR` float formatting and batch error propagation.

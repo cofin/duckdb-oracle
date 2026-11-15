@@ -11,6 +11,7 @@ All notable changes to the DuckDB Oracle extension are documented in this file.
 - **Decimal Fidelity on `FLOAT`/`DOUBLE` Writes**: Bound `FLOAT` and `DOUBLE` inputs as shortest round-trip decimal text (`SQLT_CHR`) for non-binary Oracle targets (`NUMBER`, `FLOAT`), fixing precision artifacts such as `13.8 -> 13.800000000000001`. Non-finite `NaN`/`Infinity` values are rejected on non-binary columns, while `BINARY_FLOAT` and `BINARY_DOUBLE` retain `SQLT_BDOUBLE` binding.
 - **Oracle `NUMBER` Schema & Expression Mapping**: Mapped `INTEGER`, `NUMBER(*, s)`, `NUMBER(p, -s)`, and `NUMBER(p, s > p)` columns within 38 digits to exact DuckDB `DECIMAL` types, and cleared stale scale attributes on unconstrained `oracle_query` expressions.
 - **Filter Pushdown & `ATTACH` Precedence**: Disabled predicate pushdown when `NUMBER` resolves to `VARCHAR`, and applied explicit `ATTACH` options after session settings so catalog overrides persist.
+- **Zoned Timestamp Round-Trip (`TIME_ZONE = '+00:00'`)**: Pinned OCI session `TIME_ZONE = '+00:00'` and omitted the space before `TZH:TZM` in `NLS_TIMESTAMP_TZ_FORMAT` so non-UTC `TIMESTAMP WITH [LOCAL] TIME ZONE` columns read and write back accurate UTC instants across OS timezones.
 
 ## [0.3.1] - 2026-10-22
 
