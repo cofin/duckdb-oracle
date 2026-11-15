@@ -212,8 +212,9 @@ unique_ptr<FunctionData> OracleBindInternal(ClientContext &context, const string
 		type_metadata.oracle_data_type = type_metadata.type_name;
 		type_metadata.type_owner = TryGetParamStringAttr(param.get(), ctx->errhp, OCI_ATTR_SCHEMA_NAME);
 		type_metadata.precision = precision;
+		type_metadata.has_precision = precision != 0;
 		type_metadata.scale = scale;
-		type_metadata.has_scale = true;
+		type_metadata.has_scale = precision != 0;
 		type_metadata.char_length = char_len;
 		type_metadata.data_length = data_size;
 

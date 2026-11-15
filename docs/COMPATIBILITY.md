@@ -10,3 +10,4 @@ This document tracks the compatibility between the DuckDB Oracle extension and D
 | v1.5.4         | v0.2.1            | ✅ Compatible | 2026-06-23 | DuckDB v1.5.4 upgrade |
 | v1.5.5 | v0.2.2 | ✅ Compatible | 2026-07-22 | DuckDB v1.5.5 upgrade |
 | v1.5.6 | v0.2.3 | ✅ Compatible | 2026-10-11 | DuckDB v1.5.6 upgrade |
+| v1.5.6 | v0.2.4 | ✅ Compatible | 2026-11-15 | Exact DECIMAL/FLOAT write binding, `oracle_number_as`, exact `NUMBER` mappings, UTC session normalization |

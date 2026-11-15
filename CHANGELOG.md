@@ -2,6 +2,16 @@
 
 All notable changes to the DuckDB Oracle extension are documented in this file.
 
+## [0.2.4] - 2026-11-15
+
+### Added
+- **Configurable `oracle_number_as` Mapping**: Added `oracle_number_as` and `ATTACH ... (number_as ...)` accepting `'DOUBLE'`, `'VARCHAR'`, or `'DECIMAL(p,s)'` (`1 <= p <= 38`, `0 <= s <= p`) for unconstrained `NUMBER` columns.
+
+### Fixed
+- **Decimal Fidelity on `FLOAT`/`DOUBLE` Writes**: Bound `FLOAT` and `DOUBLE` inputs as shortest round-trip decimal text (`SQLT_CHR`) for `NUMBER` and `FLOAT` columns, rejecting `NaN`/`Infinity` while preserving `SQLT_BDOUBLE` for `BINARY_FLOAT` and `BINARY_DOUBLE`.
+- **Oracle `NUMBER` Schema & Expression Mapping**: Mapped `INTEGER`, `NUMBER(*, s)`, `NUMBER(p, -s)` (`p + s <= 38`), and `NUMBER(p, s > p)` (`s <= 38`) columns to exact `DECIMAL` types, cleared stale scale attributes on `oracle_query` expressions (`OCI_ATTR_PRECISION == 0`), disabled pushdown for `NUMBER -> VARCHAR`, and applied explicit `ATTACH` options after session settings.
+- **Zoned Timestamp Round-Trip (`TIME_ZONE = '+00:00'`)**: Pinned session `TIME_ZONE = '+00:00'` and omitted the space before `TZH:TZM` in `NLS_TIMESTAMP_TZ_FORMAT` so non-UTC `TIMESTAMP WITH [LOCAL] TIME ZONE` values preserve UTC instants.
+
 ## [0.2.3] - 2026-04-19
 
 ### Added

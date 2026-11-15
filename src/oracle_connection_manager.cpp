@@ -417,9 +417,10 @@ std::shared_ptr<OracleContext> OracleConnectionManager::CreateConnection(const s
 
 	{
 		auto stmt = AllocateOCIStatement(ctx->envhp, ctx->errhp, "Failed to allocate statement handle for NLS setup");
-		std::string sql = "ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY-MM-DD HH24:MI:SS' "
+		std::string sql = "ALTER SESSION SET TIME_ZONE = '+00:00' "
+		                  "NLS_DATE_FORMAT = 'YYYY-MM-DD HH24:MI:SS' "
 		                  "NLS_TIMESTAMP_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF' "
-		                  "NLS_TIMESTAMP_TZ_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM' "
+		                  "NLS_TIMESTAMP_TZ_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FFTZH:TZM' "
 		                  "NLS_NUMERIC_CHARACTERS = '.,'";
 		CheckOCIError(OCIStmtPrepare(stmt.get(), ctx->errhp, reinterpret_cast<const OraText *>(sql.c_str()), sql.size(),
 		                             OCI_NTV_SYNTAX, OCI_DEFAULT),
