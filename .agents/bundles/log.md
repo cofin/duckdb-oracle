@@ -1,5 +1,9 @@
 # Change Log
 
+- 2026-11-15 `learn`: Reconciled 4 completed, 0 stale claims, synced 1 spec(s).
+
+- 2026-11-15 `unconstrained-number` & `/bb:learn`: Completed `unconstrained-number` (`997a5d3`, `ceeb56a`, `2e98073`, `e4eca72`, `1309446`, `499ea2c`) fixing `FLOAT`/`DOUBLE` `SQLT_CHR` decimal writes, adding `oracle_number_as` and bounded `DECIMAL` rules, normalizing session `TIME_ZONE = '+00:00'` and `NLS_TIMESTAMP_TZ_FORMAT`, adding `ADR-002` and `type-fidelity-limitations.md`, and reconciling write-pipeline, OCI batch, harness, and `AGENTS.md` docs on `fix/unconstrained-number`.
+
 - 2026-11-15 `setup`: Aligned OKF v0.2 bundle (normalized_setup_state, updated_bundle_index, updated_gitignore).
 
 - 2026-11-07: Aligned `.agents/` to Flow `v0.27.0` and OKF `v0.2` (`AGENTS.md`, `.agents/setup-state.json`, `.agents/.gitignore`, `.agents/bundles/**`, `.agents/skills/**`, `.agents/agents/**`) — Removed retired `.agents/skills/flow-memory-keeper/` and `.agents/transactions/`, added frontmatter-free subdirectory `index.md` catalogs (`product/`, `research/`, `specs/`) and root `AGENTS.md`, added `ADR-001` (`decisions/adr-001-in-tree-oci-c-abi-lazy-loading.md`), upgraded all 16 OKF chapters with bounded `<!-- truth: start -->` blocks, `generated`/`verified` metadata (`36539f3`), `sources` + `[^id]` footnotes, and `v0.3.1` / `variegata` parity, and generated stack-specific domain/review skills (`oracle-oci`, `duckdb-extension`, `review-oracle-oci`, `review-duckdb-extension`) and paired subagents (`oracle-oci-{reviewer,specialist}`, `duckdb-extension-{reviewer,specialist}`).

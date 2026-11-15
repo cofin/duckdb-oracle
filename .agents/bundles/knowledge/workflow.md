@@ -8,9 +8,9 @@ generated:
   by: flow/0.27.0
   at: 2026-11-07T17:36:00Z
 verified:
-  - by: agent:flow-setup
-    at: 2026-11-07T17:36:00Z
-    commit: 36539f3
+  - by: agent:bb-learn
+    at: 2026-11-15T18:18:00Z
+    commit: 499ea2c
 sources:
   - id: makefile
     resource: Makefile
@@ -56,15 +56,16 @@ make test-unit
 # Run a single sqllogictest file during tight TDD loops
 ./build/release/test/unittest "test/unit_tests/test_public_surface.test"
 
-# Run clang-format and clang-tidy verification
+# Run clang-format and clang-tidy verification (use direct clang-format + make tidy-check when offline)
 make lint
+clang-format --dry-run --Werror src/*.cpp src/storage/*.cpp src/include/*.hpp && make tidy-check
 
-# Run full containerized Oracle 23ai integration test suite
+# Run full containerized Oracle 23ai integration test suite (override ORACLE_IMAGE / TZ as needed)
 make integration
-SKIP_BUILD=1 make integration
+TZ=America/New_York ORACLE_IMAGE=gvenzl/oracle-free:23-slim-faststart SKIP_BUILD=1 make integration
 
-# Clean all build directories
-make clean-all
+# Clean all build directories and tidy cache when switching between main (C++17) and v1.5.6 (C++11)
+make clean-all && rm -rf build/tidy
 
 # Bump extension version in description.yml
 make bump-version bump=patch

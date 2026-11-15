@@ -10,9 +10,9 @@ generated:
   by: flow/0.27.0
   at: 2026-11-07T17:36:00Z
 verified:
-  - by: agent:flow-setup
-    at: 2026-11-07T17:36:00Z
-    commit: 36539f3
+  - by: agent:bb-learn
+    at: 2026-11-15T18:18:00Z
+    commit: 499ea2c
 sources:
   - id: oracle-scan
     resource: src/oracle_scan.cpp::OracleQueryFunction
@@ -21,7 +21,7 @@ sources:
     resource: src/storage/oracle_insert.cpp::PhysicalOracleInsert::GetDataInternal
     title: Physical sink source output cardinality synchronization
   - id: oracle-write
-    resource: src/storage/oracle_write.cpp::OracleWriteBatch
+    resource: src/storage/oracle_write.cpp::OracleWriteGlobalState::Sink
     title: UnifiedVectorFormat input vector normalization for bulk writes
   - id: oracle-pushdown
     resource: src/oracle_pushdown.cpp::OraclePushdownComplexFilter
@@ -32,7 +32,7 @@ sources:
 
 <!-- truth: start -->
 - Always call `output.SetChildCardinality(row_count)` (never `SetCardinalityUnsafe(row_count)`) after populating flat vectors via `FlatVector::GetDataMutable`, `FlatVector::SetNull`, or `StringVector::AddString`, because DuckDB `v2.0.0` `VectorOperations::IsNull` iterates over each `VectorBuffer`'s `v_size` rather than `DataChunk::size()`[^oracle-scan][^oracle-insert].
-- Use `FlatVector::GetDataMutable<T>`, `FlatVector::ValidityMutable`, `FlatVector::SetNull`, and `ListVector::GetEntryMutable` for writable vector access, and `col_vec.ToUnifiedFormat(count, vdata)` for arbitrary sink input vectors[^oracle-write].
+- Use `FlatVector::GetDataMutable<T>`, `FlatVector::ValidityMutable`, `FlatVector::SetNull`, and `ListVector::GetEntryMutable` for writable vector access, and `col_vec.ToUnifiedFormat(vdata)` for arbitrary sink input vectors[^oracle-write].
 - Use `duckdb::Identifier` in `table_function_bind_t` (`vector<Identifier> &names`) and `Catalog::GetDefaultSchema()` (`optional<Identifier>`), and use `expr.GetExpressionClass()` / `expr.GetExpressionType()` / `expr.GetReturnType()` / `expr.GetAlias()` on `Expression` nodes[^oracle-pushdown].
 - Wire all DuckDB 2.0 `TableFunction` optimizer callbacks (`projection_pushdown`, `filter_pushdown`, `filter_prune`, `pushdown_complex_filter`, `get_bind_info`, `get_table_entry`, `cardinality`, `to_string`) on `oracle_scan`[^oracle-scan].
 <!-- truth: end -->
@@ -75,8 +75,8 @@ DuckDB (`v2.0.0`) executes queries using a vectorized Morsel-driven pipeline whe
      ```
 
 3. **`UnifiedVectorFormat` for Arbitrary Input Vectors**[^oracle-write]:
-   - Physical sink operators (`OracleWriteBatch` in `src/storage/oracle_write.cpp`) receive chunks whose columns may be `FLAT_VECTOR`, `CONSTANT_VECTOR`, or `DICTIONARY_VECTOR`.
-   - Call `col_vec.ToUnifiedFormat(count, vdata)` once per column and index via `auto idx = vdata.sel->get_index(row_idx)` and `vdata.validity.RowIsValid(idx)` combined with `UnifiedVectorFormat::GetData<T>(vdata)` instead of calling `col_vec.GetValue(row_idx)` per row.
+   - Physical sink operators (`OracleWriteGlobalState::Sink` in `src/storage/oracle_write.cpp`) receive chunks whose columns may be `FLAT_VECTOR`, `CONSTANT_VECTOR`, or `DICTIONARY_VECTOR`.
+   - Call `chunk.data[col_idx].ToUnifiedFormat(unified_formats[col_idx])` once per column and index via `auto idx = vdata.sel->get_index(row_idx)` and `vdata.validity.RowIsValid(idx)` combined with `UnifiedVectorFormat::GetData<T>(vdata)` on fast paths.
 
 4. **`string_t` Inlining & Zero-Copy Slicing**:
    - Strings $\le 12$ bytes are stored inline inside the 16-byte `string_t` struct; strings $> 12$ bytes store a 4-byte length, 4-byte prefix, and 8-byte pointer into the vector's `StringHeap`.
@@ -96,8 +96,8 @@ DuckDB (`v2.0.0`) executes queries using a vectorized Morsel-driven pipeline whe
 ## DuckDB LogicalType Hierarchy (`src/oracle_type_registry.cpp`)
 
 - **Primitives**: `BOOLEAN`, `TINYINT`, `SMALLINT`, `INTEGER`, `BIGINT`, `HUGEINT`, `FLOAT`, `DOUBLE`.
-- **Fixed-Point Decimals**: `LogicalType::DECIMAL(width, scale)` ($1 \le \text{width} \le 38$).
-- **Temporal Types**: `DATE`, `TIMESTAMP`, `TIMESTAMP_TZ`.
+- **Fixed-Point Decimals**: `LogicalType::DECIMAL(width, scale)` ($1 \le \text{width} \le 38$). When `width == scale` (such as overscaled `NUMBER(2, 5)` mapped to `DECIMAL(5, 5)`), DuckDB's `DECIMAL::VARCHAR` formatter omits the leading zero (for example `.00012` instead of `0.00012`).
+- **Temporal Types**: `DATE`, `TIMESTAMP` (target type for Oracle `DATE`, `TIMESTAMP`, and normalized `TIMESTAMP WITH [LOCAL] TIME ZONE`), `TIMESTAMP_TZ`.
 - **JSON & Nested Types**:
   - `LogicalType::JSON()`: Alias over `VARCHAR` used for Oracle 21c/23ai native `JSON` (`SQLT_JSON`).
   - `LogicalType::LIST(child_type)`: Variable-length list used for Oracle 23ai `VECTOR` columns (`FLOAT` or `DOUBLE` elements).
@@ -133,5 +133,5 @@ oracle_scan.get_table_entry = OracleGetTableEntry;
 
 [^oracle-scan]: `src/oracle_scan.cpp::OracleQueryFunction` — `TableFunction` scan execution, `SetChildCardinality`, and optimizer hooks.
 [^oracle-insert]: `src/storage/oracle_insert.cpp::PhysicalOracleInsert::GetDataInternal` — Physical sink source output cardinality synchronization.
-[^oracle-write]: `src/storage/oracle_write.cpp::OracleWriteBatch` — `UnifiedVectorFormat` input vector normalization for bulk writes.
+[^oracle-write]: `src/storage/oracle_write.cpp::OracleWriteGlobalState::Sink` — `UnifiedVectorFormat` input vector normalization for bulk writes.
 [^oracle-pushdown]: `src/oracle_pushdown.cpp::OraclePushdownComplexFilter` — DuckDB 2.0 `Expression` accessor methods in filter pushdown.

@@ -10,7 +10,7 @@ description: "Use when modifying DuckDB 2.0 extension entrypoints, StorageExtens
 - Subclass `duckdb::Catalog` and `duckdb::SchemaCatalogEntry` directly (`info.internal = false`, never `DuckCatalog`), isolate per-`ATTACH` state in `OracleCatalogState`, and synchronize cached entries via `cache_generation`.
 - Wire DuckDB 2.0 `TableFunction` optimizer callbacks (`projection_pushdown`, `filter_pushdown`, `filter_prune`, `pushdown_complex_filter`, `get_bind_info`, `get_table_entry`, `cardinality`, `to_string`) on `oracle_scan`.
 - Never push empty string literals (`''`) into Oracle `WHERE` clauses (`src/oracle_pushdown.cpp`) because Oracle evaluates `''` as `NULL`.
-- Normalize physical sink inputs via `col_vec.ToUnifiedFormat(count, vdata)` in `OracleWriteBatch` (`src/storage/oracle_write.cpp`).
+- Normalize physical sink inputs via `chunk.data[col_idx].ToUnifiedFormat(vdata)` in `OracleWriteGlobalState::Sink` (`src/storage/oracle_write.cpp`).
 <!-- truth: end -->
 
 ## Workflow

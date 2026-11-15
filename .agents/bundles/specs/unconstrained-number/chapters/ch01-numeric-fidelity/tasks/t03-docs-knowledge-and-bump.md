@@ -46,8 +46,8 @@ estimated_loc: 220
 plan_revision: 1
 plan_commit: 83efe19
 state_revision: 2
-claimed_by: "agy:0562b821-d24d-4860-a83a-6839add195c1:coordinator"
-claimed_at: 2026-11-15T17:28:00Z
+claimed_by: null
+claimed_at: null
 commit: 2e98073
 sources:
   - id: bumpversion

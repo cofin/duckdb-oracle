@@ -8,9 +8,9 @@ generated:
   by: flow/0.27.0
   at: 2026-11-07T17:36:00Z
 verified:
-  - by: agent:flow-setup
-    at: 2026-11-07T17:36:00Z
-    commit: 36539f3
+  - by: agent:bb-learn
+    at: 2026-11-15T18:18:00Z
+    commit: 499ea2c
 sources:
   - id: cmake-lists
     resource: CMakeLists.txt
@@ -34,7 +34,7 @@ sources:
 <!-- truth: end -->
 
 ## Components & Dependencies
-- **DuckDB**: Upstream submodule pinned to `v2.0.0` (`d54cbbe3df17e8e5ce68312f483b4155836112aa`, extension `v0.3.1`)[^ext-config].
+- **DuckDB**: Upstream submodule pinned to `v2.0.0` (`d54cbbe3df17e8e5ce68312f483b4155836112aa`, extension `v0.3.2` on `main`, `v0.2.4` on `feat/duckdb-v1.5.6`) with bundled `duckdb_fmt` used for decimal write formatting[^ext-config].
 - **OCI Runtime Loader**: In-tree `oracle_oci_api.hpp` / `oracle_oci_api.cpp` dynamically resolving 22 OCI functions at runtime; Linux integration test runtime setup via `scripts/setup_oci_linux.sh` (`basic.zip` only)[^cmake-lists].
 - **Packaging & CI**: GitHub Actions workflows in `.github/workflows/` (`v2.0-cyanoptera` reusable workflows) and `description.yml` aligned with `duckdb/community-extensions`[^makefile].
 
