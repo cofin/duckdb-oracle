@@ -247,7 +247,7 @@ SELECT
 FROM ora_registry.duckdb_test.registry_supported
 WHERE id = 1
 ----
-DOUBLE	DECIMAL(38,0)	DOUBLE	DECIMAL(10,2)
+DOUBLE	DECIMAL(38,0)	DECIMAL(12,0)	DECIMAL(10,2)
 
 query TTTTTTTT
 SELECT
@@ -383,6 +383,143 @@ statement error
 SELECT * FROM oracle_query(oracle_registry_conn(), 'SELECT CURSOR(SELECT 1 AS x FROM dual) nested_cursor FROM dual')
 ----
 Unsupported Oracle type OCI type
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE registry_numbers'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), '
+    CREATE TABLE registry_numbers (
+        id NUMBER,
+        n_int INTEGER,
+        n_star_scale NUMBER(*, 2),
+        n_neg_scale NUMBER(10, -2),
+        n_overscale NUMBER(2, 5),
+        n_float FLOAT
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), '
+    INSERT INTO registry_numbers VALUES (1, 42, 123.45, 123400, 0.00012, 1.25)
+')
+
+statement ok
+SELECT oracle_clear_cache();
+
+query TTTTTT
+SELECT
+    typeof(id),
+    typeof(n_int),
+    typeof(n_star_scale),
+    typeof(n_neg_scale),
+    typeof(n_overscale),
+    typeof(n_float)
+FROM ora_registry.duckdb_test.registry_numbers
+WHERE id = 1
+----
+DOUBLE	DECIMAL(38,0)	DECIMAL(38,2)	DECIMAL(12,0)	DECIMAL(5,5)	DOUBLE
+
+statement ok
+SET oracle_number_as = 'DECIMAL(38,10)';
+
+statement ok
+ATTACH '' AS ora_set_dec (TYPE ORACLE, SECRET 'oracle_registry_test')
+
+query TTTTTT
+SELECT
+    typeof(id),
+    typeof(n_int),
+    typeof(n_star_scale),
+    typeof(n_neg_scale),
+    typeof(n_overscale),
+    typeof(n_float)
+FROM ora_set_dec.duckdb_test.registry_numbers
+WHERE id = 1
+----
+DECIMAL(38,10)	DECIMAL(38,0)	DECIMAL(38,2)	DECIMAL(12,0)	DECIMAL(5,5)	DOUBLE
+
+statement ok
+DETACH ora_set_dec;
+
+query TTTTTT
+SELECT
+    typeof(id),
+    typeof(n_int),
+    typeof(n_star_scale),
+    typeof(n_neg_scale),
+    typeof(n_overscale),
+    typeof(n_float)
+FROM oracle_scan(oracle_registry_conn(), 'DUCKDB_TEST', 'REGISTRY_NUMBERS')
+WHERE id = 1
+----
+DECIMAL(38,10)	DECIMAL(38,0)	DECIMAL(38,2)	DECIMAL(12,0)	DECIMAL(5,5)	DOUBLE
+
+query TTT
+SELECT
+    typeof(s),
+    typeof(c),
+    typeof(f)
+FROM oracle_query(oracle_registry_conn(), 'SELECT SUM(n_scaled) s, COUNT(*) c, CAST(1.25 AS FLOAT) f FROM registry_supported')
+----
+DECIMAL(38,10)	DECIMAL(38,10)	DOUBLE
+
+statement ok
+SET oracle_number_as = 'VARCHAR';
+
+query TTTTTT
+SELECT
+    typeof(id),
+    typeof(n_int),
+    typeof(n_star_scale),
+    typeof(n_neg_scale),
+    typeof(n_overscale),
+    typeof(n_float)
+FROM oracle_scan(oracle_registry_conn(), 'DUCKDB_TEST', 'REGISTRY_NUMBERS')
+WHERE id = '1'
+----
+VARCHAR	DECIMAL(38,0)	DECIMAL(38,2)	DECIMAL(12,0)	DECIMAL(5,5)	DOUBLE
+
+query TTT
+SELECT
+    typeof(s),
+    typeof(c),
+    typeof(f)
+FROM oracle_query(oracle_registry_conn(), 'SELECT SUM(n_scaled) s, COUNT(*) c, CAST(1.25 AS FLOAT) f FROM registry_supported')
+----
+VARCHAR	VARCHAR	DOUBLE
+
+statement ok
+SET oracle_number_as = 'DOUBLE';
+
+statement ok
+ATTACH '' AS ora_num_dec (TYPE ORACLE, SECRET 'oracle_registry_test', number_as 'DECIMAL(38,10)')
+
+query TTTT
+SELECT
+    typeof(id),
+    typeof(n_int),
+    typeof(n_overscale),
+    typeof(n_float)
+FROM ora_num_dec.duckdb_test.registry_numbers
+WHERE id = 1
+----
+DECIMAL(38,10)	DECIMAL(38,0)	DECIMAL(5,5)	DOUBLE
+
+statement ok
+DETACH ora_num_dec;
+
+statement ok
+SELECT oracle_execute(oracle_registry_conn(), 'DROP TABLE registry_numbers')
 
 statement ok
 SELECT oracle_execute(oracle_registry_conn(), 'DROP TABLE registry_unsupported_obj')

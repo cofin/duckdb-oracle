@@ -21,12 +21,28 @@ static bool IsObjectTypeOwner(const OracleTypeMetadata &metadata) {
 	return owner != "SYS" && owner != "MDSYS";
 }
 
-static LogicalType NumberLogicalType(idx_t precision, int32_t scale, bool has_scale) {
-	if (!has_scale || precision == 0 || precision > 38 || scale < 0) {
-		return LogicalType::DOUBLE;
+static LogicalType NumberLogicalType(const OracleTypeMetadata &metadata, const OracleSettings &settings) {
+	const auto scale = metadata.scale;
+	if (!metadata.has_precision) {
+		if (metadata.has_scale && scale >= 0 && scale <= 38) {
+			return LogicalType::DECIMAL(38, static_cast<uint8_t>(scale));
+		}
+		return settings.number_as;
 	}
-	if (scale > static_cast<int32_t>(precision)) {
-		return LogicalType::DOUBLE;
+	if (metadata.precision == 0 || metadata.precision > 38) {
+		return settings.number_as;
+	}
+	const auto precision = static_cast<int32_t>(metadata.precision);
+	if (!metadata.has_scale) {
+		return LogicalType::DECIMAL(static_cast<uint8_t>(precision), 0);
+	}
+	if (scale < 0) {
+		const auto width = precision - scale;
+		return width <= 38 ? LogicalType::DECIMAL(static_cast<uint8_t>(width), 0) : settings.number_as;
+	}
+	if (scale > precision) {
+		return scale <= 38 ? LogicalType::DECIMAL(static_cast<uint8_t>(scale), static_cast<uint8_t>(scale))
+		                   : settings.number_as;
 	}
 	return LogicalType::DECIMAL(static_cast<uint8_t>(precision), static_cast<uint8_t>(scale));
 }
@@ -203,8 +219,8 @@ OracleTypeDecision OracleTypeRegistry::ResolveMetadata(const OracleTypeMetadata 
 		                   "Oracle SQL BOOLEAN support is not wired to a DuckDB bool conversion yet");
 	}
 	if (type == "NUMBER") {
-		return Supported(OracleTypeCategory::NUMERIC, type,
-		                 NumberLogicalType(metadata.precision, metadata.scale, metadata.has_scale), false, true);
+		auto logical = NumberLogicalType(metadata, settings);
+		return Supported(OracleTypeCategory::NUMERIC, type, logical, false, logical.id() != LogicalTypeId::VARCHAR);
 	}
 	if (type == "BINARY_FLOAT") {
 		return Supported(OracleTypeCategory::FLOATING, type, LogicalType::FLOAT, false, true);
@@ -248,9 +264,14 @@ OracleTypeDecision OracleTypeRegistry::ResolveOciDescribe(const OracleTypeMetada
 	case SQLT_AVC:
 		return Supported(OracleTypeCategory::STANDARD, "VARCHAR2", LogicalType::VARCHAR, false, true);
 	case SQLT_NUM:
-	case SQLT_VNU:
-		return Supported(OracleTypeCategory::NUMERIC, "OCI NUMBER",
-		                 NumberLogicalType(metadata.precision, metadata.scale, metadata.has_scale), false, true);
+	case SQLT_VNU: {
+		if (metadata.has_precision && metadata.has_scale && metadata.scale == -127) {
+			return Supported(OracleTypeCategory::FLOATING, "OCI FLOAT", LogicalType::DOUBLE, false, true);
+		}
+		auto logical = NumberLogicalType(metadata, settings);
+		return Supported(OracleTypeCategory::NUMERIC, "OCI NUMBER", logical, false,
+		                 logical.id() != LogicalTypeId::VARCHAR);
+	}
 	case SQLT_INT:
 	case SQLT_UIN:
 		return Supported(OracleTypeCategory::NUMERIC, "OCI INTEGER", LogicalType::BIGINT, false, true);

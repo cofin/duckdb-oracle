@@ -358,6 +358,94 @@ statement ok
 SELECT oracle_execute(oracle_type_conn(), 'DROP TABLE mixed_types')
 
 statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE number_fidelity'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), '
+    CREATE TABLE number_fidelity (
+        id NUMBER,
+        big_id NUMBER,
+        fraction NUMBER,
+        neg_scaled NUMBER(10,-2),
+        overscale NUMBER(2,5)
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), 'INSERT INTO number_fidelity VALUES (1, 9007199254740993, -0.5, 123400, 0.00012)')
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), 'INSERT INTO number_fidelity VALUES (2, 12345678901234567890123456789012345678, 1/3, -500, 0.00045)')
+
+statement ok
+SELECT oracle_clear_cache();
+
+query TTTT
+SELECT
+    big_id::VARCHAR,
+    fraction::VARCHAR,
+    neg_scaled::VARCHAR,
+    overscale::VARCHAR
+FROM oracle_query(oracle_type_conn(), 'SELECT big_id, fraction, neg_scaled, overscale FROM number_fidelity WHERE id = 1')
+----
+9007199254740992.0	-0.5	123400	.00012
+
+query T
+SELECT neg_scaled::VARCHAR
+FROM ora_types.duckdb_test.number_fidelity
+WHERE id = 2
+----
+-500
+
+statement ok
+SET oracle_number_as = 'DECIMAL(38,0)';
+
+query T
+SELECT big_id::VARCHAR
+FROM oracle_query(oracle_type_conn(), 'SELECT big_id FROM number_fidelity WHERE id = 2')
+----
+12345678901234567890123456789012345678
+
+statement ok
+SET oracle_number_as = 'DECIMAL(38,10)';
+
+query T
+SELECT fraction::VARCHAR
+FROM oracle_query(oracle_type_conn(), 'SELECT fraction FROM number_fidelity WHERE id = 2')
+----
+0.3333333333
+
+statement error
+SELECT big_id
+FROM oracle_query(oracle_type_conn(), 'SELECT big_id FROM number_fidelity WHERE id = 2')
+----
+Invalid Input Error
+
+statement ok
+SET oracle_number_as = 'VARCHAR';
+
+query TTT
+SELECT big_id, fraction, neg_scaled::VARCHAR
+FROM oracle_query(oracle_type_conn(), 'SELECT big_id, fraction, neg_scaled FROM number_fidelity WHERE id = 1')
+----
+9007199254740993	-.5	123400
+
+statement ok
+SET oracle_number_as = 'DOUBLE';
+
+statement ok
+SELECT oracle_execute(oracle_type_conn(), 'DROP TABLE number_fidelity')
+
+statement ok
 DETACH ora_types;
 
 statement ok

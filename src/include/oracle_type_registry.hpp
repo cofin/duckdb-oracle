@@ -44,6 +44,7 @@ struct OracleTypeMetadata {
 	idx_t char_length = 0;
 	bool char_used = false;
 	idx_t precision = 0;
+	bool has_precision = false;
 	int32_t scale = 0;
 	bool has_scale = false;
 	idx_t srid = 0;

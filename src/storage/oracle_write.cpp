@@ -138,7 +138,7 @@ static void ResolveOracleWriteTargetMetadata(OracleWriteBindData &data) {
 		}
 
 		idx_t precision = 0;
-		TryParseOracleMetadataIndex(row[5], precision);
+		bool has_precision = TryParseOracleMetadataIndex(row[5], precision) && precision > 0;
 		int32_t scale = 0;
 		bool has_scale = TryParseOracleMetadataInt(row[6], scale);
 		idx_t data_length = 0;
@@ -153,6 +153,7 @@ static void ResolveOracleWriteTargetMetadata(OracleWriteBindData &data) {
 		metadata.oracle_data_type = data_type;
 		metadata.type_owner = row[4];
 		metadata.precision = precision;
+		metadata.has_precision = has_precision;
 		metadata.scale = scale;
 		metadata.has_scale = has_scale;
 		metadata.data_length = data_length;

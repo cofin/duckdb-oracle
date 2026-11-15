@@ -3,9 +3,65 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/limits.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/types/decimal.hpp"
 #include "duckdb/main/config.hpp"
 
 namespace duckdb {
+
+static bool ParseDecimalParamUint8(const string &raw, uint8_t &out) {
+	string trimmed = raw;
+	StringUtil::Trim(trimmed);
+	if (trimmed.empty()) {
+		return false;
+	}
+	uint32_t value = 0;
+	for (char ch : trimmed) {
+		if (ch < '0' || ch > '9') {
+			return false;
+		}
+		value = (value * 10) + static_cast<uint32_t>(ch - '0');
+		if (value > 38) {
+			return false;
+		}
+	}
+	out = static_cast<uint8_t>(value);
+	return true;
+}
+
+LogicalType ParseOracleNumberAs(const string &raw) {
+	string normalized = StringUtil::Upper(raw);
+	StringUtil::Trim(normalized);
+	if (normalized == "DOUBLE") {
+		return LogicalType::DOUBLE;
+	}
+	if (normalized == "VARCHAR") {
+		return LogicalType::VARCHAR;
+	}
+	if (StringUtil::StartsWith(normalized, "DECIMAL(") && normalized.back() == ')') {
+		auto inner = normalized.substr(8, normalized.size() - 9);
+		auto parts = StringUtil::Split(inner, ',');
+		if (parts.size() == 2) {
+			uint8_t width = 0;
+			uint8_t scale = 0;
+			if (ParseDecimalParamUint8(parts[0], width) && ParseDecimalParamUint8(parts[1], scale) && width >= 1 &&
+			    width <= 38 && scale <= width) {
+				return LogicalType::DECIMAL(width, scale);
+			}
+		}
+	}
+	throw InvalidInputException(
+	    "oracle_number_as must be 'DOUBLE', 'VARCHAR', or 'DECIMAL(p,s)' with 1 <= p <= 38 and 0 <= s <= p");
+}
+
+string FormatOracleNumberAs(const LogicalType &type) {
+	if (type.id() == LogicalTypeId::VARCHAR) {
+		return "VARCHAR";
+	}
+	if (type.id() == LogicalTypeId::DECIMAL) {
+		return StringUtil::Format("DECIMAL(%u,%u)", DecimalType::GetWidth(type), DecimalType::GetScale(type));
+	}
+	return "DOUBLE";
+}
 
 int64_t ExtractSignedOptionInt(const Value &val, const char *name, idx_t min_value, idx_t max_value) {
 	if (val.type().id() == LogicalTypeId::UBIGINT) {
@@ -143,6 +199,12 @@ void ApplyAttachOptions(const case_insensitive_map_t<Value> &options, OracleSett
 			settings.stmt_cache_size =
 			    OracleValidatedSettingValue(raw, "oracle_stmt_cache_size", 0, MAX_ORACLE_STMT_CACHE_SIZE);
 			settings.attach_overridden_keys.insert("oracle_stmt_cache_size");
+		} else if (key == "number_as" || key == "oracle_number_as") {
+			if (val.IsNull()) {
+				throw InvalidInputException("oracle_number_as cannot be NULL");
+			}
+			settings.number_as = ParseOracleNumberAs(val.ToString());
+			settings.attach_overridden_keys.insert("oracle_number_as");
 		}
 	}
 }
@@ -182,6 +244,14 @@ static void ValidateMetadataResultLimitOption(ClientContext &, SetScope, Value &
 	OracleValidatedMetadataResultLimit(raw);
 }
 
+static void ValidateNumberAsOption(ClientContext &, SetScope, Value &parameter) {
+	if (parameter.IsNull()) {
+		throw InvalidInputException("oracle_number_as cannot be NULL");
+	}
+	auto parsed = ParseOracleNumberAs(parameter.ToString());
+	parameter = Value(FormatOracleNumberAs(parsed));
+}
+
 void RegisterOracleExtensionOptions(DBConfig &config) {
 	config.AddExtensionOption("oracle_enable_pushdown", "Enable Oracle filter/projection pushdown",
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(true));
@@ -217,6 +287,10 @@ void RegisterOracleExtensionOptions(DBConfig &config) {
 	config.AddExtensionOption("oracle_enable_spatial_types",
 	                          "Map SDO_GEOMETRY to GEOMETRY type (requires spatial extension)", LogicalType::BOOLEAN,
 	                          Value::BOOLEAN(true));
+	config.AddExtensionOption(
+	    "oracle_number_as",
+	    "DuckDB target type for unconstrained Oracle NUMBER columns ('DOUBLE', 'VARCHAR', or 'DECIMAL(p,s)')",
+	    LogicalType::VARCHAR, Value("DOUBLE"), ValidateNumberAsOption);
 
 	StorageExtension::Register(config, "oracle", CreateOracleStorageExtension());
 }

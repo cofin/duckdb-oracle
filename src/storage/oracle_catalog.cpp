@@ -100,8 +100,8 @@ void OracleCatalogState::ApplyOptions(const unordered_map<string, Value> &option
 		           key == "oracle_metadata_result_limit" || key == "use_current_schema" ||
 		           key == "oracle_use_current_schema" || key == "enable_spatial_types" ||
 		           key == "oracle_enable_spatial_types" || key == "spatial_as_wkt" || key == "oracle_spatial_as_wkt" ||
-		           key == "call_timeout_ms" || key == "oracle_call_timeout_ms" || key == "stmt_cache_size" ||
-		           key == "oracle_stmt_cache_size") {
+		           key == "number_as" || key == "oracle_number_as" || key == "call_timeout_ms" ||
+		           key == "oracle_call_timeout_ms" || key == "stmt_cache_size" || key == "oracle_stmt_cache_size") {
 			ci_options[entry.first] = entry.second;
 		} else {
 			throw InvalidInputException("Unknown Oracle attach option \"%s\"", entry.first.c_str());
