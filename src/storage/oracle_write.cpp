@@ -12,6 +12,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
+#include "fmt/format.h"
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -504,10 +505,37 @@ void OracleWriteGlobalState::Sink(DataChunk &chunk, const vector<string> &column
 			} else {
 				auto &col_strings = converted_strings[col_idx];
 				col_strings.resize(count);
+				const bool format_float_text = !IsOracleVectorType(oracle_type) &&
+				                               (col_type == LogicalTypeId::FLOAT || col_type == LogicalTypeId::DOUBLE);
+				const auto *float_data = (format_float_text && col_type == LogicalTypeId::FLOAT)
+				                             ? UnifiedVectorFormat::GetData<float>(format)
+				                             : nullptr;
+				const auto *double_data = (format_float_text && col_type == LogicalTypeId::DOUBLE)
+				                              ? UnifiedVectorFormat::GetData<double>(format)
+				                              : nullptr;
 				for (idx_t i = 0; i < count; i++) {
 					auto sel_idx = format.sel->get_index(i);
 					if (format.validity.RowIsValid(sel_idx)) {
-						auto s = OracleWriteValueToString(chunk.data[col_idx].GetValue(i), column_name, oracle_type);
+						string s;
+						if (float_data) {
+							float val = float_data[sel_idx];
+							if (!std::isfinite(val)) {
+								throw InvalidInputException(
+								    "Oracle write value for column '%s' cannot bind NaN or Infinity to %s",
+								    column_name.c_str(), oracle_type.empty() ? "NUMBER" : oracle_type.c_str());
+							}
+							s = duckdb_fmt::format("{}", val);
+						} else if (double_data) {
+							double val = double_data[sel_idx];
+							if (!std::isfinite(val)) {
+								throw InvalidInputException(
+								    "Oracle write value for column '%s' cannot bind NaN or Infinity to %s",
+								    column_name.c_str(), oracle_type.empty() ? "NUMBER" : oracle_type.c_str());
+							}
+							s = duckdb_fmt::format("{}", val);
+						} else {
+							s = OracleWriteValueToString(chunk.data[col_idx].GetValue(i), column_name, oracle_type);
+						}
 						if (s.size() > NumericLimits<ub2>::Maximum()) {
 							auto len_str = std::to_string(s.size());
 							throw InvalidInputException("Oracle write value for column '%s' exceeds maximum OCI bind "

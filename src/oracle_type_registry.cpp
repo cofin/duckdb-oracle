@@ -351,6 +351,10 @@ OracleTypeDecision OracleTypeRegistry::ResolveWrite(const OracleTypeMetadata &me
 		decision.write_bind_type = SQLT_ODT;
 	} else if (decision.duckdb_type.id() == LogicalTypeId::BIGINT && duckdb_type.IsIntegral()) {
 		decision.write_bind_type = SQLT_INT;
+	} else if (duckdb_type.id() == LogicalTypeId::FLOAT || duckdb_type.id() == LogicalTypeId::DOUBLE) {
+		decision.write_bind_type =
+		    (decision.normalized_type == "BINARY_FLOAT" || decision.normalized_type == "BINARY_DOUBLE") ? SQLT_BDOUBLE
+		                                                                                                : SQLT_CHR;
 	}
 	return decision;
 }
