@@ -76,7 +76,7 @@ When reading plain `NUMBER` columns as `DOUBLE` and writing them back via `INSER
 ## 5. Implementation Plan
 
 - [~] ch01-numeric-fidelity — NUMBER mapping, oracle_number_as, decimal write binding, and v0.3.2 docs (chapters/ch01-numeric-fidelity/spec.md)
-- [ ] ch02-timezone-roundtrip — Reproduce and fix zoned timestamp round-trip (chapters/ch02-timezone-roundtrip/spec.md)
+- [~] ch02-timezone-roundtrip — Reproduce and fix zoned timestamp round-trip (chapters/ch02-timezone-roundtrip/spec.md)
 
 ## 6. Current State & Remaining Plan Snapshot
 

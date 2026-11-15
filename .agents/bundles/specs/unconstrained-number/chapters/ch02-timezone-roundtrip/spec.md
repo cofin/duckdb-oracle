@@ -5,7 +5,7 @@ chapter_id: ch02-timezone-roundtrip
 title: "Reproduce and fix zoned timestamp round-trip"
 description: "Empirically test TIMESTAMP WITH TIME ZONE and TIMESTAMP WITH LOCAL TIME ZONE round-trips against Oracle and align session TIME_ZONE if shifted."
 status: stable
-state: planned
+state: active
 planning_status: empirical_dependent
 planning_quality: standard
 depends_on_chapters:
@@ -22,4 +22,4 @@ last_reviewed_commit: null
 
 ## 5. Implementation Plan
 
-- [ ] t01 — Reproduce zoned timestamp round-trip and apply session UTC fix if reproduced (tasks/t01-reproduce-and-fix-tz-roundtrip.md)
+- [~] t01 — Reproduce zoned timestamp round-trip and apply session UTC fix if reproduced (tasks/t01-reproduce-and-fix-tz-roundtrip.md)

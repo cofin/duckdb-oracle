@@ -6,7 +6,7 @@ title: "Reproduce zoned timestamp round-trip and apply session UTC fix if reprod
 description: "Test TIMESTAMP WITH [LOCAL] TIME ZONE round-trips via SYS_EXTRACT_UTC, set session TIME_ZONE = '+00:00' if reproduced, and record behavior in type-fidelity-limitations.md."
 worksheet_format: compact
 status: stable
-state: pending
+state: in_progress
 priority: P2
 verification_strategy: integration_acceptance
 depends_on: []
@@ -24,9 +24,9 @@ tests:
 estimated_loc: 45
 plan_revision: 1
 plan_commit: 83efe19
-state_revision: 1
-claimed_by: null
-claimed_at: null
+state_revision: 2
+claimed_by: "agy:0562b821-d24d-4860-a83a-6839add195c1:coordinator"
+claimed_at: 2026-11-15T17:32:00Z
 commit: null
 sources:
   - id: conn-mgr
