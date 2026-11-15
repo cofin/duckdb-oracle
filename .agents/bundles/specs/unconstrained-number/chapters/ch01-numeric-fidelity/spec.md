@@ -5,16 +5,16 @@ chapter_id: ch01-numeric-fidelity
 title: "NUMBER mapping, oracle_number_as, decimal write binding, and v0.3.2 docs"
 description: "Implement exact NUMBER mapping rules, oracle_number_as setting, SQLT_CHR decimal text binding for FLOAT/DOUBLE writes, and v0.3.2 docs and knowledge alignment."
 status: stable
-state: active
+state: completed
 planning_status: complete
 planning_quality: standard
 depends_on_chapters: []
 replan_trigger: null
 plan_revision: 1
 plan_commit: 83efe19
-state_revision: 1
+state_revision: 2
 current_task: null
-last_reviewed_commit: null
+last_reviewed_commit: 1309446
 ---
 
 # NUMBER mapping, oracle_number_as, decimal write binding, and v0.3.2 docs

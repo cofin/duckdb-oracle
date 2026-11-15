@@ -6,7 +6,7 @@ title: "Reproduce zoned timestamp round-trip and apply session UTC fix if reprod
 description: "Test TIMESTAMP WITH [LOCAL] TIME ZONE round-trips via SYS_EXTRACT_UTC, set session TIME_ZONE = '+00:00' if reproduced, and record behavior in type-fidelity-limitations.md."
 worksheet_format: compact
 status: stable
-state: in_progress
+state: completed
 priority: P2
 verification_strategy: integration_acceptance
 depends_on: []
@@ -18,6 +18,9 @@ read_set:
   - .agents/bundles/knowledge/gotchas/type-fidelity-limitations.md
 files:
   - src/oracle_connection_manager.cpp
+  - test/integration_tests/oracle/type_conversion.test
+  - CHANGELOG.md
+  - .agents/bundles/knowledge/gotchas/oracle-oci.md
   - .agents/bundles/knowledge/gotchas/type-fidelity-limitations.md
 tests:
   - test/integration_tests/oracle/type_conversion.test
@@ -27,7 +30,7 @@ plan_commit: 83efe19
 state_revision: 2
 claimed_by: "agy:0562b821-d24d-4860-a83a-6839add195c1:coordinator"
 claimed_at: 2026-11-15T17:32:00Z
-commit: null
+commit: e4eca72
 sources:
   - id: conn-mgr
     resource: src/oracle_connection_manager.cpp::OracleConnectionManager::CreateConnection
@@ -55,6 +58,8 @@ Verify whether `TIMESTAMP WITH TIME ZONE` and `TIMESTAMP WITH LOCAL TIME ZONE` v
 - If reproduced, add `TIME_ZONE = '+00:00'` to the `ALTER SESSION SET` statement in `src/oracle_connection_manager.cpp::OracleConnectionManager` and document the `CURRENT_DATE` / `CURRENT_TIMESTAMP` UTC effect in `gotchas/type-fidelity-limitations.md`.
 - If not reproduced, retain the round-trip test as characterization and record the observed Oracle behavior in `gotchas/type-fidelity-limitations.md`.
 
+- Empirical run reproduced `Timestamp::TryConvertTimestamp` rejecting `"2024-01-01 10:00:00.000000 +05:00"` (`ERROR_NON_UTC_TIMEZONE`) due to the space before `TZH:TZM` in `NLS_TIMESTAMP_TZ_FORMAT`. Omitting that space (`'YYYY-MM-DD HH24:MI:SS.FFTZH:TZM'`) and setting `TIME_ZONE = '+00:00'` in `ALTER SESSION SET` resolved both reads and UTC round-trips (`22/22` integration suites passing under `TZ=America/New_York`).
+
 ## Test Matrix
 
 | Case | Input | Expected |
@@ -69,4 +74,4 @@ Verify whether `TIMESTAMP WITH TIME ZONE` and `TIMESTAMP WITH LOCAL TIME ZONE` v
 
 ## Acceptance Criteria
 
-- [ ] Zoned timestamp characterization or fix passes `make integration` and `gotchas/type-fidelity-limitations.md` records the verified behavior.
+- [x] Zoned timestamp characterization or fix passes `make integration` and `gotchas/type-fidelity-limitations.md` records the verified behavior.
