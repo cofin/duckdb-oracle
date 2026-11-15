@@ -38,3 +38,4 @@ bundle: duckdb-oracle
 - [knowledge/standards/development-discipline.md](knowledge/standards/development-discipline.md)
 - [knowledge/standards/project-management.md](knowledge/standards/project-management.md)
 - [knowledge/testing/duckdb-test-harness.md](knowledge/testing/duckdb-test-harness.md)
+- [research/number-and-type-fidelity_20261115.md](research/number-and-type-fidelity_20261115.md)
