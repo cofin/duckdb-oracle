@@ -89,6 +89,7 @@ Set these variables to tune performance or behavior:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
+| `oracle_number_as` | `'DOUBLE'` | Target DuckDB type for unconstrained `NUMBER` (`'DOUBLE'`, `'VARCHAR'`, or `'DECIMAL(p,s)'`). |
 | `oracle_enable_pushdown` | `true` | Push filters/projections to Oracle. |
 | `oracle_prefetch_rows` | `1024` | Rows to prefetch per round-trip; validated between 1 and 1,000,000. |
 | `oracle_prefetch_memory` | `0` | OCI prefetch memory in bytes; `0` lets OCI choose, otherwise max 1 GiB. |
@@ -102,6 +103,19 @@ Set these variables to tune performance or behavior:
 | `oracle_use_current_schema` | `true` | Auto-detect `CURRENT_SCHEMA` and resolve unqualified object names. |
 | `oracle_metadata_object_types` | `'TABLE,VIEW,SYNONYM,MATERIALIZED VIEW'` | Comma-separated Oracle object types discovered via `ALL_OBJECTS`. |
 | `oracle_metadata_result_limit` | `10000` | Bounded metadata discovery limit; `0` uses the bounded default. |
+
+### Type Mapping & Numeric Precision
+
+| Oracle Type | Default DuckDB Type | Notes |
+|-------------|---------------------|-------|
+| `NUMBER` (unconstrained) | `DOUBLE` | Configurable via `oracle_number_as` (`'VARCHAR'`, `'DECIMAL(p,s)'`). |
+| `INTEGER` / `NUMBER(*, s)` | `DECIMAL(38, s)` | `0 <= s <= 38`. |
+| `NUMBER(p, s)` (`s <= p`) | `DECIMAL(p, s)` | Exact when `1 <= p <= 38`. |
+| `NUMBER(p, -s)` | `DECIMAL(p + s, 0)` | Falls back to `oracle_number_as` when `p + s > 38`. |
+| `NUMBER(p, s > p)` | `DECIMAL(s, s)` | Falls back to `oracle_number_as` when `s > 38`. |
+| `FLOAT` / `BINARY_DOUBLE` | `DOUBLE` | `BINARY_FLOAT` maps to `FLOAT`. |
+
+Unconstrained `NUMBER` defaults to `DOUBLE` (`oracle_number_as = 'DOUBLE'`). Set `SET oracle_number_as = 'VARCHAR'` or `SET oracle_number_as = 'DECIMAL(p,s)'` (or pass `ATTACH ... (TYPE oracle, number_as '...')`) for full integer/decimal precision; mapping to `'VARCHAR'` disables filter pushdown on those `NUMBER` columns. Writing DuckDB `FLOAT` or `DOUBLE` values into Oracle `NUMBER` or `FLOAT` columns binds shortest round-trip decimal text (`NaN` and `Infinity` are rejected unless targeting `BINARY_FLOAT` or `BINARY_DOUBLE`).
 
 ### Views, Materialized Views, and Synonyms
 

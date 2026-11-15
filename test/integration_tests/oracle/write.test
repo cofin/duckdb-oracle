@@ -144,3 +144,206 @@ SELECT oracle_execute(oracle_test_conn(), 'DROP TABLE write_json_types')
 
 statement ok
 SELECT oracle_execute(oracle_test_conn(), 'DROP TABLE test_write_types')
+
+# Issue #44: exact decimal preservation when writing FLOAT / DOUBLE to Oracle NUMBER / FLOAT
+statement ok
+SELECT oracle_execute(oracle_test_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE write_number_fidelity'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE write_number_dst'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), '
+    BEGIN
+        EXECUTE IMMEDIATE ''DROP TABLE write_number_overflow'';
+    EXCEPTION
+        WHEN OTHERS THEN
+            IF SQLCODE != -942 THEN
+                RAISE;
+            END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), '
+    CREATE TABLE write_number_fidelity (
+        id NUMBER PRIMARY KEY,
+        n_col NUMBER,
+        f_col FLOAT,
+        bflt_col BINARY_FLOAT,
+        bdbl_col BINARY_DOUBLE
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), '
+    CREATE TABLE write_number_dst (
+        id NUMBER PRIMARY KEY,
+        n_col NUMBER,
+        f_col FLOAT,
+        bdbl_col BINARY_DOUBLE
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), '
+    CREATE TABLE write_number_overflow (
+        id NUMBER PRIMARY KEY,
+        n_col NUMBER
+    )
+')
+
+statement ok
+SELECT oracle_clear_cache();
+
+statement ok
+INSERT INTO ora.write_number_fidelity (id, n_col, f_col, bflt_col, bdbl_col) VALUES
+    (1, 13.8::DOUBLE, 13.8::DOUBLE, 13.5::FLOAT, 13.8::DOUBLE),
+    (2, 0.1::DOUBLE, 0.1::DOUBLE, 0.25::FLOAT, 0.1::DOUBLE),
+    (3, 0.15::DOUBLE, 0.15::DOUBLE, -1.5::FLOAT, 0.15::DOUBLE),
+    (4, -13.8::DOUBLE, 0.0::DOUBLE, 0.0::FLOAT, -13.8::DOUBLE),
+    (5, 1e20::DOUBLE, 1e-7::DOUBLE, 1.0::FLOAT, 1e20::DOUBLE),
+    (6, NULL, NULL, NULL, NULL);
+
+query ITT
+SELECT
+    id::INTEGER,
+    TO_CHAR_N,
+    TO_CHAR_F
+FROM oracle_query(
+    oracle_test_conn(),
+    'SELECT id, NVL(TO_CHAR(n_col, ''TM9''), ''<NULL>'') AS TO_CHAR_N, NVL(TO_CHAR(f_col, ''TM9''), ''<NULL>'') AS TO_CHAR_F FROM write_number_fidelity ORDER BY id'
+);
+----
+1	13.8	13.8
+2	.1	.1
+3	.15	.15
+4	-13.8	0
+5	100000000000000000000	.0000001
+6	<NULL>	<NULL>
+
+statement ok
+INSERT INTO ora.write_number_dst (id, n_col, f_col, bdbl_col)
+SELECT id, n_col, f_col, bdbl_col
+FROM ora.write_number_fidelity
+WHERE id <= 4;
+
+query ITT
+SELECT id::INTEGER, TO_CHAR_N, TO_CHAR_F
+FROM oracle_query(
+    oracle_test_conn(),
+    'SELECT id, TO_CHAR(n_col, ''TM9'') AS TO_CHAR_N, TO_CHAR(f_col, ''TM9'') AS TO_CHAR_F FROM write_number_dst ORDER BY id'
+);
+----
+1	13.8	13.8
+2	.1	.1
+3	.15	.15
+4	-13.8	0
+
+# Reject NaN / Infinity when writing to non-binary Oracle NUMBER / FLOAT columns
+statement error
+INSERT INTO ora.write_number_fidelity (id, n_col) VALUES (10, 'NaN'::DOUBLE);
+----
+cannot bind NaN or Infinity
+
+statement error
+INSERT INTO ora.write_number_fidelity (id, n_col) VALUES (11, 'Infinity'::DOUBLE);
+----
+cannot bind NaN or Infinity
+
+statement error
+INSERT INTO ora.write_number_fidelity (id, f_col) VALUES (12, '-Infinity'::FLOAT);
+----
+cannot bind NaN or Infinity
+
+# BINARY_FLOAT / BINARY_DOUBLE preserve SQLT_BDOUBLE binding and accept NaN / Infinity
+statement ok
+INSERT INTO ora.write_number_fidelity (id, bflt_col, bdbl_col) VALUES
+    (13, 'NaN'::FLOAT, 'Infinity'::DOUBLE),
+    (14, '-Infinity'::FLOAT, 'NaN'::DOUBLE);
+
+query I
+SELECT COUNT(*) FROM oracle_query(
+    oracle_test_conn(),
+    'SELECT id FROM write_number_fidelity WHERE id IN (13, 14) AND bdbl_col IS NOT NULL'
+);
+----
+2
+
+# Statement-atomic rollback when a double exceeds Oracle NUMBER magnitude (1e300)
+statement error
+INSERT INTO ora.write_number_overflow (id, n_col) VALUES
+    (1, 13.8::DOUBLE),
+    (2, 1e300::DOUBLE);
+----
+ORA-01426
+
+query I
+SELECT * FROM oracle_query(oracle_test_conn(), 'SELECT COUNT(*) FROM write_number_overflow');
+----
+0
+
+# Exact 30-digit DECIMAL(38,10) and VARCHAR round-trip via oracle_number_as
+statement ok
+ATTACH '' AS ora_dec38 (TYPE ORACLE, SECRET 'test_oracle', number_as 'DECIMAL(38,10)')
+
+statement ok
+ATTACH '' AS ora_num_txt (TYPE ORACLE, SECRET 'test_oracle', number_as 'VARCHAR')
+
+statement ok
+INSERT INTO ora_dec38.write_number_dst (id, n_col)
+VALUES (100, 12345678901234567890.1234567895::DECIMAL(38,10));
+
+statement ok
+INSERT INTO ora_num_txt.write_number_dst (id, n_col)
+VALUES (101, '12345678901234567890.1234567895');
+
+query IT
+SELECT id::INTEGER, TO_CHAR_N
+FROM oracle_query(
+    oracle_test_conn(),
+    'SELECT id, TO_CHAR(n_col, ''TM9'') AS TO_CHAR_N FROM write_number_dst WHERE id IN (100, 101) ORDER BY id'
+);
+----
+100	12345678901234567890.1234567895
+101	12345678901234567890.1234567895
+
+query TT
+SELECT n_col::VARCHAR, (SELECT n_col FROM ora_num_txt.write_number_dst WHERE id = 101)
+FROM ora_dec38.write_number_dst
+WHERE id = 100;
+----
+12345678901234567890.1234567895	12345678901234567890.1234567895
+
+statement ok
+DETACH ora_dec38;
+
+statement ok
+DETACH ora_num_txt;
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), 'DROP TABLE write_number_overflow')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), 'DROP TABLE write_number_dst')
+
+statement ok
+SELECT oracle_execute(oracle_test_conn(), 'DROP TABLE write_number_fidelity')

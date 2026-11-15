@@ -183,3 +183,94 @@ Invalid Input Error
 
 statement ok
 SET oracle_stmt_cache_size = 20;
+
+# Test oracle_number_as default, valid values, and validation errors
+query I
+SELECT current_setting('oracle_number_as');
+----
+DOUBLE
+
+statement ok
+SET oracle_number_as = 'varchar';
+
+query I
+SELECT current_setting('oracle_number_as');
+----
+VARCHAR
+
+statement ok
+SET oracle_number_as = 'decimal(38, 10)';
+
+query I
+SELECT current_setting('oracle_number_as');
+----
+DECIMAL(38,10)
+
+statement ok
+SET oracle_number_as = 'DECIMAL(1,0)';
+
+query I
+SELECT current_setting('oracle_number_as');
+----
+DECIMAL(1,0)
+
+statement ok
+SET oracle_number_as = 'DECIMAL(38,38)';
+
+query I
+SELECT current_setting('oracle_number_as');
+----
+DECIMAL(38,38)
+
+statement error
+SET oracle_number_as = 'BIGINT';
+----
+Invalid Input Error
+
+statement error
+SET oracle_number_as = 'DECIMAL(39,0)';
+----
+Invalid Input Error
+
+statement error
+SET oracle_number_as = 'DECIMAL(0,0)';
+----
+Invalid Input Error
+
+statement error
+SET oracle_number_as = 'DECIMAL(10,11)';
+----
+Invalid Input Error
+
+statement error
+SET oracle_number_as = 'DECIMAL(10,-1)';
+----
+Invalid Input Error
+
+statement error
+SET oracle_number_as = 'DECIMAL(10)';
+----
+Invalid Input Error
+
+statement error
+SET oracle_number_as = '';
+----
+Invalid Input Error
+
+statement error
+SET oracle_number_as = NULL;
+----
+Invalid Input Error
+
+statement error
+ATTACH 'dummy/dummy@//localhost:1521/dummy' AS num_bad (TYPE oracle, number_as 'BIGINT');
+----
+Invalid Input Error
+
+statement error
+ATTACH 'dummy/dummy@//localhost:1521/dummy' AS num_ok (TYPE oracle, number_as 'DECIMAL(38,10)');
+----
+<REGEX>:.*(Cannot connect to database|Oracle Instant Client shared library|ORA-|Failed to attach).*
+
+statement ok
+SET oracle_number_as = 'DOUBLE';

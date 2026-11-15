@@ -343,6 +343,49 @@ ORDER BY id;
 3	beta	300.0
 
 statement ok
+SELECT oracle_execute(oracle_pushdown_conn(), '
+    BEGIN
+       EXECUTE IMMEDIATE ''DROP TABLE read_pushdown_number_varchar'';
+    EXCEPTION
+       WHEN OTHERS THEN
+          IF SQLCODE != -942 THEN
+             RAISE;
+          END IF;
+    END;
+')
+
+statement ok
+SELECT oracle_execute(oracle_pushdown_conn(), '
+    CREATE TABLE read_pushdown_number_varchar (
+        id NUMBER(10),
+        n_val NUMBER
+    )
+')
+
+statement ok
+SELECT oracle_execute(oracle_pushdown_conn(), 'INSERT INTO read_pushdown_number_varchar VALUES (1, 9)')
+
+statement ok
+SELECT oracle_execute(oracle_pushdown_conn(), 'INSERT INTO read_pushdown_number_varchar VALUES (2, 10)')
+
+statement ok
+ATTACH '' AS ora_num_varchar (TYPE ORACLE, SECRET 'oracle_pushdown_test', number_as 'VARCHAR')
+
+query IT
+SELECT id, n_val
+FROM ora_num_varchar.duckdb_test.read_pushdown_number_varchar
+WHERE n_val < '20'
+ORDER BY id;
+----
+2	10
+
+statement ok
+DETACH ora_num_varchar;
+
+statement ok
+SELECT oracle_execute(oracle_pushdown_conn(), 'DROP TABLE read_pushdown_number_varchar')
+
+statement ok
 DETACH ora_pushdown_on;
 
 statement ok

@@ -132,7 +132,7 @@ static void LoadColumns(OracleCatalogState &state, string &schema, string &table
 		idx_t data_len = 0;
 		TryParseOracleMetadataIndex(row[4], data_len);
 		idx_t precision = 0;
-		TryParseOracleMetadataIndex(row[5], precision);
+		bool has_precision = TryParseOracleMetadataIndex(row[5], precision) && precision > 0;
 		int32_t scale = 0;
 		bool has_scale = TryParseOracleMetadataInt(row[6], scale);
 		idx_t char_len = 0;
@@ -145,6 +145,7 @@ static void LoadColumns(OracleCatalogState &state, string &schema, string &table
 		type_metadata.oracle_data_type = data_type;
 		type_metadata.data_length = data_len;
 		type_metadata.precision = precision;
+		type_metadata.has_precision = has_precision;
 		type_metadata.scale = scale;
 		type_metadata.has_scale = has_scale;
 		type_metadata.type_owner = row[8];

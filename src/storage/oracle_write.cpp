@@ -12,6 +12,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
+#include "fmt/format.h"
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -138,7 +139,7 @@ static void ResolveOracleWriteTargetMetadata(OracleWriteBindData &data) {
 		}
 
 		idx_t precision = 0;
-		TryParseOracleMetadataIndex(row[5], precision);
+		bool has_precision = TryParseOracleMetadataIndex(row[5], precision) && precision > 0;
 		int32_t scale = 0;
 		bool has_scale = TryParseOracleMetadataInt(row[6], scale);
 		idx_t data_length = 0;
@@ -153,6 +154,7 @@ static void ResolveOracleWriteTargetMetadata(OracleWriteBindData &data) {
 		metadata.oracle_data_type = data_type;
 		metadata.type_owner = row[4];
 		metadata.precision = precision;
+		metadata.has_precision = has_precision;
 		metadata.scale = scale;
 		metadata.has_scale = has_scale;
 		metadata.data_length = data_length;
@@ -479,10 +481,38 @@ void OracleWriteGlobalState::Sink(DataChunk &chunk, const vector<string> &column
 			size_t max_len = 0;
 			auto column_name = col_idx < column_names.size() ? column_names[col_idx] : "";
 			auto oracle_type = col_idx < oracle_types.size() ? oracle_types[col_idx] : "";
+			const auto col_type = chunk.data[col_idx].GetType().id();
+			const bool format_float_text = !IsOracleVectorType(oracle_type) &&
+			                               (col_type == LogicalTypeId::FLOAT || col_type == LogicalTypeId::DOUBLE);
+			const auto *float_data = (format_float_text && col_type == LogicalTypeId::FLOAT)
+			                             ? FlatVector::GetData<float>(chunk.data[col_idx])
+			                             : nullptr;
+			const auto *double_data = (format_float_text && col_type == LogicalTypeId::DOUBLE)
+			                              ? FlatVector::GetData<double>(chunk.data[col_idx])
+			                              : nullptr;
 
 			for (idx_t i = 0; i < count; i++) {
 				if (validity.RowIsValid(i)) {
-					auto s = OracleWriteValueToString(chunk.data[col_idx].GetValue(i), column_name, oracle_type);
+					string s;
+					if (float_data) {
+						float val = float_data[i];
+						if (!std::isfinite(val)) {
+							throw InvalidInputException(
+							    "Oracle write value for column '%s' cannot bind NaN or Infinity to %s",
+							    column_name.c_str(), oracle_type.empty() ? "NUMBER" : oracle_type.c_str());
+						}
+						s = duckdb_fmt::format("{}", val);
+					} else if (double_data) {
+						double val = double_data[i];
+						if (!std::isfinite(val)) {
+							throw InvalidInputException(
+							    "Oracle write value for column '%s' cannot bind NaN or Infinity to %s",
+							    column_name.c_str(), oracle_type.empty() ? "NUMBER" : oracle_type.c_str());
+						}
+						s = duckdb_fmt::format("{}", val);
+					} else {
+						s = OracleWriteValueToString(chunk.data[col_idx].GetValue(i), column_name, oracle_type);
+					}
 					if (s.size() > NumericLimits<ub2>::Maximum()) {
 						auto len_str = std::to_string(s.size());
 						throw InvalidInputException("Oracle write value for column '%s' exceeds maximum OCI bind "
