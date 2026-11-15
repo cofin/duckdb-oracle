@@ -77,11 +77,13 @@ In `src/oracle_scan.cpp` and `src/storage/oracle_table_entry.cpp`[^oracle-scan]:
 - Regular `VARCHAR2` / `CHAR` columns size their `SQLT_STR` buffer from `OCI_ATTR_CHAR_SIZE` / `OCI_ATTR_DATA_SIZE` (`ub2` 2-byte attributes), while `CLOB`, `NCLOB`, `BLOB`, `JSON`, `XMLTYPE`, `SDO_UTIL.TO_WKTGEOMETRY(col)`, and `VECTOR_SERIALIZE(col RETURNING CLOB)` allocate the maximum `ub2` define capacity (`65535` bytes via `IsLargeOracleCategory`).
 - During `OCIStmtFetch2`, `OracleQueryFunction` inspects `ind == -2 || ind > 0` across all fetched rows and columns *before* checking `status == OCI_SUCCESS_WITH_INFO`, and on `OCI_SUCCESS_WITH_INFO` only raises a truncation error if `OCIErrorCodeMatches(errhp, 1406)` (`ORA-01406`), ignoring benign `ORA-24347` warnings (NULL column in an aggregate function)[^oracle-scan].
 
-## 4. Unconstrained NUMBER -> DOUBLE Precision Loss
+## 4. Unconstrained NUMBER Mapping & Floating-Point Write Precision
 
-Oracle tables frequently declare numeric columns without precision or scale constraints (`col NUMBER` or `NUMBER(*, 0)` where `OCI_ATTR_PRECISION == 0` and `OCI_ATTR_SCALE == 0`)[^type-reg].
-- Both `OracleTypeRegistry::ResolveMetadata` and `OracleTypeRegistry::ResolveOciDescribe` map unconstrained `NUMBER` and `NUMBER(*, 0)` to `LogicalType::DOUBLE`[^type-reg].
-- **Pitfall**: IEEE-754 double-precision floating point provides 53 bits of mantissa (~15–17 significant decimal digits). Integers exceeding $2^{53} - 1$ (`9,007,199,254,740,991`) lose exact precision unless projected via `TO_CHAR(col, 'TM')` or declared with explicit precision (`NUMBER(19, 0)`).
+Oracle tables and expressions frequently declare numeric columns without precision or scale constraints (`col NUMBER` where `has_precision == false` and `has_scale == false`), or use `FLOAT(p)` (`scale == -127` in `ALL_TAB_COLUMNS` and OCI describe)[^type-reg]:
+- `OracleTypeRegistry::NumberLogicalType` maps `NUMBER(*, s)` (`s <= 38`) to `DECIMAL(38, s)`, negative-scale `NUMBER(p, -s)` (`p + s <= 38`) to `DECIMAL(p + s, 0)`, and overscaled `NUMBER(p, s > p)` (`s <= 38`) to `DECIMAL(s, s)`.
+- Unconstrained `NUMBER` (and out-of-range variants) resolve to `settings.number_as` (`oracle_number_as`, defaulting to `LogicalType::DOUBLE`), while `OracleBindInternal` sets `has_scale = false` whenever `OCI_ATTR_PRECISION == 0` so computed `oracle_query` expressions respect `oracle_number_as`, and `ResolveOciDescribe` keeps `SQLT_NUM`/`SQLT_VNU` with `scale == -127` as `DOUBLE` (`OCI FLOAT`).
+- Mapping `NUMBER` to `'VARCHAR'` disables predicate pushdown (`pushdown_eligible = false`).
+- On `INSERT INTO`, `OracleTypeRegistry::ResolveWrite` binds `FLOAT`/`DOUBLE` inputs as shortest round-trip decimal text (`SQLT_CHR` via `duckdb_fmt::format`) when targeting non-binary Oracle columns (`NUMBER`, `FLOAT`), rejecting `NaN`/`Infinity` while preserving `SQLT_BDOUBLE` for `BINARY_FLOAT`/`BINARY_DOUBLE`.
 
 ## 5. Timezone Handling on TSTZ / LTZ
 
@@ -98,7 +100,7 @@ When fetching `TIMESTAMP WITH TIME ZONE` or `TIMESTAMP WITH LOCAL TIME ZONE` col
 ## 7. Per-`ATTACH` Options vs `DBConfig::AddExtensionOption`
 
 In DuckDB (`v1.5.x` and `v2.0.0`), `DBConfig::AddExtensionOption` inserts default values directly into `db_config.user_settings`, causing `ClientContext::TryGetCurrentSetting` to return a `SettingScope::GLOBAL` match even when the user never ran `SET oracle_*`[^oracle-settings].
-- **Resolution (`src/oracle_settings.cpp`, `src/oracle_connection_resolver.cpp`)**: `ApplyAttachOptions` records every explicitly provided `ATTACH` option's global setting key in `OracleSettings::attach_overridden_keys`, and `GetOracleSettings` preserves `state->settings` for any key in `attach_overridden_keys` unless `lookup.GetScope() == SettingScope::LOCAL`[^oracle-settings].
+- **Resolution (`src/oracle_settings.cpp`, `src/oracle_connection_resolver.cpp`, `src/storage/oracle_storage_extension.cpp`)**: `OracleAttach` initializes `state->settings` from `GetOracleSettings(context, nullptr)` before calling `state->ApplyOptions(attach_options)` so explicit `ATTACH` options override prior session `SET` values, `ApplyAttachOptions` records overridden keys in `OracleSettings::attach_overridden_keys`, and runtime `GetOracleSettings` preserves `state->settings` for keys in `attach_overridden_keys` unless `lookup.GetScope() == SettingScope::LOCAL`[^oracle-settings].
 
 ## 8. Oracle Empty String (`''`) NULL Semantics in Filter Pushdown
 

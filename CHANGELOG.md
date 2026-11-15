@@ -2,6 +2,16 @@
 
 All notable changes to the DuckDB Oracle extension are documented in this file.
 
+## [0.3.2] - 2026-11-15
+
+### Added
+- **Configurable `oracle_number_as` Mapping**: Added the `oracle_number_as` extension setting and `ATTACH ... (number_as ...)` catalog option (`'DOUBLE'`, `'VARCHAR'`, or `'DECIMAL(p,s)'` with `1 <= p <= 38`, `0 <= s <= p`) to preserve exact integers and decimals for unconstrained Oracle `NUMBER` columns.
+
+### Fixed
+- **Decimal Fidelity on `FLOAT`/`DOUBLE` Writes**: Bound `FLOAT` and `DOUBLE` inputs as shortest round-trip decimal text (`SQLT_CHR`) for non-binary Oracle targets (`NUMBER`, `FLOAT`), fixing precision artifacts such as `13.8 -> 13.800000000000001`. Non-finite `NaN`/`Infinity` values are rejected on non-binary columns, while `BINARY_FLOAT` and `BINARY_DOUBLE` retain `SQLT_BDOUBLE` binding.
+- **Oracle `NUMBER` Schema & Expression Mapping**: Mapped `INTEGER`, `NUMBER(*, s)`, `NUMBER(p, -s)`, and `NUMBER(p, s > p)` columns within 38 digits to exact DuckDB `DECIMAL` types, and cleared stale scale attributes on unconstrained `oracle_query` expressions.
+- **Filter Pushdown & `ATTACH` Precedence**: Disabled predicate pushdown when `NUMBER` resolves to `VARCHAR`, and applied explicit `ATTACH` options after session settings so catalog overrides persist.
+
 ## [0.3.1] - 2026-10-22
 
 ### Changed

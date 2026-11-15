@@ -10,6 +10,6 @@
 
 ## 2. Bulk Array Write Bindings (`src/storage/oracle_write.cpp`)
 
-- Normalize input vectors once per column via `col_vec.ToUnifiedFormat(count, vdata)`.
-- Bind integers as `int64_t` (`SQLT_INT`), floating-point values as `double` (`SQLT_BDOUBLE`), Oracle `DATE` values as 7-byte `OCIDate` structs (`SQLT_ODT`), binary values as `SQLT_BIN`, and strings/timestamps/spatial/vectors as `SQLT_STR` with SQL wrapper expressions (`TO_TIMESTAMP`, `TO_TIMESTAMP_TZ`, `SDO_GEOMETRY(:b, srid)`, `TO_VECTOR(:b)`).
+- Normalize input vectors once per column via `col_vec.ToUnifiedFormat(format)`.
+- Bind integers targeting `BIGINT` as `int64_t` (`SQLT_INT`), floating-point inputs targeting `BINARY_FLOAT`/`BINARY_DOUBLE` as `double` (`SQLT_BDOUBLE`), `FLOAT`/`DOUBLE` inputs targeting `NUMBER`/`FLOAT` as shortest round-trip decimal text (`SQLT_CHR` via `duckdb_fmt::format`, rejecting `NaN`/`Infinity`), Oracle `DATE` values as 7-byte `OCIDate` structs (`SQLT_ODT`), binary values as `SQLT_BIN`, and remaining strings/decimals/timestamps/spatial/vectors as `SQLT_CHR` with SQL wrapper expressions (`TO_TIMESTAMP`, `SDO_UTIL.FROM_WKTGEOMETRY`, `TO_VECTOR`).
 - Validate every string/binary element length against `NumericLimits<ub2>::Maximum()` (`65535` bytes) before copying into the contiguous stride buffer.
