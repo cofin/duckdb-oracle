@@ -116,7 +116,7 @@ Oracle maps its internal database storage types to client-side external types sp
 | `RAW`, `LONG RAW`, `BLOB` | `SQLT_BIN` (fetch, up to `65535` bytes) | Raw byte array + `rlenp` | `LogicalType::BLOB` |
 | `DATE` | `SQLT_STR` (fetch) / `SQLT_ODT` (bind) | Formatted string / `OCIDate` struct | `LogicalType::TIMESTAMP` |
 | `TIMESTAMP` | `SQLT_STR` | Formatted string (`NLS_TIMESTAMP_FORMAT`) | `LogicalType::TIMESTAMP` |
-| `TIMESTAMP WITH [LOCAL] TIME ZONE` | `SQLT_STR` | Formatted string (`NLS_TIMESTAMP_TZ_FORMAT`) | `LogicalType::TIMESTAMP_TZ` |
+| `TIMESTAMP WITH [LOCAL] TIME ZONE` | `SQLT_STR` | Formatted string (`NLS_TIMESTAMP_TZ_FORMAT`) | `LogicalType::TIMESTAMP` |
 | `SDO_GEOMETRY` | `SQLT_STR` (`65535` bytes) | WKT via `SDO_UTIL.TO_WKTGEOMETRY` (`CLOB`) | `LogicalType::GEOMETRY` (or `VARCHAR`) |
 | `VECTOR` (Oracle 23ai) | `SQLT_STR` (`65535` bytes) | `VECTOR_SERIALIZE(... RETURNING CLOB)` | `LogicalType::ARRAY` / `LogicalType::LIST` |
 

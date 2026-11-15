@@ -133,7 +133,16 @@ SELECT * FROM 'source_data.parquet';
 
 ### Type Mapping & Numeric Precision
 
-Fixed-precision Oracle numeric columns (`INTEGER`, `NUMBER(*, s)`, `NUMBER(p, s)`, `NUMBER(p, -s)`, and `NUMBER(p, s > p)` within 38 digits) map to exact DuckDB `DECIMAL` types, while Oracle `FLOAT` and `BINARY_DOUBLE` map to `DOUBLE` (`BINARY_FLOAT` maps to `FLOAT`).
+| Oracle Type | Default DuckDB Type | Notes |
+|-------------|---------------------|-------|
+| `NUMBER` (unconstrained) | `DOUBLE` | Configurable via `oracle_number_as` (`'VARCHAR'`, `'DECIMAL(p,s)'`). |
+| `INTEGER` / `NUMBER(*, s)` | `DECIMAL(38, s)` | `0 <= s <= 38`. |
+| `NUMBER(p, s)` (`s <= p`) | `DECIMAL(p, s)` | Exact when `1 <= p <= 38`. |
+| `NUMBER(p, -s)` | `DECIMAL(p + s, 0)` | Falls back to `oracle_number_as` when `p + s > 38`. |
+| `NUMBER(p, s > p)` | `DECIMAL(s, s)` | Falls back to `oracle_number_as` when `s > 38`. |
+| `FLOAT` / `BINARY_DOUBLE` | `DOUBLE` | `BINARY_FLOAT` maps to `FLOAT`. |
+
+Fixed-precision Oracle numeric columns map to exact DuckDB `DECIMAL` types, while Oracle `FLOAT` and `BINARY_DOUBLE` map to `DOUBLE` (`BINARY_FLOAT` maps to `FLOAT`).
 
 Unconstrained `NUMBER` columns and numeric query expressions without explicit precision default to DuckDB `DOUBLE` (`oracle_number_as = 'DOUBLE'`). To preserve integers larger than $2^{53}$ or high-scale decimals without floating-point rounding, configure `oracle_number_as` at the session level or per `ATTACH`:
 

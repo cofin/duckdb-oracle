@@ -35,7 +35,7 @@ sources:
 
 <!-- truth: start -->
 - Unconstrained `NUMBER` and out-of-range `NUMBER` columns default to `LogicalType::DOUBLE` (`oracle_number_as = 'DOUBLE'`) and support opt-in `'VARCHAR'` or `'DECIMAL(p, s)'` (`1 <= p <= 38`, `0 <= s <= p`) via `SET oracle_number_as` or `ATTACH ... (number_as ...)`[^num-logical][^num-setting].
-- Exact `INTEGER`, `NUMBER(*, s)` (`s <= 38`), `NUMBER(p, -s)` (`p - s <= 38`), and `NUMBER(p, s > p)` (`s <= 38`) columns map deterministically to DuckDB `DECIMAL`[^num-logical].
+- Exact `INTEGER`, `NUMBER(*, s)` (`s <= 38`), `NUMBER(p, -s)` (`p + s <= 38` -> `DECIMAL(p + s, 0)`), and `NUMBER(p, s > p)` (`s <= 38`) columns map deterministically to DuckDB `DECIMAL`[^num-logical].
 - Writing `FLOAT` or `DOUBLE` values to non-binary Oracle targets (`NUMBER`, `FLOAT`) binds via `SQLT_CHR` using `duckdb_fmt::format("{}", val)` with explicit non-finite (`NaN`/`Infinity`) rejection, while `BINARY_FLOAT` and `BINARY_DOUBLE` retain `SQLT_BDOUBLE`[^resolve-write][^write-sink].
 <!-- truth: end -->
 
@@ -48,7 +48,7 @@ In addition, catalog metadata queries (`ALL_TAB_COLUMNS`) and OCI describe attri
 ## Decision
 
 1. **Preserve `'DOUBLE'` as Default with Explicit `oracle_number_as`**: Register `oracle_number_as` (session/global setting and `ATTACH` `number_as` option) defaulting to `'DOUBLE'`, accepting `'VARCHAR'` or `'DECIMAL(p,s)'`[^num-setting]. Initialize `OracleCatalogState::settings` from `GetOracleSettings(context, nullptr)` before `ApplyOptions(attach_options)` so explicit `ATTACH` options take precedence over prior session `SET` statements[^attach-order].
-2. **Tighten Deterministic `NUMBER` Variant Mapping**: Require `has_precision` tracking alongside `has_scale`. Map `NUMBER(*, s)` to `DECIMAL(38, s)`, `NUMBER(p, -s)` to `DECIMAL(p - s, 0)` when `p - s <= 38`, `NUMBER(p, s > p)` to `DECIMAL(s, s)` when `s <= 38`, keep `SQLT_NUM`/`SQLT_VNU` with `scale == -127` as `DOUBLE` (`OCI FLOAT`), and clear `has_scale = false` when `OCI_ATTR_PRECISION == 0` so computed `NUMBER` expressions respect `oracle_number_as`[^num-logical]. Disable filter pushdown (`pushdown_eligible = false`) when `NUMBER` resolves to `VARCHAR`[^num-logical].
+2. **Tighten Deterministic `NUMBER` Variant Mapping**: Require `has_precision` tracking alongside `has_scale`. Map `NUMBER(*, s)` to `DECIMAL(38, s)`, `NUMBER(p, -s)` (`precision - scale` with negative `scale`) to `DECIMAL(p + s, 0)` when `p + s <= 38`, `NUMBER(p, s > p)` to `DECIMAL(s, s)` when `s <= 38`, keep `SQLT_NUM`/`SQLT_VNU` with `scale == -127` as `DOUBLE` (`OCI FLOAT`), and clear `has_scale = false` when `OCI_ATTR_PRECISION == 0` so computed `NUMBER` expressions respect `oracle_number_as`[^num-logical]. Disable filter pushdown (`pushdown_eligible = false`) when `NUMBER` resolves to `VARCHAR`[^num-logical].
 3. **Decimal Text Binding on Write (`SQLT_CHR`)**: In `OracleTypeRegistry::ResolveWrite`, bind `FLOAT`/`DOUBLE` columns via `SQLT_CHR` unless `normalized_type` is `BINARY_FLOAT` or `BINARY_DOUBLE`[^resolve-write]. In `OracleWriteGlobalState::Sink`, reject `NaN`/`Infinity` with a column-named `InvalidInputException` and format finite `float`/`double` elements directly with `duckdb_fmt::format("{}", val)`[^write-sink].
 
 ## Rejected Alternatives
