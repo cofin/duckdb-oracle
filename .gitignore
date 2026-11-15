@@ -34,3 +34,5 @@ test/integration_temp.test
 .cache/
 
 *.db
+.agents/scratch/
+uv.toml
