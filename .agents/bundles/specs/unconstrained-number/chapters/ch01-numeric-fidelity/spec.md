@@ -13,7 +13,7 @@ replan_trigger: null
 plan_revision: 1
 plan_commit: 83efe19
 state_revision: 1
-current_task: "unconstrained-number:ch01:t02"
+current_task: "unconstrained-number:ch01:t03"
 last_reviewed_commit: null
 ---
 
@@ -22,5 +22,5 @@ last_reviewed_commit: null
 ## 5. Implementation Plan
 
 - [x] [997a5d3] t01 — NUMBER mapping rules and oracle_number_as setting (tasks/t01-number-mapping-and-setting.md)
-- [~] t02 — Decimal text binding for FLOAT and DOUBLE writes (tasks/t02-decimal-text-write-binding.md)
-- [ ] t03 — Documentation, OKF knowledge alignment, and v0.3.2 version bump (tasks/t03-docs-knowledge-and-bump.md)
+- [x] [ceeb56a] t02 — Decimal text binding for FLOAT and DOUBLE writes (tasks/t02-decimal-text-write-binding.md)
+- [~] t03 — Documentation, OKF knowledge alignment, and v0.3.2 version bump (tasks/t03-docs-knowledge-and-bump.md)

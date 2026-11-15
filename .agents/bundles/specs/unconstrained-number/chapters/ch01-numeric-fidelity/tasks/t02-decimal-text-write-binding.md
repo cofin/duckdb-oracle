@@ -6,7 +6,7 @@ title: "Decimal text binding for FLOAT and DOUBLE writes"
 description: "Bind FLOAT and DOUBLE write values as shortest round-trip decimal text via SQLT_CHR for non-binary Oracle targets and reject NaN/Infinity with column-named errors."
 worksheet_format: full
 status: stable
-state: in_progress
+state: completed
 priority: P1
 verification_strategy: regression_tdd
 depends_on:
@@ -26,7 +26,7 @@ plan_commit: 83efe19
 state_revision: 2
 claimed_by: "agy:0562b821-d24d-4860-a83a-6839add195c1:coordinator"
 claimed_at: 2026-11-15T17:21:55Z
-commit: null
+commit: ceeb56a
 sources:
   - id: resolve-write
     resource: src/oracle_type_registry.cpp::OracleTypeRegistry::ResolveWrite
@@ -71,8 +71,9 @@ Fix [Issue #44](https://github.com/cofin/duckdb-oracle/issues/44) on the write p
 
 ## Acceptance Criteria
 
-- [ ] Oracle `TO_CHAR(col, 'TM9')` round-trip assertions pass for all `NUMBER`, `FLOAT`, and `BINARY_DOUBLE` write test cases.
+- [x] Oracle `TO_CHAR(col, 'TM9')` round-trip assertions pass for all `NUMBER`, `FLOAT`, and `BINARY_DOUBLE` write test cases.
 
 ## Notes & Discoveries
 
 - Always inspect `TO_CHAR(..., 'TM9')` via `oracle_query` so DuckDB's binary float parser cannot mask `13.800000000000001`.
+- Confirmed `1e+20` and `1e-07` formatted by `duckdb_fmt::format` bind cleanly via `SQLT_CHR` to Oracle 23ai `NUMBER`/`FLOAT` (`100000000000000000000` and `.0000001`), and `1e300` rolls back atomically with `ORA-01426`. All 22 Oracle 23ai integration suites passed (`write.test` 90/90).
