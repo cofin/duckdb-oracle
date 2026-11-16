@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - feat/duckdb-v1.5.6
   workflow_dispatch:
 
 permissions:
