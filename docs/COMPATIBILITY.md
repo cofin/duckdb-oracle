@@ -36,3 +36,4 @@ Local instances, on-premises deployments, cloud databases, and Oracle Autonomous
 | v1.5.6         | v0.2.3            | ✅ Compatible | 2026-10-11 | DuckDB v1.5.6 upgrade |
 | v2.0.0         | v0.3.1            | ✅ Compatible | 2026-10-22 | DuckDB v2.0.0 upgrade, on-demand client loading, optimizer callbacks |
 | v2.0.0         | v0.3.2            | ✅ Compatible | 2026-11-15 | Exact DECIMAL/FLOAT write binding, `oracle_number_as` setting, exact `NUMBER` mappings |
+| v2.0.1 | v0.3.3 | ✅ Compatible | 2026-11-21 | DuckDB v2.0.1 upgrade |
