@@ -2,7 +2,7 @@
 
 The `oracle` extension connects DuckDB directly to Oracle databases for reading and writing tables. It supports native catalog attachment, filter and projection pushdown, spatial geometry, vector embeddings, and batched array reads and writes.
 
-**Supported DuckDB version**: v2.0.0 — see [Compatibility](docs/COMPATIBILITY.md) for version history.
+**Supported DuckDB version**: v2.0.1 — see [Compatibility](docs/COMPATIBILITY.md) for version history.
 
 ## Installation
 
